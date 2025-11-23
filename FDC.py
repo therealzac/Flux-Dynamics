@@ -7,10 +7,13 @@ import pygad  # -----------------> 1. IMPORT THE GA LIBRARY
 
 # The total number of epochs to run the search for. (Set to zero for demonstration; positive integer to run optimizer)
 # The GA will try to find a 26/26 solution and then
-# spend the rest of the epochs trying to minimize its digit cost.
+# spend the rest of the epochs trying to minimize deviation and digit cost.
 TOTAL_EPOCHS_TO_RUN = 0
 
-# The precision cap in decimal digits. Change to 124 and watch rho_true fail to converge.
+# The computational precision cap in decimal digits. 
+# Change to 124 and watch rho_true fail to converge.
+# Change to 16 for 24/26
+# Change to 15 for 0/26
 FINAL_CAP = 125
 
 
@@ -1481,8 +1484,8 @@ def run_simulation(P_in, O, verbose=True):
                     print(f"**{key}: Calc={calc_val:.6f}, Obs={obs:.6f} ± {obs_err:.6f}, Dev={dev:.3f}% ({sigma:.2f} sigma)**")
                 elif key in MASS_KEYS:
                     print(f"**{key} (GeV): Calc={calc_val:.10f}, Obs={obs:.10f} ± {obs_err:.10f}, Dev={dev:.3f}% ({sigma:.2f} sigma)**")
-        print(f"\nSummary: Average deviation (all 25) = {avg_dev:.3f}%")
-        print(f"Average sigma (all 25, verbose) = {avg_sigma:.2f}")
+        print(f"\nSummary: Average deviation (all 26) = {avg_dev:.3f}%")
+        print(f"Average sigma (all 26, verbose) = {avg_sigma:.2f}")
         print(f"\n{total_matches} / {len(sigmas_v)} predictions are within 1 sigma.")
         
     return avg_sigma, avg_dev, total_matches, analysis_results
@@ -1948,7 +1951,7 @@ class GAManager:
         #     print(f"    '{key}': {repr(value)},")
         # print("}")
         
-        if opt_matches < 25:
+        if opt_matches < 26:
              print("\n--- ⚠️ WARNING: The best solution found did NOT achieve 26/26 matches. ---")
              print("--- You may need to increase TOTAL_EPOCHS_TO_RUN. ---")
 
