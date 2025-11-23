@@ -14,6 +14,8 @@ TOTAL_EPOCHS_TO_RUN = 0
 FINAL_CAP = 125
 
 
+ANALOG_HYPOTHESIS = False
+
 
 # --- Static Observed Values (Most Accurate PDG 2024 / CODATA 2022) ---
 OBSERVED = {
@@ -37,14 +39,14 @@ def get_seed(parent_a=None, parent_b=None):
     ADAM_CONFIG = {
         'ALPHA_LAMBDA': 13,
         'AMP_A': 6,
-        'AMP_D': 7,
+        'AMP_D': 3,
         'B_LIN': 19,
         'B_VOL': 9,
         'C': 14,
         'DELTA': 7,
         'DRAG': 16,
-        'EPSILON': 9,
-        'G0': 45,
+        'EPSILON': 11,
+        'G0': 32,
         'GEV_TO_J': 27,
         'G_t_to_v': 9,
         'HBAR': 38,
@@ -53,91 +55,91 @@ def get_seed(parent_a=None, parent_b=None):
         'LAMBDA': 8,
         'M_PL_J': 21,
         'M_PL_KG': 22,
-        'M_Z': 5,
+        'M_Z': 19,
         'N_efolds': 4,
         'PI_EFF': 26,
         'P_g_O': 5,
         'S': 18,
-        'SQRT2_Q': 9,
-        'T2_CORR': 4,
+        'SQRT2_Q': 13,
+        'T2_CORR': 5,
         'T3_CORR': 2,
-        'T4_CORR': 15,
-        'T5_CORR': 16,
+        'T4_CORR': 6,
+        'T5_CORR': 10,
         'T6_CORR': 4,
         'T_TO_MU': 9,
-        'T_TO_MZ': 15,
-        'T_TO_V': 68,
+        'T_TO_MZ': 12,
+        'T_TO_V': 13,
         'V': 10,
         'V_DOT_S': 20,
-        'V_DOT_V': 11,
-        'a_T0': 5,
-        'a_T1': 7,
+        'V_DOT_V': 14,
+        'a_T0': 11,
+        'a_T1': 17,
         'a_T2': 2,
         'a_T3': 4,
-        'a_T4': 30,
+        'a_T4': 44,
         'a_fin_step1': 21,
         'a_fin_step2': 11,
         'a_fin_step3': 9,
         'a_fin_step4': 4,
-        'a_t1_step1': 16,
+        'a_t1_step1': 21,
         'a_t1_step2': 2,
         'a_t2_step1': 14,
-        'a_t3_step1': 42,
+        'a_t3_step1': 14,
         'a_t4_step1': 2,
-        'alpha_lambda_step1': 12,
+        'alpha_lambda_step1': 13,
         'amp_a_step1': 16,
         'amp_a_step2': 19,
-        'amp_d_step1': 17,
+        'amp_d_step1': 4,
         'as_T0': 1,
         'as_T1': 7,
         'as_T2': 10,
         'as_fin_step1': 3,
-        'as_inv': 9,
+        'as_inv': 14,
         'as_inv_step1': 6,
-        'as_inv_step2': 18,
-        'as_t0_step1': 3,
+        'as_inv_step2': 8,
+        'as_t0_step1': 12,
         'as_t1_step1': 9,
         'as_t1_step2': 13,
-        'as_t2_step1': 18,
-        'b_lin_step1': 30,
-        'b_vol_step1': 18,
+        'as_t2_step1': 2,
+        'b_lin_step1': 4,
+        'b_vol_step1': 11,
         'ckm23_denom': 2,
         'ckm23_denom_step1': 33,
         'ckm23_fin_step1': 2,
         'ckm23_final': 16,
-        'ckm_T1': 37,
+        'ckm_T1': 38,
         'ckm_T2': 8,
         'ckm_denom': 4,
         'ckm_denom_step1': 14,
         'ckm_denom_step2': 1,
-        'ckm_fin_step1': 12,
+        'ckm_fin_step1': 9,
         'ckm_t1_step1': 13,
         'ckm_t1_step2': 2,
         'ckm_t1_step3': 21,
         'ckm_t1_step4': 19,
-        'ckm_t2_step1': 12,
+        'ckm_t2_step1': 21,
         'ckm_theta0': 2,
         'ckm_theta0_step1': 16,
         'ckm_theta0_step2': 31,
         'delta_step1': 0,
         'delta_step2': 4,
         'dqe_p_ANGLE_RATIO': 5,
-        'dqe_p_bs': 4,
+        'dqe_p_bs': 15,
         'dqe_p_cu': 8,
         'dqe_p_me': 8,
         'dqe_p_sd': 7,
-        'dqe_p_tc': 16,
-        'dqe_p_tm': 25,
+        'dqe_p_tc': 13,
+        'dqe_p_tm': 9,
         'drag_step1': 7,
         'eps_step1': 3,
         'eps_step2': 4,
-        'eps_step3': 17,
+        'eps_step3': 30,
         'f_C': 18,
-        'f_EXP_D10_T1': 9,
-        'f_EXP_OH_T1': 5,
+        'f_EXP_D10_T1': 20,
+        'f_EXP_OH_T1': 6,
         'f_LOG_Y1': 18,
         'f_LOG_Y2': 7,
-        'f_LOG_Y3': 26,
+        'f_LOG_Y3': 21,
         'f_R_net_per_pair': 9,
         'f_T1_b_s': 2,
         'f_T1_c_u': 1,
@@ -145,120 +147,120 @@ def get_seed(parent_a=None, parent_b=None):
         'f_T1_s_d': 11,
         'f_T1_t_c': 11,
         'f_T1_tau_mu': 10,
-        'f_T6_diluted': 11,
-        'f_V_OVER_SQRT2': 14,
+        'f_T6_diluted': 30,
+        'f_V_OVER_SQRT2': 4,
         'f_base_anch_step1': 2,
         'f_base_anchor': 22,
         'f_c_step1': 14,
-        'f_exp_b': 26,
+        'f_exp_b': 3,
         'f_exp_b_step1': 21,
         'f_exp_b_step2': 13,
         'f_exp_b_step3': 13,
         'f_exp_c': 7,
         'f_exp_c_step1': 2,
         'f_exp_c_step2': 1,
-        'f_exp_c_step3': 3,
+        'f_exp_c_step3': 9,
         'f_exp_d': 3,
         'f_exp_d10_t1_step1': 7,
-        'f_exp_d_step1': 25,
-        'f_exp_d_step2': 27,
-        'f_exp_d_step3': 13,
-        'f_exp_d_step4': 34,
-        'f_exp_e': 25,
+        'f_exp_d_step1': 9,
+        'f_exp_d_step2': 14,
+        'f_exp_d_step3': 17,
+        'f_exp_d_step4': 31,
+        'f_exp_e': 6,
         'f_exp_e_step1': 2,
         'f_exp_mu': 0,
         'f_exp_mu_step1': 22,
         'f_exp_mu_step2': 0,
         'f_exp_mu_step3': 1,
-        'f_exp_oh_t1_step1': 22,
-        'f_exp_s': 11,
+        'f_exp_oh_t1_step1': 1,
+        'f_exp_s': 17,
         'f_exp_s_step1': 7,
         'f_exp_s_step2': 5,
-        'f_exp_s_step3': 22,
-        'f_exp_t': 47,
-        'f_exp_t_step1': 46,
+        'f_exp_s_step3': 15,
+        'f_exp_t': 6,
+        'f_exp_t_step1': 3,
         'f_exp_t_step2': 3,
-        'f_exp_t_step3': 17,
+        'f_exp_t_step3': 12,
         'f_exp_tau': 9,
-        'f_exp_tau_step1': 11,
+        'f_exp_tau_step1': 14,
         'f_exp_tau_step2': 1,
-        'f_exp_tau_step3': 11,
+        'f_exp_tau_step3': 3,
         'f_exp_u': 14,
-        'f_exp_u_step1': 13,
-        'f_exp_u_step2': 45,
-        'f_exp_u_step3': 69,
+        'f_exp_u_step1': 20,
+        'f_exp_u_step2': 6,
+        'f_exp_u_step3': 10,
         'f_gated_b_s': 12,
-        'f_gated_c_u': 19,
+        'f_gated_c_u': 4,
         'f_gated_c_u_step1': 5,
-        'f_gated_mu_e': 5,
+        'f_gated_mu_e': 17,
         'f_gated_s_d': 6,
-        'f_gated_s_d_step1': 22,
+        'f_gated_s_d_step1': 19,
         'f_gated_t_c': 4,
-        'f_gated_tau_mu': 12,
+        'f_gated_tau_mu': 7,
         'f_gated_tau_mu_step1': 6,
         'f_gated_tau_mu_step2': 6,
-        'f_gated_tau_mu_step3': 22,
+        'f_gated_tau_mu_step3': 11,
         'f_gated_tau_mu_step4': 4,
         'f_lam_a_step1': 26,
-        'f_lam_d_step1': 4,
+        'f_lam_d_step1': 1,
         'f_lam_o_step1': 9,
         'f_lambda_A': 14,
-        'f_lambda_D': 7,
+        'f_lambda_D': 9,
         'f_lambda_O': 4,
         'f_log_r_b_s': 1,
-        'f_log_r_b_s_step1': 24,
-        'f_log_r_b_s_step2': 11,
-        'f_log_r_b_s_step3': 5,
+        'f_log_r_b_s_step1': 31,
+        'f_log_r_b_s_step2': 4,
+        'f_log_r_b_s_step3': 14,
         'f_log_r_b_s_step4': 3,
         'f_log_r_c_u': 3,
         'f_log_r_c_u_step1': 22,
-        'f_log_r_c_u_step2': 34,
+        'f_log_r_c_u_step2': 7,
         'f_log_r_c_u_step3': 18,
-        'f_log_r_c_u_step4': 4,
+        'f_log_r_c_u_step4': 12,
         'f_log_r_c_u_step5': 8,
-        'f_log_r_mu_e': 47,
+        'f_log_r_mu_e': 11,
         'f_log_r_mu_e_step1': 13,
         'f_log_r_mu_e_step2': 18,
-        'f_log_r_mu_e_step3': 18,
+        'f_log_r_mu_e_step3': 14,
         'f_log_r_mu_e_step4': 10,
         'f_log_r_s_d': 2,
         'f_log_r_s_d_step1': 5,
         'f_log_r_s_d_step2': 3,
         'f_log_r_s_d_step3': 10,
-        'f_log_r_s_d_step4': 32,
+        'f_log_r_s_d_step4': 5,
         'f_log_r_t_c': 28,
         'f_log_r_t_c_step1': 12,
-        'f_log_r_t_c_step2': 20,
+        'f_log_r_t_c_step2': 4,
         'f_log_r_t_c_step3': 9,
-        'f_log_r_t_c_step4': 30,
+        'f_log_r_t_c_step4': 20,
         'f_log_r_t_c_step5': 7,
         'f_log_r_tau_mu': 6,
-        'f_log_r_tau_mu_step1': 8,
+        'f_log_r_tau_mu_step1': 7,
         'f_log_r_tau_mu_step2': 15,
-        'f_log_r_tau_mu_step3': 28,
+        'f_log_r_tau_mu_step3': 19,
         'f_log_r_tau_mu_step4': 7,
         'f_log_y1_step1': 3,
-        'f_log_y2_step1': 20,
+        'f_log_y2_step1': 14,
         'f_m_bare_1': 5,
-        'f_m_bare_1_step1': 8,
+        'f_m_bare_1_step1': 5,
         'f_m_bare_2': 0,
         'f_m_bare_2_step1': 5,
         'f_m_bare_3': 0,
         'f_m_bare_3_step1': 2,
-        'f_m_bare_b': 8,
+        'f_m_bare_b': 4,
         'f_m_bare_b_step1': 17,
         'f_m_bare_b_step2': 6,
         'f_m_bare_c': 3,
         'f_m_bare_c_step1': 4,
         'f_m_bare_c_step2': 3,
-        'f_m_bare_d': 18,
+        'f_m_bare_d': 28,
         'f_m_bare_d_step1': 2,
-        'f_m_bare_d_step2': 25,
+        'f_m_bare_d_step2': 30,
         'f_m_bare_e': 6,
         'f_m_bare_e_step1': 12,
         'f_m_bare_e_step2': 13,
         'f_m_bare_mu': 14,
-        'f_m_bare_mu_step1': 9,
+        'f_m_bare_mu_step1': 0,
         'f_m_bare_mu_step2': 4,
         'f_m_bare_s': 4,
         'f_m_bare_s_step1': 21,
@@ -267,28 +269,28 @@ def get_seed(parent_a=None, parent_b=None):
         'f_m_bare_t_step1': 19,
         'f_m_bare_t_step2': 12,
         'f_m_bare_tau': 0,
-        'f_m_bare_tau_step1': 7,
+        'f_m_bare_tau_step1': 27,
         'f_m_bare_tau_step2': 8,
         'f_m_bare_u': 18,
         'f_m_bare_u_step1': 1,
-        'f_m_bare_u_step2': 24,
+        'f_m_bare_u_step2': 5,
         'f_r_net_pp_step1': 9,
         'f_t1_b_s_step1': 10,
-        'f_t1_b_s_step2': 50,
-        'f_t1_b_s_step3': 21,
-        'f_t1_c_u_step1': 30,
-        'f_t1_c_u_step2': 30,
+        'f_t1_b_s_step2': 13,
+        'f_t1_b_s_step3': 3,
+        'f_t1_c_u_step1': 19,
+        'f_t1_c_u_step2': 18,
         'f_t1_mu_e_step1': 8,
         'f_t1_mu_e_step2': 11,
         'f_t1_mu_e_step3': 11,
-        'f_t1_s_d_step1': 4,
+        'f_t1_s_d_step1': 14,
         'f_t1_s_d_step2': 12,
         'f_t1_t_c_step1': 10,
         'f_t1_t_c_step2': 7,
         'f_t1_t_c_step3': 5,
-        'f_t1_tau_mu_step1': 29,
-        'f_t1_tau_mu_step2': 24,
-        'f_t6_dil_step1': 8,
+        'f_t1_tau_mu_step1': 7,
+        'f_t1_tau_mu_step2': 8,
+        'f_t6_dil_step1': 33,
         'f_v_ovr_s2_step1': 6,
         'final_G': 15,
         'final_G_step1': 9,
@@ -296,7 +298,7 @@ def get_seed(parent_a=None, parent_b=None):
         'final_inv_alpha_MZ': 3,
         'final_m_H': 1,
         'final_m_H_step1': 0,
-        'final_m_H_step2': 1,
+        'final_m_H_step2': 8,
         'final_m_b': 3,
         'final_m_c': 3,
         'final_m_d': 4,
@@ -322,74 +324,74 @@ def get_seed(parent_a=None, parent_b=None):
         'g_R_net': 7,
         'g_r_net_step1': 2,
         'g_r_net_step2': 0,
-        'gamma_sum': 9,
+        'gamma_sum': 13,
         'gamma_term_a': 3,
-        'gamma_term_b': 16,
+        'gamma_term_b': 9,
         'h_T1': 7,
         'h_T2': 11,
         'h_T4': 10,
         'h_m_H0': 3,
         'h_m_h0_step1': 0,
-        'h_t1_step1': 10,
-        'h_t2_step1': 13,
+        'h_t1_step1': 13,
+        'h_t2_step1': 7,
         'h_t4_step1': 3,
-        'k_mix_step1': 50,
-        'k_step1': 31,
+        'k_mix_step1': 25,
+        'k_step1': 41,
         'k_step2': 17,
         'lam_step1': 8,
-        'lam_step2': 18,
+        'lam_step2': 21,
         'lam_step3': 13,
-        'loop_ALPHA_Z': 25,
+        'loop_ALPHA_Z': 4,
         'loop_ALPHA_Z_step1': 3,
         'loop_AMP_D_CORR': 0,
         'loop_AMP_D_CORR_step1': 12,
-        'loop_AMP_O_CORR': 1,
+        'loop_AMP_O_CORR': 13,
         'loop_AMP_O_CORR_step1': 3,
-        'loop_R_net_per_pair': 5,
-        'loop_dm1_qed': 9,
-        'loop_dm2_qcd_d': 17,
+        'loop_R_net_per_pair': 14,
+        'loop_dm1_qed': 1,
+        'loop_dm2_qcd_d': 4,
         'loop_dm2_qcd_d_step1': 3,
         'loop_dm2_qcd_u': 28,
         'loop_dm2_qcd_u_step1': 16,
-        'loop_dm2_qed': 5,
-        'loop_factor': 25,
-        'loop_factor_step1': 5,
-        'loop_factor_step2': 12,
+        'loop_dm2_qed': 16,
+        'loop_factor': 17,
+        'loop_factor_step1': 7,
+        'loop_factor_step2': 8,
         'loop_m_e_phys_step1': 7,
-        'loop_m_e_phys_step2': 54,
+        'loop_m_e_phys_step2': 14,
         'loop_m_e_phys_step3': 15,
         'loop_m_mu_phys_step1': 14,
         'loop_m_phys_step1': 11,
         'loop_m_ratio_step1': 6,
         'loop_m_ratio_step2': 7,
         'loop_m_tau_phys_step1': 6,
-        'loop_r_net_pp_step1': 23,
+        'loop_r_net_pp_step1': 13,
         'loop_t_mass': 10,
         'loop_t_mass_step1': 10,
-        'loop_t_mass_step2': 17,
+        'loop_t_mass_step2': 14,
         'loop_t_mass_step3': 4,
         'm_pl_j_step1': 8,
         'm_pl_kg_step1': 0,
         'm_pl_kg_step2': 15,
-        'main_C_QED_phys': 26,
-        'main_c_qed_step1': 19,
-        'main_c_qed_step2': 26,
-        'n_efolds_step1': 37,
+        'main_C_QED_phys': 17,
+        'main_c_qed_step1': 2,
+        'main_c_qed_step2': 9,
+        'n_efolds_step1': 5,
         'nu_M_R': 9,
         'nu_alpha_Z': 5,
-        'nu_alpha_z_step1': 15,
+        'nu_alpha_z_step1': 21,
         'nu_bare_ev': 16,
         'nu_bare_ev_step1': 12,
         'nu_bare_gev': 15,
-        'nu_bare_gev_step1': 7,
+        'nu_bare_gev_step1': 11,
         'nu_bare_gev_step2': 13,
-        'nu_m_D': 6,
-        'nu_m_d_step1': 15,
+        'nu_m_D': 4,
+        'nu_m_d_step1': 2,
         'nu_m_d_step2': 0,
-        'nu_m_r_step1': 27,
+        'nu_m_r_step1': 9,
         'nu_m_r_step2': 2,
         'nu_y': 12,
-        'nu_y_step1': 5,
+        'nu_y_step1': 2,
         'p_g_o_step1': 6,
         'phi_step1': 6,
         'ratio_bs_step1': 4,
@@ -397,46 +399,46 @@ def get_seed(parent_a=None, parent_b=None):
         'ratio_sd_step1': 2,
         'ratio_tc_step1': 1,
         'rho_exp_term': 125,
-        'rho_exp_term_step1': 26,
+        'rho_exp_term_step1': 23,
         'rho_exp_term_step2': 4,
         'rho_exp_term_step3': 12,
-        'rho_exp_term_step4': 15,
-        'rho_kappa': 4,
-        'rho_kappa_step1': 49,
+        'rho_exp_term_step4': 7,
+        'rho_kappa': 12,
+        'rho_kappa_step1': 7,
         'rho_kappa_step2': 6,
         'rho_kappa_step3': 6,
-        'rho_kappa_step4': 18,
+        'rho_kappa_step4': 2,
         'rho_vac_bare': 3,
-        'rho_vac_bare_step1': 16,
-        'rho_vac_bare_step2': 9,
-        's_step1': 27,
-        'sin2_R1': 23,
+        'rho_vac_bare_step1': 15,
+        'rho_vac_bare_step2': 11,
+        's_step1': 31,
+        'sin2_R1': 14,
         'sin2_R2': 4,
-        'sin2_bare': 23,
+        'sin2_bare': 13,
         'sin2_bare_step1': 13,
         'sin2_denom': 3,
-        'sin2_denom_step1': 35,
+        'sin2_denom_step1': 9,
         'sin2_denom_step2': 7,
-        'sin2_r1_step1': 21,
-        'sin2_r1_step2': 14,
+        'sin2_r1_step1': 5,
+        'sin2_r1_step2': 20,
         'sin2_r1_step3': 3,
-        'sin2_r1_step4': 5,
-        'sin2_r1_step5': 5,
+        'sin2_r1_step4': 15,
+        'sin2_r1_step5': 33,
         'sin2_r2_step1': 14,
         'sin2_r2_step2': 13,
         'sqrt2_q_step1': 7,
-        't2_corr_step1': 18,
-        't3_corr_step1': 9,
+        't2_corr_step1': 20,
+        't3_corr_step1': 2,
         't4_corr_step1': 5,
-        't5_corr_step1': 34,
-        't6_corr_step1': 13,
-        't_to_mu_step1': 25,
+        't5_corr_step1': 33,
+        't6_corr_step1': 32,
+        't_to_mu_step1': 19,
         't_to_mu_step2': 1,
-        't_to_mz_step1': 22,
+        't_to_mz_step1': 5,
         't_to_mz_step2': 7,
         't_to_v_step1': 4,
-        't_to_v_step2': 8,
-        'v_dot_s_step1': 26,
+        't_to_v_step2': 14,
+        'v_dot_s_step1': 6,
         'v_dot_s_step2': 12,
         'v_dot_v_step1': 9,
         'v_exp_step': 6,
@@ -584,6 +586,8 @@ def get_seed(parent_a=None, parent_b=None):
 # ---
 
 def round_if_needed(value, precision):
+    if ANALOG_HYPOTHESIS:
+        return value
     """Applies rounding if precision is specified (not None)."""
     if precision is None:
         return value
@@ -905,7 +909,7 @@ def run_simulation(P_in, O, verbose=True):
 
         # 4. Apply the NEW SHARED DQE snap to the ratio itself
         R_snapped = R_raw
-        if P['dqe_p_ANGLE_RATIO'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_ANGLE_RATIO'] is not None:
             snap_factor = 10**-P['dqe_p_ANGLE_RATIO']
             R_snapped = round(R_raw / snap_factor) * snap_factor
 
@@ -996,7 +1000,7 @@ def run_simulation(P_in, O, verbose=True):
 
         # 3. Apply the NEW SHARED DQE snap to the ratio itself
         R_snapped = R_raw
-        if P['dqe_p_ANGLE_RATIO'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_ANGLE_RATIO'] is not None:
             snap_factor = 10**-P['dqe_p_ANGLE_RATIO']
             R_snapped = round(R_raw / snap_factor) * snap_factor
 
@@ -1006,6 +1010,34 @@ def run_simulation(P_in, O, verbose=True):
         # 5. Apply final rounding (as before) and store
         theta_C_val = round_if_needed(theta_C_val, P['final_theta_C'])
         results['theta_C'] = theta_C_val
+        # *** END EXPERIMENTAL ANGLE QUANTIZATION ***
+
+
+        # --- 7i. calc_theta_23 ---
+        # *** START EXPERIMENTAL ANGLE QUANTIZATION (SHARED LEVER) ***
+        ckm23_denom_step1 = round_if_needed(B_LIN - V_DOT_S, P['ckm23_denom_step1'])
+        denom = round_if_needed(ckm23_denom_step1, P['ckm23_denom'])
+        if denom == 0: denom = 1e-99
+        
+        # 1. Calculate the raw, unquantized angle
+        #    (Uses the *snapped* theta_C_val from the previous step as its input)
+        theta_23_raw = round_if_needed(theta_C_val / denom, P['ckm23_fin_step1'])
+        
+        # 2. Create the ratio to a full 360-degree rotation
+        R_raw = theta_23_raw / 360.0
+        
+        # 3. Apply the NEW SHARED DQE snap to the ratio itself
+        R_snapped = R_raw
+        if not ANALOG_HYPOTHESIS and P['dqe_p_ANGLE_RATIO'] is not None:
+            snap_factor = 10**-P['dqe_p_ANGLE_RATIO']
+            R_snapped = round(R_raw / snap_factor) * snap_factor
+            
+        # 4. Reconstruct the final angle from the snapped ratio
+        theta_23_val = R_snapped * 360.0
+        
+        # 5. Apply final rounding (as before) and store
+        theta_23_val = round_if_needed(theta_23_val, P['ckm23_final'])
+        results['theta_23'] = theta_23_val
         # *** END EXPERIMENTAL ANGLE QUANTIZATION ***
 
 
@@ -1069,7 +1101,7 @@ def run_simulation(P_in, O, verbose=True):
                 return round_if_needed(0.0, P['f_gated_t_c'])
             return 0.0
 
-        # --- 7m. get_fermion_log_ratios ---
+        ## --- 7m. get_fermion_log_ratios ---
         log_ratios = {}
         f_c_step1 = round_if_needed(T_TO_V / 10.0, P['f_c_step1'])
         C = round_if_needed(f_c_step1, P['f_C'])
@@ -1095,7 +1127,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_mu_e_step2 = round_if_needed(f_log_r_mu_e_step1 + gated_mu_e, P['f_log_r_mu_e_step2'])
         f_log_r_mu_e_step3 = round_if_needed(f_log_r_mu_e_step2 - R2_val, P['f_log_r_mu_e_step3'])
         log_ratio_bare_mu_e = round_if_needed(f_log_r_mu_e_step3 - R_net_per_pair, P['f_log_r_mu_e_step4'])
-        if P['dqe_p_me'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_me'] is not None:
             log_ratio_bare_mu_e = round(log_ratio_bare_mu_e / (10 ** -P['dqe_p_me'])) * (10 ** -P['dqe_p_me'])
         log_ratios['muon_A4/electron_A4'] = round_if_needed(log_ratio_bare_mu_e + C_QED_phys, P['f_log_r_mu_e'])
 
@@ -1108,7 +1140,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_tau_mu_step2 = round_if_needed(f_log_r_tau_mu_step1 + gated_tau_mu, P['f_log_r_tau_mu_step2'])
         f_log_r_tau_mu_step3 = round_if_needed(f_log_r_tau_mu_step2 + R2_val, P['f_log_r_tau_mu_step3'])
         log_ratio_bare_tau_mu = round_if_needed(f_log_r_tau_mu_step3 + R_net_per_pair, P['f_log_r_tau_mu_step4'])
-        if P['dqe_p_tm'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_tm'] is not None:
             log_ratio_bare_tau_mu = round(log_ratio_bare_tau_mu / (10 ** -P['dqe_p_tm'])) * (10 ** -P['dqe_p_tm'])
         log_ratios['tau_A4/muon_A4'] = round_if_needed(log_ratio_bare_tau_mu + C_QED_phys, P['f_log_r_tau_mu'])
 
@@ -1121,7 +1153,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_s_d_step2 = round_if_needed(f_log_r_s_d_step1 - T_CORR['T3'], P['f_log_r_s_d_step2'])
         f_log_r_s_d_step3 = round_if_needed(f_log_r_s_d_step2 - R_net_per_pair, P['f_log_r_s_d_step3'])
         log_ratio_bare_sd = round_if_needed(f_log_r_s_d_step3 + gated_sd, P['f_log_r_s_d_step4'])
-        if P['dqe_p_sd'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_sd'] is not None:
             log_ratio_bare_sd = round(log_ratio_bare_sd / (10 ** -P['dqe_p_sd'])) * (10 ** -P['dqe_p_sd'])
         log_ratios['strange_D10/down_D10'] = round_if_needed(log_ratio_bare_sd, P['f_log_r_s_d'])
 
@@ -1137,7 +1169,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_b_s_step2 = round_if_needed(f_log_r_b_s_step1 - T_CORR['T3'], P['f_log_r_b_s_step2'])
         f_log_r_b_s_step3 = round_if_needed(f_log_r_b_s_step2 - R_net_per_pair, P['f_log_r_b_s_step3'])
         log_ratio_bare_bs = round_if_needed(f_log_r_b_s_step3 + gated_bs, P['f_log_r_b_s_step4'])
-        if P['dqe_p_bs'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_bs'] is not None:
             log_ratio_bare_bs = round(log_ratio_bare_bs / (10 ** -P['dqe_p_bs'])) * (10 ** -P['dqe_p_bs'])
         log_ratios['bottom_D10/strange_D10'] = round_if_needed(log_ratio_bare_bs, P['f_log_r_b_s'])
 
@@ -1151,7 +1183,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_c_u_step3 = round_if_needed(f_log_r_c_u_step2 + T_CORR['T4'], P['f_log_r_c_u_step3'])
         f_log_r_c_u_step4 = round_if_needed(f_log_r_c_u_step3 - R_net_per_pair, P['f_log_r_c_u_step4'])
         log_ratio_bare_cu = round_if_needed(f_log_r_c_u_step4 + gated_cu, P['f_log_r_c_u_step5'])
-        if P['dqe_p_cu'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_cu'] is not None:
             log_ratio_bare_cu = round(log_ratio_bare_cu / (10 ** -P['dqe_p_cu'])) * (10 ** -P['dqe_p_cu'])
         log_ratios['charm_Oh/up_Oh'] = round_if_needed(log_ratio_bare_cu, P['f_log_r_c_u'])
 
@@ -1168,7 +1200,7 @@ def run_simulation(P_in, O, verbose=True):
         f_log_r_t_c_step3 = round_if_needed(f_log_r_t_c_step2 + T_CORR['T4'], P['f_log_r_t_c_step3'])
         f_log_r_t_c_step4 = round_if_needed(f_log_r_t_c_step3 - R_net_per_pair, P['f_log_r_t_c_step4'])
         log_ratio_bare_tc = round_if_needed(f_log_r_t_c_step4 + gated_tc, P['f_log_r_t_c_step5'])
-        if P['dqe_p_tc'] is not None:
+        if not ANALOG_HYPOTHESIS and P['dqe_p_tc'] is not None:
             log_ratio_bare_tc = round(log_ratio_bare_tc / (10 ** -P['dqe_p_tc'])) * (10 ** -P['dqe_p_tc'])
         log_ratios['top_Oh/charm_Oh'] = round_if_needed(log_ratio_bare_tc, P['f_log_r_t_c'])
 
