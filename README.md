@@ -74,11 +74,13 @@ The **Analog Hypothesis test** (Section 🧬) proves this isn't cherry-picking:
 - `ANALOG_HYPOTHESIS = False`: 26/26 matches, 0.048% deviation
 - `ANALOG_HYPOTHESIS = True`: 12/26 matches, 0.642% deviation
 
-The Counterintuitive Result?
+**The Counterintuitive Result?**
 
-**If the universe operates with continuous analog precision**, then artificially rounding calculations should *degrade* accuracy.
+If the universe operates with continuous analog precision, then artificially rounding calculations should *degrade* accuracy.
 
-*We observe the opposite.*
+***We observe the opposite.***
+
+---
 
 **"What if it's wrong?"**
 
@@ -594,10 +596,6 @@ The precision of these results (26/26 constants within 1σ, average deviation 0.
 
 ---
 
-**"The universe is not described by mathematics—it *is* mathematics computing itself into existence through geometric necessity. Reality is the most efficient system capable of spontaneous complexity generation, and the laws of physics are the inevitable consequences of that single principle."**
+**The universe is not described by mathematics—it *is* mathematics computing itself into existence through geometric necessity. Reality is the most efficient system capable of spontaneous complexity generation, and the laws of physics are the inevitable consequences of that single principle.**
 
 ---
-
-### Statistical Significance
-
-A Bayesian analysis comparing these results to the null hypothesis (that 26 constants matching within 1σ is coincidental) yields a Bayes factor exceeding **3×10³²** in favor of Flux Dynamics capturing genuine structure. This is decisive evidence that the framework reflects deep physical principles rather than curve-fitting.
