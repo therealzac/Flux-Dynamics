@@ -1,25 +1,17 @@
-<table>
-  <tr>
-    <td width="50%">
-      <img src="https://github.com/user-attachments/assets/10b9869a-5b86-40fe-834a-98f48cbc6bd3" alt="d10_root_system_glow" width="100%" />
-    </td>
-    <td width="50%" valign="top">
-      <h1>Flux Dynamics: Procedural Quantization (FDC-4.0)</h1>
-      <p><strong>A geometric framework deriving 26 fundamental physical constants from Planck-scale sphere packing—implemented as a testable computational model.</strong></p>
-      <hr>
-      <p>
-        <strong>📚 <a href="https://docsend.com/view/5n5x75s8jrsa3dv3">Read The Paper</a></strong><br>
-        <em>Access via DocSend</em>
-      </p>
-      <p><strong>🎙 Audio Series</strong></p>
-      <ol>
-        <li><a href="https://drive.google.com/file/d/1rhsf1dC6gjjIY8h_z8g6qCIj0uWRVUrE">Part 1: Emergence</a></li>
-        <li><a href="https://drive.google.com/file/d/1djyUG9P8yogcFK2bhsAGn4butE826YkE">Part 2: The Calculus</a></li>
-        <li><a href="https://drive.google.com/file/d/1dEoC1PBl4iwbg_lh2OW5f4ajp174XNBX">Part 3: Unification</a></li>
-      </ol>
-    </td>
-  </tr>
-</table>
+<img src="https://github.com/user-attachments/assets/10b9869a-5b86-40fe-834a-98f48cbc6bd3" align="left" width="45%" style="margin-right: 20px; margin-bottom: 20px;" alt="d10_root_system_glow" />
+
+### Flux Dynamics
+
+**A geometric framework deriving 26 fundamental physical constants from Planck-scale sphere packing—implemented as a testable computational model.**
+
+> **📚 [Read The Paper](https://docsend.com/view/5n5x75s8jrsa3dv3)**
+>
+> **🎙 Audio Series**
+> - [**Part 1: Emergence**](https://drive.google.com/file/d/1rhsf1dC6gjjIY8h_z8g6qCIj0uWRVUrE)
+> - [**Part 2: The Calculus**](https://drive.google.com/file/d/1djyUG9P8yogcFK2bhsAGn4butE826YkE)
+> - [**Part 3: Unification**](https://drive.google.com/file/d/1dEoC1PBl4iwbg_lh2OW5f4ajp174XNBX)
+
+<br clear="left"/>
 
 ## 🌌 Project Overview
 
