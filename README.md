@@ -2,6 +2,14 @@
 
 **A geometric framework deriving 26 fundamental physical constants from Planck-scale sphere packing—implemented as a testable computational model.**
 
+> **📚 [Read The Paper](https://docsend.com/view/5n5x75s8jrsa3dv3)**
+> *Access via DocSend*
+> 
+> **🎙 Audio Series**
+> 1.  [**Part 1: Emergence**](https://drive.google.com/file/d/1rhsf1dC6gjjIY8h_z8g6qCIj0uWRVUrE)
+> 2.  [**Part 2: The Calculus**](https://drive.google.com/file/d/1djyUG9P8yogcFK2bhsAGn4butE826YkE)
+> 3.  [**Part 3: Unification**](https://drive.google.com/file/d/1dEoC1PBl4iwbg_lh2OW5f4ajp174XNBX)
+
 ---
 
 ## 🌌 Project Overview
