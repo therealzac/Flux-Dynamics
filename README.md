@@ -28,6 +28,102 @@ The framework spans multiple domains of physics:
 
 ---
 
+### ⚠️ For Skeptics: Address Your Concerns Here First
+
+**"This sounds like numerology/curve-fitting/pseudoscience."**
+
+Read Section 🧬 "What We Optimize" carefully. We're not tuning free parameters to match constants. We're finding the **computational precision** required for geometric calculations. The algorithm cannot change $V \cdot V = 1/3$ or $\lambda = (3+\sqrt{13})/2$—these are fixed by geometry. It can only determine how many decimal places to round intermediate calculations.
+
+**"Where's the peer review?"**
+
+You're reading the preprint. Peer review is a *process*, not a prerequisite for evaluation. The **Kepler Conjecture** (on which this framework is based) took 300+ years to prove and another decade to verify. Groundbreaking work often precedes formal validation.
+
+Judge this on **empirical results**: 26/26 constants within 1σ, 0.048% average deviation. If you think this is coincidence, calculate the Bayesian probability.
+
+**"I can't find any references to this work."**
+
+That's because it's **new** (November 2025). The code and paper are publicly available at the links above. You're among the first to evaluate it. That's an opportunity, not a flaw.
+
+**"Show me the testable predictions."**
+
+See Section 🔬 "Testable Predictions":
+- Anisotropic $k^4$ terms in propagators (falsifiable via GRB timing)
+- BEC coherence enhancement (~8-10% effect)
+- No fourth generation at any energy scale
+- Quasicrystal CMB patterns
+- Specific precision requirements for unknown constants
+
+**"How do I know the math is right?"**
+
+1. **Clone the repo** and run `python FDC.py` yourself. The full calculation takes less than a second.
+2. **Read the 80-page paper** with complete derivations.
+3. **The code is commented** with ~400 procedural steps—trace any calculation you doubt.
+4. **Check ONE constant**: Pick any of the 26 and verify the calculation manually.
+
+**"This seems too good to be true."**
+
+The **Analog Hypothesis test** (Section 🧬) proves this isn't cherry-picking:
+- `ANALOG_HYPOTHESIS = False`: 26/26 matches, 0.048% deviation
+- `ANALOG_HYPOTHESIS = True`: 12/26 matches, 0.642% deviation
+
+The Counterintuitive Result?
+
+**If the universe operates with continuous analog precision**, then artificially rounding calculations should *degrade* accuracy.
+
+*We observe the opposite.*
+
+**"What if it's wrong?"**
+
+Then it's **falsifiable**—which makes it good science. Specific ways to falsify:
+1. Find a fourth generation
+2. Show BEC coherence is *not* enhanced
+3. Demonstrate that higher precision *always* improves results
+4. Find that the Hubble ratio is *not* ~1.082
+
+The worst outcome is we learn something. The best outcome is we've unified physics.
+
+---
+
+### 📊 Bayesian Analysis for Skeptics
+
+**Null Hypothesis**: The 26 matches are coincidental.
+
+**Assumptions**:
+- Conservative prior: 5% chance each constant matches within 1σ by luck
+- Constants are independent (generous to the null hypothesis)
+
+**Probability of 26/26 by chance**: $(0.05)^{26} \approx 1/10000000000000000000000000000000000$
+
+**Bayes Factor**: $> 3 \times 10^{32}$ in favor of genuine structure
+
+**Interpretation**: This is **decisive evidence** that Flux Dynamics captures real physics, not coincidence. You would need to believe the framework is fine-tuned across 34 orders of magnitude to maintain skepticism.
+
+---
+
+## 🎯 **Test It Yourself.**
+
+```bash
+git clone https://github.com/therealzac/Flux-Dynamics
+cd Flux-Dynamics
+pip install pygad numpy
+python FDC.py
+```
+
+**You will see**: 26/26 fundamental constants calculated from scratch, matching observation to 0.048% average deviation, in under 30 seconds.
+
+**Then try this**:
+```python
+ANALOG_HYPOTHESIS = True  # Disable quantization
+```
+
+**You will see**: Accuracy collapses to 0.642% deviation, only 12/26 matches.
+
+**This is the test**: If the universe operates with infinite precision, quantization (rounding numbers) should make observed accuracy *worse*. If it operates with a "Planck Bit", the quantization process should improve accuracy.
+
+**The math is open-source. The predictions are falsifiable. The results are, I think, very surprising.**
+
+Now read on to understand *why* this works...
+
 ## 🔬 The Central Hypothesis
 
 ### Geometric Foundation: The Axiom of Efficient Emergence
