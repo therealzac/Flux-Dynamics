@@ -1499,33 +1499,26 @@ def run_simulation(P_in, O, verbose=True, header_info=None):
 # Needs to be outside the class for efficient multiprocessing on macOS
 def global_fitness_func(ga_instance, solution, solution_idx):
     # 1. ENFORCE PRECISION ON WORKER PROCESS
-    # This is required because 'spawned' processes on macOS reset global state
     target_dps = int(FINAL_CAP + 25)
     if mp.dps != target_dps:
         mp.dps = target_dps
+
     # 2. Decode Solution
-    # We use the global keys to avoid passing 'self'
-    # (Ensure ALL_GENE_KEYS is available globally, or pass it via context)
-    # For this script, we can reconstruct the dictionary efficiently:
     test_config = {}
     total_digits = 0
-   
-    # We grab the keys from the global scope (defined in your get_seed function)
-    # A cleaner way in a script is to just rely on the sorted order:
     keys = sorted(get_seed().keys())
-   
+    
     for i, key in enumerate(keys):
         gene_value = int(solution[i])
         test_config[key] = gene_value
         total_digits += gene_value
+
     try:
         # 1. Run Simulation & Get Full Results
-        # (Fixed typo: 'raw_results' is one word)
+        # Note: raw_results is a list of tuples: (key, val, obs, err, dev, sigma)
         avg_sigma, avg_dev, total_matches, raw_results = run_simulation(test_config, OBSERVED, verbose=False)
 
-
         TARGET_MATCHES = len(OBSERVED)
-        
         
         # 🎯 BULLSEYE LOGIC:
         adjusted_sigmas = []
@@ -1539,13 +1532,9 @@ def global_fitness_func(ga_instance, solution, solution_idx):
                     adjusted_sigmas.append(0.0)
                 else:
                     # We use 1% of the Percent Deviation as the score cost.
-                    # Example: 2.0% Deviation -> 0.02 Score.
-                    # This keeps the cost WAY below 1.0 (the threshold for "Unsolved"),
-                    # but still encourages the GA to push towards 0.00% deviation.
                     adjusted_sigmas.append(d * 0.01)
             else:
                 # 🔴 UNSOLVED: Full Sigma Penalty.
-                # Always > 1.0
                 adjusted_sigmas.append(s)
                 
         # Recalculate average based on Adjusted Sigma
@@ -1559,13 +1548,10 @@ def global_fitness_func(ga_instance, solution, solution_idx):
                     target_sigma = float(target_res[5])
                     
                     if target_sigma > 1.0:
-                        # 🔴 PAIN: It's still broken. Amplify error 50x to force focus.
+                        # 🔴 PAIN: Amplify error 50x
                         avg_sigma += (target_sigma * 50.0)
                     else:
-                        # 🟢 BOUNTY: Target Neutralized!
-                        # We apply a 20% discount to the TOTAL error for every target fixed.
-                        # This makes a solution that fixes a weakness significantly more attractive
-                        # than a generalist solution.
+                        # 🟢 BOUNTY: 20% discount on total error
                         avg_sigma *= 0.8
 
         # Cast to float for PyGAD
@@ -1574,36 +1560,51 @@ def global_fitness_func(ga_instance, solution, solution_idx):
 
     except Exception:
         return 0.0
+
     # =======================================================
     # 🟢 REAL-TIME VISUALIZATION
     # =======================================================
     print(".", end="", flush=True)
-    # =======================================================
-    
+
     # 🪒 OCCAM'S RAZOR (Digit Minimization Bonus)
-    # We calculate a tiny bonus for using fewer digits. 
-    # total_digits is usually ~20,000. 
-    # 1 / 20000 = 0.00005.
-    # This acts as a tie-breaker: If two configs have the same Sigma, the simpler one wins.
+    # Acts as a tie-breaker.
     digit_bonus = 1.0 / (total_digits + 1.0)
 
     TARGET_MATCHES = len(OBSERVED)
     
-    if total_matches < TARGET_MATCHES:
-        # PHASE 1: SEARCHING
-        base_fitness = 1.0 / (avg_sigma + 1e-9)
-        
-        # We add the digit bonus. 
-        # A 0.00005 boost is enough to distinguish identical physics scores 
-        # without overpowering the drive for better sigma.
-        return base_fitness + digit_bonus
-    else:
-        # PHASE 2: REFINING (Already perfect matches)
+    # =======================================================
+    # 🚀 THREE-STAGE FITNESS ROCKET
+    # =======================================================
+
+    # --- STAGE 3: PERFECTION (Holy Grail) ---
+    # We have all 26 matches. Now we just want to make them tighter.
+    if total_matches == TARGET_MATCHES:
         fitness = 1_000_000.0
         fitness += (1.0 / (avg_dev + 1e-9))
-        # We weigh digits heavier here because the physics is already "solved"
         fitness += (digit_bonus * 100.0)
         return fitness
+
+    # --- STAGE 2: ASSEMBLY (Prioritize Match Count) ---
+    # The Physics is good (Avg Sigma <= 1.0), but we are missing specific keys.
+    # We ignore the average now and aggressively reward the COUNT of matches.
+    elif avg_sigma <= 1.0:
+        # Base score is 500 points per match found.
+        # Max score here is 25 * 500 = 12,500 (Stage 3 starts at 1,000,000)
+        match_score = total_matches * 500.0
+        
+        # We add a small fraction of the sigma score just to keep it stable
+        stability_bonus = 1.0 / (avg_sigma + 1e-9)
+        
+        return match_score + stability_bonus + digit_bonus
+
+    # --- STAGE 1: SEARCHING (Prioritize Average Physics) ---
+    # The Physics is still broken (Avg Sigma > 1.0).
+    # We need to get the general theory right before worrying about specific counts.
+    else:
+        # Max score here is usually < 10.0
+        base_fitness = 1.0 / (avg_sigma + 1e-9)
+        return base_fitness + digit_bonus
+
 class GAManager:
     def __init__(self, population_size=50, precision_cap=125, total_epochs_to_run=30):
         print(f"--- 🧬 Initializing GA Manager for FINAL CAP = {precision_cap} ---")
@@ -1709,6 +1710,13 @@ class GAManager:
             solution, best_fitness, _ = ga_instance.best_solution(pop_fitness=ga_instance.last_generation_fitness)
         except TypeError:
             return
+            
+        # 🏆 VICTORY INTERCEPT (Only for fresh searches) 🏆
+        # If we hit Stage 3 (All 26 Matches) AND we started from scratch:
+        if best_fitness > 999_999 and not MANUAL_ADAM_CONFIG:
+            print(f"\n\n🚀 HOLY GRAIL ACHIEVED! (Fitness: {best_fitness:.2f})")
+            print("🛑 Stopping GA immediately to capture solution...")
+            return "stop"
         
         # 🐢 SEA TURTLE BIRTH LOGIC 🐢
         # Only applies if we are explicitly in Sea Turtle Mode (Epoch 1).
@@ -1969,6 +1977,8 @@ class GAManager:
             # If Emperor reigns, give +100 bonus gens
             bonus = 100 if self.emperor_is_reigning else 0
             self.current_soft_gen_cap = 100 * math.ceil(reference_score) + bonus
+            if self.current_soft_gen_cap > 2000:
+                self.current_soft_gen_cap = 2000
             
             # Initial Convergence Cap
             self.current_convergence_cap = 100
@@ -2000,6 +2010,25 @@ class GAManager:
             self.abort_flag = False
             start_time = time.time()
             ga_instance.run()
+
+            # 🏆 VICTORY CHECK & EXIT (Only for fresh searches)
+            if self.global_best_fitness > 999_999 and not MANUAL_ADAM_CONFIG:
+                print("\n" + "="*70)
+                print("🏆 26/26 MATCHES FOUND! PRINTING WINNING CONFIGURATION:")
+                print("="*70)
+                
+                # Decode the best solution
+                best_config = self.decode_solution_to_config(self.global_best_solution)
+                
+                # Print dictionary format suitable for MANUAL_ADAM_CONFIG
+                print("MANUAL_ADAM_CONFIG = {")
+                for k, v in sorted(best_config.items()):
+                    print(f"    '{k}': {v},")
+                print("}")
+                print("="*70)
+                print(f"Final Fitness: {self.global_best_fitness}")
+                print("Exiting...")
+                sys.exit()
             
             # 🐢 CHECK FOR SEA TURTLE DEATH (Epoch 1 Only)
             if self.abort_flag:
