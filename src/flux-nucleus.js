@@ -291,8 +291,8 @@ const NucleusSimulator = (function(){
         const statusEl = document.getElementById('nucleus-status');
         if(statusEl) statusEl.textContent = 'initializing...';
 
-        // 1. Set L2 lattice — nucleus needs L2 for full tet geometry
-        document.getElementById('lattice-slider').value = 2;
+        // 1. Set L3 lattice — nucleus needs L3 for full tet geometry + surrounding space
+        document.getElementById('lattice-slider').value = 3;
         if(typeof updateLatticeLevel === 'function') updateLatticeLevel();
 
         // 2. Clear state
@@ -534,7 +534,7 @@ const NucleusSimulator = (function(){
             { label: 'proton down', color: 0x44cc66 },
             { label: 'neutron up',  color: 0x4488ff },
             { label: 'neutron down', color: 0xff4444 },
-            { label: 'barionic',    color: 0xffffff },
+            { label: 'bosonic',     color: 0xffffff },
             { label: 'weak',        color: 0xcc44ff },
         ];
         let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;

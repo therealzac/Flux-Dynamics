@@ -212,6 +212,47 @@ const WEAK_FORCE_COLOR = 0xcc44ff;
 
 const XON_TRAIL_LENGTH = 50;
 
+// ── Weak Force Lifecycle Recorder ──
+// Records up to 10 full lifecycles of weak force excitations for debugging.
+// Each record: { xonIdx, entryTick, entryNode, exitTick, exitNode, exitReason, path }
+const _weakLifecycleLog = [];
+const _weakActiveTracking = new Map(); // xonIdx → { entryTick, entryNode, path }
+const WEAK_LIFECYCLE_MAX = 10;
+function _weakLifecycleEnter(xon, source) {
+    if (_weakLifecycleLog.length >= WEAK_LIFECYCLE_MAX && _weakActiveTracking.size === 0) return;
+    const idx = _demoXons.indexOf(xon);
+    _weakActiveTracking.set(idx, {
+        entryTick: _demoTick, entryNode: xon.node, source, path: [xon.node]
+    });
+    console.log(`[WEAK LIFECYCLE] ENTER #${_weakLifecycleLog.length + 1}: xon${idx} at node ${xon.node} (${source}) tick=${_demoTick}`);
+}
+function _weakLifecycleStep(xon) {
+    const idx = _demoXons.indexOf(xon);
+    const track = _weakActiveTracking.get(idx);
+    if (track) track.path.push(xon.node);
+}
+function _weakLifecycleExit(xon, reason) {
+    const idx = _demoXons.indexOf(xon);
+    const track = _weakActiveTracking.get(idx);
+    if (!track) return;
+    const record = {
+        xonIdx: idx, entryTick: track.entryTick, entryNode: track.entryNode,
+        exitTick: _demoTick, exitNode: xon.node, exitReason: reason,
+        source: track.source, path: track.path, duration: _demoTick - track.entryTick
+    };
+    _weakLifecycleLog.push(record);
+    _weakActiveTracking.delete(idx);
+    console.log(`[WEAK LIFECYCLE] EXIT #${_weakLifecycleLog.length}: xon${idx} at node ${xon.node} reason="${reason}" duration=${record.duration} path=[${record.path.join('→')}]`);
+    if (_weakLifecycleLog.length === WEAK_LIFECYCLE_MAX) {
+        console.log('[WEAK LIFECYCLE] ═══ 10 LIFECYCLES RECORDED ═══');
+        console.table(_weakLifecycleLog.map(r => ({
+            xon: r.xonIdx, src: r.source, entry: `${r.entryNode}@${r.entryTick}`,
+            exit: `${r.exitNode}@${r.exitTick}`, reason: r.exitReason,
+            ticks: r.duration, hops: r.path.length - 1
+        })));
+    }
+}
+
 // Spawn a xon at a node with spark, trail, and tween — mirrors excitation visuals.
 // Color by quark function: pu=yellow, pd=green, nu=blue, nd=red.
 function _spawnXon(face, quarkType, sign) {
@@ -471,6 +512,9 @@ let _gluonStoredPairs = 0;
 // Annihilate two xons into a stored gluon pair.
 // Both xons are deactivated and visually removed.
 function _annihilateXonPair(xonA, xonB) {
+    // Record weak lifecycle exit if either was in weak mode
+    if (xonA._mode === 'weak') _weakLifecycleExit(xonA, 'ANNIHILATED');
+    if (xonB._mode === 'weak') _weakLifecycleExit(xonB, 'ANNIHILATED');
     xonA.alive = false;
     xonB.alive = false;
     // Visual cleanup: hide spark + trail
@@ -479,7 +523,7 @@ function _annihilateXonPair(xonA, xonB) {
     if (xonB.group) xonB.group.visible = false;
     if (xonB.trailLine) xonB.trailLine.visible = false;
     _gluonStoredPairs++;
-    console.log(`[gluon] Annihilation at node ${xonA.node}: stored=${_gluonStoredPairs}, alive=${_demoXons.filter(x=>x.alive).length}`);
+    console.log(`[gluon] Annihilation at node ${xonA.node}: stored=${_gluonStoredPairs}, alive=${_demoXons.filter(x=>x.alive).length} modes=[${xonA._mode},${xonB._mode}]`);
 }
 
 // Manifest a xon pair from gluon storage onto free oct nodes.
@@ -1482,6 +1526,7 @@ function _tickDemoXons(dt) {
         const startIdx = fullLen - visLen; // skip older points beyond lifespan
         // Per-segment color from trailColHistory — segments retain their original color
         // flashT boosts trail brightness near the head (mode transition / birth flash)
+        xon._lastTrailFlashBoost = 0; // reset per frame for T37 measurement
         for (let vi = 0; vi < visLen; vi++) {
             const i = startIdx + vi;
             const np = pos[xon.trail[i]];
@@ -1497,6 +1542,7 @@ function _tickDemoXons(dt) {
             // Flash boost: head segments get up to 40% brighter during flash
             const headProximity = vi / Math.max(visLen - 1, 1); // 0=tail, 1=head
             const flashBoost = xon.flashT * 0.4 * headProximity;
+            xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
             const alpha = sparkOp * Math.min(1, baseAlpha + flashBoost);
             xon.trailCol[vi * 3] = cr * alpha;
             xon.trailCol[vi * 3 + 1] = cg * alpha;
@@ -2179,6 +2225,7 @@ function demoTick() {
         if (!xon.alive || xon._mode !== 'weak') continue;
         // If already at an oct node, re-enter oct mode immediately
         if (_octNodeSet.has(xon.node)) {
+            _weakLifecycleExit(xon, 'arrived_oct_immediate');
             xon._mode = 'oct';
             xon.flashT = 1.0;
             xon.col = 0xffffff;
@@ -2214,8 +2261,10 @@ function demoTick() {
             if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
             xon.tweenT = 0;
             anyMoved = true;
+            _weakLifecycleStep(xon);
             // Check if we arrived at oct node
             if (_octNodeSet.has(bestStep)) {
+                _weakLifecycleExit(xon, 'arrived_oct_bfs');
                 xon._mode = 'oct';
                 xon.flashT = 1.0;
                 xon.col = 0xffffff;
@@ -2235,7 +2284,9 @@ function demoTick() {
                 if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
                 xon.tweenT = 0;
                 anyMoved = true;
+                _weakLifecycleStep(xon);
                 if (_octNodeSet.has(freeNb.node)) {
+                    _weakLifecycleExit(xon, 'arrived_oct_detour');
                     xon._mode = 'oct';
                     xon.flashT = 1.0;
                     xon.col = 0xffffff;
@@ -2727,6 +2778,7 @@ function demoTick() {
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 anyMoved = true;
                 weakEscaped = true;
+                _weakLifecycleEnter(xon, 'tet_stuck');
             }
         }
         if (weakEscaped) continue;
@@ -2856,6 +2908,7 @@ function demoTick() {
                     if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                     anyMoved = true;
                     moved = true;
+                    _weakLifecycleEnter(xon, 'oct_stuck');
                 }
             }
             // If still stuck: move to occupied neighbor for annihilation
@@ -2985,17 +3038,20 @@ function demoTick() {
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 anyMoved = true;
+                _weakLifecycleEnter(xon, 'safety_net');
             } else {
                 // All neighbors occupied — at minimum change mode to satisfy T20
                 if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                    xon._mode = _octNodeSet.has(xon.node) ? 'oct' : 'weak';
+                    const newMode = _octNodeSet.has(xon.node) ? 'oct' : 'weak';
+                    xon._mode = newMode;
                     xon._assignedFace = null;
                     xon._quarkType = null;
                     xon._loopType = null;
                     xon._loopSeq = null;
                     xon._loopStep = 0;
-                    xon.col = xon._mode === 'oct' ? 0xffffff : WEAK_FORCE_COLOR;
+                    xon.col = newMode === 'oct' ? 0xffffff : WEAK_FORCE_COLOR;
                     if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+                    if (newMode === 'weak') _weakLifecycleEnter(xon, 'safety_net_stuck');
                 }
             }
         }

@@ -137,6 +137,8 @@ const _liveGuards = {
     T34: { ok: null, msg: 'grace period', failed: false },
     T35: { ok: null, msg: 'grace period', failed: false },
     T36: { ok: null, msg: 'grace period', failed: false },
+    T37: { ok: null, msg: 'grace period', failed: false },
+    T38: { ok: null, msg: 'grace period', failed: false },
 };
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
@@ -498,6 +500,45 @@ function _liveGuardCheck() {
             }
         }
 
+        // ── T37: Trail flash boost — trail head brighter during mode transition flash ──
+        // Verify: run demo — when flashT > 0, trail head gets brightness boost from render.
+        // Violate: remove flashBoost calculation from trail rendering in _tickDemoXons.
+        // _lastTrailFlashBoost is set during the RENDER frame (after sim tick), so we check
+        // xons that had flashT > 0.3 on the PREVIOUS tick (their render boost should be stored).
+        if (!_liveGuards.T37.failed) {
+            for (const xon of _demoXons) {
+                if (!xon.alive || xon._dying) continue;
+                // Check xons where flashT was recently high (render frame should have stored boost).
+                // flashT decays at 6/sec, so at 30fps one render frame decays ~0.2.
+                // If _lastTrailFlashBoost exists AND flashT is moderate, boost should be > 0.
+                // We only check when flashT is in 0.1-0.7 range (after at least one render frame).
+                if (xon.flashT > 0.1 && xon.flashT < 0.7 && xon._lastTrailFlashBoost !== undefined) {
+                    if (xon._lastTrailFlashBoost <= 0) {
+                        _liveGuards.T37.ok = false;
+                        _liveGuards.T37.failed = true;
+                        _liveGuards.T37.msg = `tick ${tick}: flashT=${xon.flashT.toFixed(2)} but boost=${xon._lastTrailFlashBoost.toFixed(3)}`;
+                        anyFailed = true; break;
+                    }
+                }
+            }
+        }
+
+        // ── T38: Weak force confinement — weak xons must never be annihilated ──
+        // Verify: run demo — weak xons always return to oct (never killed).
+        // Violate: allow _annihilateXonPair to kill weak-mode xons in PHASE 4.
+        if (!_liveGuards.T38.failed) {
+            for (const { xon, mode: prevMode } of _liveGuardPrev) {
+                if (prevMode !== 'weak') continue;
+                // If xon was in weak mode last tick and is now dead, it was annihilated
+                if (!xon.alive) {
+                    _liveGuards.T38.ok = false;
+                    _liveGuards.T38.failed = true;
+                    _liveGuards.T38.msg = `tick ${tick}: weak xon annihilated at node ${xon.node}`;
+                    anyFailed = true; break;
+                }
+            }
+        }
+
         // Movement-specific checks from snapshot
         for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
             if (!xon.alive) continue;
@@ -672,6 +713,8 @@ function _liveGuardRender() {
         T34: 'T34 Trail length bounded',
         T35: 'T35 Sparkle visible when alive',
         T36: 'T36 Flash on mode transition',
+        T37: 'T37 Trail flash boost',
+        T38: 'T38 Weak force confinement',
     };
 
     for (const [key, g] of Object.entries(_liveGuards)) {
@@ -952,6 +995,8 @@ function runDemo3Tests() {
     skip('T34 Trail length bounded', 'grace period (live)');
     skip('T35 Sparkle visible when alive', 'grace period (live)');
     skip('T36 Flash on mode transition', 'grace period (live)');
+    skip('T37 Trail flash boost', 'grace period (live)');
+    skip('T38 Weak force confinement', 'grace period (live)');
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS

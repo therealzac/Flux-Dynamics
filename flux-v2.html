@@ -59,13 +59,7 @@
         .ctrl-slider::-webkit-slider-thumb:hover { background: #70b8e8; }
 
         /* Jiggle row */
-        #jiggle-row { margin-bottom: 10px; }
-        .jiggle-hidden { display: none !important; }
-        #jiggle-row .action-btn { flex: 0 0 auto; }
-        #jiggle-speed { flex: 1; display: flex; align-items: center; gap: 5px; }
-        #btn-jiggle.active { border-color: #aadd44; color: #ccff66; background: #111a02; }
-        #btn-big-bang { color: #ffaa44; border-color: #ffaa44; }
-        #btn-big-bang.active { border-color: #ffcc66; color: #ffdd88; background: #1a1505; }
+        /* jiggle/big-bang styles removed */
 
         /* Buttons */
         .action-btn { flex: 1; font-family: 'Courier New', monospace; font-size: 9px;
@@ -197,13 +191,7 @@
     <div id="side-panel">
         <!-- ═══ MANUAL CONTROLS (hidden in nucleus mode) ═══ -->
         <div id="manual-controls">
-            <div id="jiggle-row" class="ctrl-row">
-                <button class="action-btn" id="btn-jiggle">jiggle</button>
-                <div id="jiggle-speed">
-                    <input type="range" id="jiggle-slider" class="ctrl-slider" min="1" max="100" value="30">
-                    <span id="jiggle-hz" class="ctrl-val">30/s</span>
-                </div>
-            </div>
+            <!-- jiggle row removed -->
             <div class="ctrl-row">
                 <span class="ctrl-label">lattice</span>
                 <input type="range" id="lattice-slider" class="ctrl-slider" min="1" max="10" value="1" step="1">
@@ -275,23 +263,8 @@
             </div>
             <div id="nucleus-status" style="font-size:7px; color:#5a7a4a; margin-top:3px;
                 text-align:center; min-height:10px; line-height:1.3;">ready</div>
-            <button class="action-btn" id="btn-tournament"
-                style="width:100%; margin-top:4px; border-color:#aa8844; color:#ccaa66;">
-                tournament
-            </button>
+            <!-- tournament button/status/playback removed -->
             <div id="demo-status" style="display:none; font-size:9px; color:#88aacc; margin-top:4px; text-align:center; line-height:1.4;"></div>
-            <div id="tournament-status" style="font-size:9px; color:#8a9aaa; margin-top:4px;
-                min-height:12px; line-height:1.5; display:none;"></div>
-            <div id="tournament-playback" style="display:none; margin-top:6px; padding:6px; background:rgba(10,20,15,0.7); border:1px solid #3a5a3a; border-radius:4px; font-size:8px; color:#b0c8a0; line-height:1.6;">
-                <div style="text-align:center; color:#66dd66; font-size:9px; font-weight:bold; margin-bottom:6px; letter-spacing:1px;">TOURNAMENT COMPLETE</div>
-                <select id="playback-algo" style="width:100%; font-size:8px; padding:3px 4px; background:#0a1a15; color:#a0d8b0; border:1px solid #3a6a4a; border-radius:3px; margin-bottom:6px; cursor:pointer;"></select>
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <span id="playback-tick" style="min-width:20px; text-align:right; color:#d4b884; font-weight:bold;">0</span>
-                    <input type="range" id="playback-slider" min="0" max="49" value="0" style="flex:1; accent-color:#66dd66; cursor:pointer;">
-                    <span id="playback-max" style="min-width:20px; color:#5a7a6a;">49</span>
-                </div>
-                <div id="playback-info" style="margin-top:4px; text-align:center; color:#8aacbf; font-size:7px; line-height:1.5;"></div>
-            </div>
             <!-- Nucleus info (shown during simulation) -->
             <div id="nucleus-info" style="display:none; margin-top:6px; border-top:1px solid #4a3a1a;
                 padding-top:6px; font-size:8px; color:#8aac8f; line-height:1.8;">
@@ -311,14 +284,7 @@
         <div id="v1-controls">
             <div id="side-actions">
                 <button class="action-btn" id="btn-add-excitation">+ excitation</button>
-                <div style="position:relative; flex:1;">
-                    <button class="action-btn" id="btn-big-bang" style="width:100%;">big bang ▾</button>
-                    <div id="big-bang-menu" style="display:none; position:absolute; bottom:100%; left:0; right:0;
-                        background:rgba(10,20,35,0.95); border:1px solid rgba(100,150,180,0.3);
-                        border-radius:4px 4px 0 0; z-index:300; max-height:280px; overflow-y:auto;
-                        font-family:'Courier New',monospace; font-size:9px;">
-                    </div>
-                </div>
+                <!-- big bang button removed -->
                 <button class="action-btn" id="btn-excitation-play" title="play/pause excitation stepping" style="flex:0 0 auto;padding:5px 8px;display:none;">⏸</button>
             </div>
             <div style="margin-top:4px;pointer-events:all;">
@@ -360,15 +326,15 @@
     <div id="toast"></div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="src/flux-constants.js?v=3"></script>
-    <script src="src/flux-demo.js?v=73"></script>
+    <script src="src/flux-demo.js?v=74"></script>
     <script src="src/flux-solver-render.js?v=3"></script>
     <script src="src/flux-tournament.js?v=4"></script>
     <script src="src/flux-ui.js?v=3"></script>
     <script src="src/flux-electrons.js?v=5"></script>
     <script src="src/flux-voids.js?v=3"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
-    <script src="src/flux-nucleus.js?v=5"></script>
-    <script src="src/flux-tests.js?v=23"></script>
+    <script src="src/flux-nucleus.js?v=6"></script>
+    <script src="src/flux-tests.js?v=25"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

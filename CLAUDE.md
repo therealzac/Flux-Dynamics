@@ -2,6 +2,8 @@
 
 ## Test-First Development Doctrine
 
+**Critical: All features implemented must have a robust test built before implementation can begin.**
+
 WHEN IMPLEMENTING A NEW FEATURE, I WILL WRITE A UNIT TEST FOR THE FEATURE FIRST, AND THEN BUILD THE FEATURE
 
 IF THE FEATURE IS TOO COMPLEX FOR A SINGLE UNIT TEST, I WILL BREAK IT DOWN INTO MULTIPLE UNIT TESTS
