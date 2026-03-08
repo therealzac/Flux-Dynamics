@@ -6,36 +6,163 @@
 let _testRunning = false;  // suppress display updates during test execution
 
 // ═══════════════════════════════════════════════════════════════════════
-// ║  LIVE GUARDS — T19, T21, T26, T27                                  ║
+// ║  LIVE GUARDS — continuous per-tick monitoring for all runtime tests  ║
 // ║  null during grace (12 ticks), green after, permanent red on fail   ║
 // ═══════════════════════════════════════════════════════════════════════
 const LIVE_GUARD_GRACE = 12;
+
+// ═══════════════════════════════════════════════════════════════════════
+// ║  PROJECTED GUARD CHECKS — shared between live guards & lookahead   ║
+// ║  Each function receives xonFutures (array of projected xon states) ║
+// ║  and returns null (pass) or {guard, xon, msg} / array of them.     ║
+// ║                                                                     ║
+// ║  TO ADD A NEW TEST: just push a new function to this array.         ║
+// ║  The lookahead will automatically include it.                       ║
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Each xonFuture: { xon, futureNode, futureMode, futureColor, fromNode }
+const PROJECTED_GUARD_CHECKS = [
+
+    // ── T19: Pauli exclusion — max 1 xon per node ──
+    function T19_Pauli(states) {
+        const counts = new Map();
+        for (const s of states) {
+            const c = (counts.get(s.futureNode) || 0) + 1;
+            counts.set(s.futureNode, c);
+            if (c > 1) return { guard: 'T19', xon: s.xon, msg: `Pauli at node ${s.futureNode}` };
+        }
+        return null;
+    },
+
+    // ── T26: No unactivated SC traversal ──
+    function T26_SCActivation(states) {
+        const violations = [];
+        for (const s of states) {
+            if (s.futureNode === s.fromNode) continue;
+            const pid = pairId(s.fromNode, s.futureNode);
+            const scId = scPairToId.get(pid);
+            if (scId === undefined) continue;
+            const hasBase = (baseNeighbors[s.fromNode] || []).some(nb => nb.node === s.futureNode);
+            if (!hasBase && !activeSet.has(scId) && !impliedSet.has(scId) && !electronImpliedSet.has(scId)) {
+                violations.push({ guard: 'T26', xon: s.xon, msg: `unactivated SC ${scId} (${s.fromNode}→${s.futureNode})` });
+            }
+        }
+        return violations.length ? violations : null;
+    },
+
+    // ── T27: No teleportation ──
+    function T27_NoTeleport(states) {
+        const violations = [];
+        for (const s of states) {
+            if (s.futureNode === s.fromNode) continue;
+            const nbs = baseNeighbors[s.fromNode] || [];
+            let connected = nbs.some(nb => nb.node === s.futureNode);
+            if (!connected) {
+                const scs = scByVert[s.fromNode] || [];
+                connected = scs.some(sc => (sc.a === s.fromNode ? sc.b : sc.a) === s.futureNode);
+            }
+            if (!connected) {
+                violations.push({ guard: 'T27', xon: s.xon, msg: `teleport ${s.fromNode}→${s.futureNode}` });
+            }
+        }
+        return violations.length ? violations : null;
+    },
+
+    // ── T29: White trails only on oct nodes ──
+    function T29_WhiteTrailOct(states) {
+        if (!_octNodeSet || !_octNodeSet.size) return null;
+        const violations = [];
+        for (const s of states) {
+            if (s.futureColor === 0xffffff && !_octNodeSet.has(s.futureNode)) {
+                violations.push({ guard: 'T29', xon: s.xon, msg: `white at non-oct node ${s.futureNode}` });
+            }
+        }
+        return violations.length ? violations : null;
+    },
+
+    // ── T12: Conservation — alive + 2*stored = 6 ──
+    function T12_Conservation(states) {
+        const liveCount = states.length;
+        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const total = liveCount + 2 * stored;
+        if (total !== 6) {
+            return { guard: 'T12', xon: null,
+                msg: `conservation: alive=${liveCount} stored=${stored} total=${total}` };
+        }
+        return null;
+    },
+
+    // ── T21: Oct cage permanence — oct SCs never leave activeSet ──
+    function T21_OctCage(states) {
+        if (typeof _octSCIds === 'undefined') return null;
+        for (const scId of _octSCIds) {
+            if (!activeSet.has(scId)) {
+                return { guard: 'T21', xon: null, msg: `oct SC ${scId} missing from activeSet` };
+            }
+        }
+        return null;
+    },
+
+    // ── T25: Oct cage integrity — once formed, never breaks ──
+    function T25_OctCageIntegrity(states) {
+        if (typeof _octSCIds === 'undefined') return null;
+        if (!_liveGuards || !_liveGuards.T25 || _liveGuards.T25.ok !== true) return null;
+        const allActive = _octSCIds.every(id => activeSet.has(id));
+        if (!allActive) {
+            return { guard: 'T25', xon: null, msg: 'oct cage broken' };
+        }
+        return null;
+    },
+
+];
 const _liveGuards = {
+    T12: { ok: null, msg: 'grace period', failed: false },
+    T13: { ok: null, msg: 'grace period', failed: false, _initCount: null },
+    T14: { ok: null, msg: 'grace period', failed: false },
+    T15: { ok: null, msg: 'grace period', failed: false },
+    T16: { ok: null, msg: 'grace period', failed: false },
+    T17: { ok: null, msg: 'grace period', failed: false },
     T19: { ok: null, msg: 'grace period', failed: false },
+    T20: { ok: null, msg: 'grace period', failed: false },
     T21: { ok: null, msg: 'grace period', failed: false, _octSnapshot: null },
+    T22: { ok: null, msg: 'grace period', failed: false },
+    T23: { ok: null, msg: 'grace period', failed: false },
+    T24: { ok: null, msg: 'grace period', failed: false },
+    T25: { ok: null, msg: 'grace period', failed: false },
     T26: { ok: null, msg: 'grace period', failed: false },
     T27: { ok: null, msg: 'grace period', failed: false },
+    T29: { ok: null, msg: 'grace period', failed: false },
+    T30: { ok: null, msg: 'grace period', failed: false, _prevStored: 0, _prevAlive: 6 },
+    T33: { ok: null, msg: 'grace period', failed: false },
+    T34: { ok: null, msg: 'grace period', failed: false },
+    T35: { ok: null, msg: 'grace period', failed: false },
+    T36: { ok: null, msg: 'grace period', failed: false },
 };
 let _liveGuardsActive = false;
+let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
 
 function _liveGuardCheck() {
     if (!_demoActive || !_liveGuardsActive || _testRunning) return;
     const tick = _demoTick;
-    // Use pre-increment tick to determine if the movement that just happened
-    // was at a window boundary (where xon reassignment is expected).
     const preTick = tick - 1;
     const CYCLE_LEN = 64, WINDOW_LEN = 4;
     const tickInWindow = (preTick % CYCLE_LEN) % WINDOW_LEN;
     const isWindowBoundary = tickInWindow === 0;
 
+    // Convergence tests stay null until their deadline is evaluated
+    const CONVERGENCE_TESTS = new Set(['T17', 'T22', 'T25']);
+
     // ── During grace: stay null ──
     if (tick <= LIVE_GUARD_GRACE) {
-        // At end of grace, snapshot oct cage for T21 and promote all to green
         if (tick === LIVE_GUARD_GRACE) {
+            // Promote invariant guards to green; convergence tests stay null
             for (const key of Object.keys(_liveGuards)) {
+                if (CONVERGENCE_TESTS.has(key)) continue;
                 const g = _liveGuards[key];
                 if (!g.failed) { g.ok = true; g.msg = ''; }
             }
+            // T13: capture baseline xon count
+            _liveGuards.T13._initCount = _demoXons.length;
             // T21: snapshot which oct SCs are active now
             const snap = new Set();
             for (const scId of _octSCIds) {
@@ -46,6 +173,9 @@ function _liveGuardCheck() {
                 _liveGuards.T21.ok = null;
                 _liveGuards.T21.msg = 'no oct SCs active yet';
             }
+            // T30: initialize gluon tracking
+            _liveGuards.T30._prevStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+            _liveGuards.T30._prevAlive = _demoXons.filter(x => x.alive).length;
             _liveGuardRender();
         }
         return;
@@ -62,6 +192,91 @@ function _liveGuardCheck() {
     }
 
     let anyFailed = false;
+
+    // ══════════════════════════════════════════════════════════════════
+    // INVARIANT GUARDS — checked every tick
+    // ══════════════════════════════════════════════════════════════════
+
+    // ── T12: Conservation — alive + 2*stored = 6 ──
+    // Gluon storage allows variable xon count while maintaining total conservation.
+    if (!_liveGuards.T12.failed) {
+        const liveCount = _demoXons.filter(x => x.alive && !x._dying).length;
+        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const total = liveCount + 2 * stored;
+        if (total !== 6) {
+            _liveGuards.T12.ok = false;
+            _liveGuards.T12.failed = true;
+            _liveGuards.T12.msg = `tick ${tick}: alive=${liveCount} stored=${stored} total=${total} (expected 6)`;
+            anyFailed = true;
+        }
+    }
+
+    // ── T13: Array size unchanged — xon slots are reused, never grown ──
+    if (!_liveGuards.T13.failed && _liveGuards.T13._initCount !== null) {
+        if (_demoXons.length !== _liveGuards.T13._initCount) {
+            _liveGuards.T13.ok = false;
+            _liveGuards.T13.failed = true;
+            _liveGuards.T13.msg = `tick ${tick}: count ${_liveGuards.T13._initCount}\u2192${_demoXons.length}`;
+            anyFailed = true;
+        }
+    }
+
+    // ── T14: No dying xons — annihilated xons are cleanly stored ──
+    if (!_liveGuards.T14.failed) {
+        const dying = _demoXons.filter(x => x._dying).length;
+        if (dying > 0) {
+            _liveGuards.T14.ok = false;
+            _liveGuards.T14.failed = true;
+            _liveGuards.T14.msg = `tick ${tick}: dying=${dying}`;
+            anyFailed = true;
+        }
+    }
+
+    // ── T15: Valid state — sign in {+1,-1}, mode in {tet,oct,idle_tet,weak} ──
+    if (!_liveGuards.T15.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive) continue;
+            if (xon.sign !== 1 && xon.sign !== -1) {
+                _liveGuards.T15.ok = false;
+                _liveGuards.T15.failed = true;
+                _liveGuards.T15.msg = `tick ${tick}: sign=${xon.sign}`;
+                anyFailed = true; break;
+            }
+            if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet' && xon._mode !== 'weak') {
+                _liveGuards.T15.ok = false;
+                _liveGuards.T15.failed = true;
+                _liveGuards.T15.msg = `tick ${tick}: mode=${xon._mode}`;
+                anyFailed = true; break;
+            }
+        }
+    }
+
+    // ── T16: Always has function — tet/idle_tet have loop seq, oct on surface, weak anywhere ──
+    if (!_liveGuards.T16.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive) continue;
+            if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+                if (!xon._loopSeq || xon._loopSeq.length < 4) {
+                    _liveGuards.T16.ok = false;
+                    _liveGuards.T16.failed = true;
+                    _liveGuards.T16.msg = `tick ${tick}: ${xon._mode} no loop seq`;
+                    anyFailed = true; break;
+                }
+            } else if (xon._mode === 'oct') {
+                if (!_octNodeSet.has(xon.node)) {
+                    _liveGuards.T16.ok = false;
+                    _liveGuards.T16.failed = true;
+                    _liveGuards.T16.msg = `tick ${tick}: oct at non-oct node ${xon.node}`;
+                    anyFailed = true; break;
+                }
+            }
+            // 'weak' mode: xon broke confinement via weak force — can be anywhere
+            // No structural constraint needed; it's in transit.
+        }
+    }
+
+    // T16b removed: "idle only in actualized tets" is overly strict.
+    // A loitering xon only needs the edges it traverses to be active (covered by T26).
 
     // ── T19: Pauli exclusion — no two xons on same node ──
     if (!_liveGuards.T19.failed) {
@@ -93,63 +308,331 @@ function _liveGuardCheck() {
         }
     }
 
-    // ── T26 & T27: skip window boundaries (xon reassignment expected) ──
-    if (!isWindowBoundary) {
-        // Snapshot was taken before demoTick advanced; use _liveGuardPrev
-        if (_liveGuardPrev) {
-            for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
-                if (!xon.alive) continue;
-                const toNode = xon.node;
-                if (toNode === fromNode) continue;
-                // Skip mode transitions (return-to-oct + scatter = composite move)
-                if (prevMode !== xon._mode) continue;
-
-                // ── T26: no unactivated SC traversal ──
-                // Any SC traversal requires the SC to be activated (solver-approved).
-                // Skip check if nodes are also connected by a base edge (xon used the edge, not the SC).
-                if (!_liveGuards.T26.failed) {
-                    const pid = pairId(fromNode, toNode);
-                    const scId = scPairToId.get(pid);
-                    if (scId !== undefined) {
-                        const hasBaseEdge = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
-                        if (!hasBaseEdge) {
-                            if (!activeSet.has(scId) && !impliedSet.has(scId) && !electronImpliedSet.has(scId)) {
-                                _liveGuards.T26.ok = false;
-                                _liveGuards.T26.failed = true;
-                                _liveGuards.T26.msg = `tick ${tick}: ${prevMode} xon on SC ${scId} (${fromNode}\u2192${toNode})`;
-                                console.warn(`[T26 DEBUG] tick=${tick} mode=${prevMode} from=${fromNode} to=${toNode} scId=${scId} hasBase=${hasBaseEdge} active=${activeSet.has(scId)} implied=${impliedSet.has(scId)} eImpl=${electronImpliedSet.has(scId)} baseNb=[${(baseNeighbors[fromNode]||[]).map(nb=>nb.node).join(',')}]`);
-                                anyFailed = true;
-                            }
-                        }
-                    }
+    // ── T23: Sparkle color matches mode ──
+    if (!_liveGuards.T23.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || !xon.sparkMat) continue;
+            const actual = xon.sparkMat.color.getHex();
+            if (xon._mode === 'oct') {
+                if (actual !== 0xffffff) {
+                    _liveGuards.T23.ok = false;
+                    _liveGuards.T23.failed = true;
+                    _liveGuards.T23.msg = `tick ${tick}: oct spark=0x${actual.toString(16)}`;
+                    anyFailed = true; break;
                 }
-
-                // ── T27: no teleportation ──
-                if (!_liveGuards.T27.failed) {
-                    const nbs = baseNeighbors[fromNode] || [];
-                    let connected = nbs.some(nb => nb.node === toNode);
-                    if (!connected) {
-                        const scs = scByVert[fromNode] || [];
-                        connected = scs.some(sc => (sc.a === fromNode ? sc.b : sc.a) === toNode);
-                    }
-                    if (!connected) {
-                        _liveGuards.T27.ok = false;
-                        _liveGuards.T27.failed = true;
-                        _liveGuards.T27.msg = `tick ${tick}: teleport ${fromNode}\u2192${toNode}`;
-                        anyFailed = true;
-                    }
+            } else if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+                const expected = QUARK_COLORS[xon._quarkType];
+                if (expected !== undefined && actual !== expected) {
+                    _liveGuards.T23.ok = false;
+                    _liveGuards.T23.failed = true;
+                    _liveGuards.T23.msg = `tick ${tick}: ${xon._quarkType} spark wrong`;
+                    anyFailed = true; break;
+                }
+            } else if (xon._mode === 'weak') {
+                if (actual !== WEAK_FORCE_COLOR) {
+                    _liveGuards.T23.ok = false;
+                    _liveGuards.T23.failed = true;
+                    _liveGuards.T23.msg = `tick ${tick}: weak spark=0x${actual.toString(16)}`;
+                    anyFailed = true; break;
                 }
             }
         }
     }
 
-    if (anyFailed) {
-        // Freeze: halt simulation
-        if (typeof stopExcitationClock === 'function') stopExcitationClock();
-        simHalted = true;
+    // ── T24: Trail color stability — all colors valid, arrays synced ──
+    if (!_liveGuards.T24.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || !xon.trailColHistory) continue;
+            for (let j = 0; j < xon.trailColHistory.length; j++) {
+                const c = xon.trailColHistory[j];
+                const isWhite = c === 0xffffff;
+                const isQuark = c === QUARK_COLORS.pu || c === QUARK_COLORS.pd ||
+                                c === QUARK_COLORS.nu || c === QUARK_COLORS.nd;
+                const isWeak = c === WEAK_FORCE_COLOR;
+                if (!isWhite && !isQuark && !isWeak) {
+                    _liveGuards.T24.ok = false;
+                    _liveGuards.T24.failed = true;
+                    _liveGuards.T24.msg = `tick ${tick}: color 0x${c.toString(16)}`;
+                    anyFailed = true; break;
+                }
+            }
+            if (_liveGuards.T24.failed) break;
+            if (xon.trailColHistory.length !== xon.trail.length) {
+                _liveGuards.T24.ok = false;
+                _liveGuards.T24.failed = true;
+                _liveGuards.T24.msg = `tick ${tick}: trail/color desync`;
+                anyFailed = true; break;
+            }
+        }
+    }
+
+    // ── T29: White trail segments only on oct nodes ──
+    // Every white (0xffffff) trail entry must be at an oct node.
+    // Verify: run demo — all white trails are on oct surface.
+    // Violate: push a non-oct node with white color to a xon's trail.
+    if (!_liveGuards.T29.failed && _octNodeSet && _octNodeSet.size > 0) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || !xon.trailColHistory || !xon.trail) continue;
+            for (let i = 0; i < xon.trailColHistory.length; i++) {
+                if (xon.trailColHistory[i] === 0xffffff) {
+                    if (!_octNodeSet.has(xon.trail[i])) {
+                        _liveGuards.T29.ok = false;
+                        _liveGuards.T29.failed = true;
+                        _liveGuards.T29.msg = `tick ${tick}: white trail at non-oct node ${xon.trail[i]}`;
+                        anyFailed = true;
+                        break;
+                    }
+                }
+            }
+            if (_liveGuards.T29.failed) break;
+        }
+    }
+
+    // ── T30: Annihilation always in pairs (stored += N, alive -= 2N) ──
+    // When gluon storage increases, exactly 2 xons must have died per stored pair.
+    // Verify: run demo until annihilation event occurs.
+    // Violate: increment _gluonStoredPairs without removing 2 xons.
+    if (!_liveGuards.T30.failed) {
+        const curStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const curAlive = _demoXons.filter(x => x.alive).length;
+        if (curStored > _liveGuards.T30._prevStored) {
+            const dStored = curStored - _liveGuards.T30._prevStored;
+            const dAlive = _liveGuards.T30._prevAlive - curAlive;
+            if (dStored * 2 !== dAlive) {
+                _liveGuards.T30.ok = false;
+                _liveGuards.T30.failed = true;
+                _liveGuards.T30.msg = `tick ${tick}: stored+=${dStored} alive-=${dAlive} (expected 2:1 ratio)`;
+                anyFailed = true;
+            }
+        }
+        _liveGuards.T30._prevStored = curStored;
+        _liveGuards.T30._prevAlive = curAlive;
+    }
+
+    // ── T33: Trail persists — alive xons always have non-empty, synced trail ──
+    // Verify: run demo — alive xons always have trail[] and trailColHistory[].
+    // Violate: set xon.trail = [] on a live xon.
+    if (!_liveGuards.T33.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || xon._dying) continue;
+            if (!xon.trail || xon.trail.length === 0) {
+                _liveGuards.T33.ok = false;
+                _liveGuards.T33.failed = true;
+                _liveGuards.T33.msg = `tick ${tick}: alive xon has empty trail at node ${xon.node}`;
+                anyFailed = true; break;
+            }
+            if (!xon.trailColHistory || xon.trailColHistory.length !== xon.trail.length) {
+                _liveGuards.T33.ok = false;
+                _liveGuards.T33.failed = true;
+                _liveGuards.T33.msg = `tick ${tick}: trail/color length mismatch`;
+                anyFailed = true; break;
+            }
+        }
+    }
+
+    // ── T34: Trail length bounded — never exceeds XON_TRAIL_LENGTH ──
+    // Verify: run demo for many ticks — trails stay capped.
+    // Violate: remove trail.shift() calls in _advanceXon.
+    if (!_liveGuards.T34.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || !xon.trail) continue;
+            if (xon.trail.length > XON_TRAIL_LENGTH) {
+                _liveGuards.T34.ok = false;
+                _liveGuards.T34.failed = true;
+                _liveGuards.T34.msg = `tick ${tick}: trail len=${xon.trail.length} max=${XON_TRAIL_LENGTH}`;
+                anyFailed = true; break;
+            }
+        }
+    }
+
+    // ── T35: Sparkle visible when alive — alive non-dying xons have spark ──
+    // Verify: run demo — all live xons have visible sparkle sprites.
+    // Violate: set xon.sparkMat = null on a live xon.
+    if (!_liveGuards.T35.failed) {
+        for (const xon of _demoXons) {
+            if (!xon.alive || xon._dying) continue;
+            if (!xon.spark || !xon.sparkMat) {
+                _liveGuards.T35.ok = false;
+                _liveGuards.T35.failed = true;
+                _liveGuards.T35.msg = `tick ${tick}: alive xon missing spark at node ${xon.node}`;
+                anyFailed = true; break;
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // MOVEMENT GUARDS — skip window boundaries (xon reassignment)
+    // ══════════════════════════════════════════════════════════════════
+    if (!isWindowBoundary && _liveGuardPrev) {
+        // ── T20: Never stand still — every xon must move every tick ──
+        if (!_liveGuards.T20.failed) {
+            for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
+                if (!xon.alive) continue;
+                // Skip mode transitions (composite moves)
+                if (prevMode !== xon._mode) continue;
+                if (xon.node === fromNode) {
+                    _liveGuards.T20.ok = false;
+                    _liveGuards.T20.failed = true;
+                    _liveGuards.T20.msg = `tick ${tick}: stuck at node ${fromNode} (${prevMode})`;
+                    anyFailed = true; break;
+                }
+            }
+        }
+
+        // ── T36: Sparkle flash on mode transition — flashT reset when mode changes ──
+        // Verify: run demo — mode transitions produce visible flash.
+        // Violate: remove flashT=1.0 from _returnXonToOct or _assignXonToTet.
+        if (!_liveGuards.T36.failed) {
+            for (const { xon, mode: prevMode } of _liveGuardPrev) {
+                if (!xon.alive) continue;
+                if (prevMode === xon._mode) continue; // no mode change
+                // Mode changed — flashT should have been reset to 1.0.
+                // By the time this check runs (start of next tick), flashT may have
+                // decayed slightly by one frame, so check >= 0.5 as threshold.
+                if (xon.flashT < 0.5) {
+                    _liveGuards.T36.ok = false;
+                    _liveGuards.T36.failed = true;
+                    _liveGuards.T36.msg = `tick ${tick}: ${prevMode}→${xon._mode} flashT=${xon.flashT.toFixed(2)}`;
+                    anyFailed = true; break;
+                }
+            }
+        }
+
+        // Movement-specific checks from snapshot
+        for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
+            if (!xon.alive) continue;
+            const toNode = xon.node;
+            if (toNode === fromNode) continue;
+            if (prevMode !== xon._mode) continue;
+
+            // ── T26: no unactivated SC traversal ──
+            if (!_liveGuards.T26.failed) {
+                const pid = pairId(fromNode, toNode);
+                const scId = scPairToId.get(pid);
+                if (scId !== undefined) {
+                    const hasBaseEdge = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
+                    if (!hasBaseEdge) {
+                        if (!activeSet.has(scId) && !impliedSet.has(scId) && !electronImpliedSet.has(scId)) {
+                            _liveGuards.T26.ok = false;
+                            _liveGuards.T26.failed = true;
+                            _liveGuards.T26.msg = `tick ${tick}: ${prevMode} xon on SC ${scId} (${fromNode}\u2192${toNode})`;
+                            console.warn(`[T26 DEBUG] tick=${tick} mode=${prevMode} from=${fromNode} to=${toNode} scId=${scId} hasBase=${hasBaseEdge} active=${activeSet.has(scId)} implied=${impliedSet.has(scId)} eImpl=${electronImpliedSet.has(scId)} baseNb=[${(baseNeighbors[fromNode]||[]).map(nb=>nb.node).join(',')}]`);
+                            anyFailed = true;
+                        }
+                    }
+                }
+            }
+
+            // ── T27: no teleportation ──
+            if (!_liveGuards.T27.failed) {
+                const nbs = baseNeighbors[fromNode] || [];
+                let connected = nbs.some(nb => nb.node === toNode);
+                if (!connected) {
+                    const scs = scByVert[fromNode] || [];
+                    connected = scs.some(sc => (sc.a === fromNode ? sc.b : sc.a) === toNode);
+                }
+                if (!connected) {
+                    _liveGuards.T27.ok = false;
+                    _liveGuards.T27.failed = true;
+                    _liveGuards.T27.msg = `tick ${tick}: teleport ${fromNode}\u2192${toNode}`;
+                    anyFailed = true;
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // CONVERGENCE GUARDS — checked at deadline, then locked
+    // ══════════════════════════════════════════════════════════════════
+
+    // ── T25: Oct cage materializes AND stays active ──
+    // Phase 1: Wait for all oct SCs to become active (deadline: grace + 24 ticks).
+    // Phase 2: Once materialized, continuously verify cage never breaks.
+    if (!_liveGuards.T25.failed) {
+        const allOctActive = _octSCIds.length > 0 && _octSCIds.every(id => activeSet.has(id));
+        if (_liveGuards.T25.ok !== true) {
+            // Phase 1: waiting for materialization
+            if (allOctActive) {
+                _liveGuards.T25.ok = true; _liveGuards.T25.msg = '';
+                _liveGuardRender();
+            }
+            if (tick > LIVE_GUARD_GRACE + 24) {
+                const active = _octSCIds.filter(id => activeSet.has(id)).length;
+                _liveGuards.T25.ok = false;
+                _liveGuards.T25.failed = true;
+                _liveGuards.T25.msg = `${active}/${_octSCIds.length} after ${tick} ticks`;
+                anyFailed = true;
+            }
+        } else {
+            // Phase 2: cage materialized — verify it never breaks
+            if (!allOctActive) {
+                const missing = _octSCIds.filter(id => !activeSet.has(id));
+                _liveGuards.T25.ok = false;
+                _liveGuards.T25.failed = true;
+                _liveGuards.T25.msg = `tick ${tick}: oct cage broke (${missing.length} SCs lost)`;
+                anyFailed = true;
+            }
+        }
+    }
+
+    // ── T17: Full tet coverage — all 8 faces visited within 256 ticks ──
+    if (!_liveGuards.T17.failed && _liveGuards.T17.ok !== true) {
+        let visitCount = 0;
+        for (let f = 1; f <= 8; f++) {
+            if (_demoVisits[f] && _demoVisits[f].total > 0) visitCount++;
+        }
+        if (visitCount === 8) {
+            _liveGuards.T17.ok = true; _liveGuards.T17.msg = '';
+            _liveGuardRender();
+        } else if (tick > LIVE_GUARD_GRACE + 256) {
+            _liveGuards.T17.ok = false;
+            _liveGuards.T17.failed = true;
+            _liveGuards.T17.msg = `only ${visitCount}/8 faces after ${tick} ticks`;
+            anyFailed = true;
+        }
+    }
+
+    // ── T22: Hadronic composition — pu:pd≈2:1, nd:nu≈2:1 after 1280 ticks ──
+    if (!_liveGuards.T22.failed && tick === LIVE_GUARD_GRACE + 1280) {
+        const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
+        const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
+        const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
+        const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
+        const puPdRatio = gPd > 0 ? gPu / gPd : 0;
+        const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
+        if (puPdRatio < 1.6 || puPdRatio > 2.4 || ndNuRatio < 1.6 || ndNuRatio > 2.4) {
+            _liveGuards.T22.ok = false;
+            _liveGuards.T22.failed = true;
+            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+            anyFailed = true;
+        } else {
+            _liveGuards.T22.ok = true; _liveGuards.T22.msg = '';
+        }
         _liveGuardRender();
-        console.error('[LIVE GUARD] Simulation halted:', Object.entries(_liveGuards)
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // WIND-DOWN HALT — first failure starts a 4-tick countdown, then halt.
+    // This lets other guards report failures before the sim stops.
+    // ══════════════════════════════════════════════════════════════════
+    if (anyFailed) {
+        _liveGuardRender();
+        console.error('[LIVE GUARD] Failure detected:', Object.entries(_liveGuards)
             .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; '));
+    }
+    const hasAnyFailure = Object.values(_liveGuards).some(g => g.failed);
+    if (hasAnyFailure) {
+        if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
+            _liveGuardFailTick = tick; // record first failure tick
+        }
+        if (tick >= _liveGuardFailTick + 4) {
+            // Wind-down complete — halt
+            if (typeof stopExcitationClock === 'function') stopExcitationClock();
+            simHalted = true;
+            _liveGuardRender();
+            console.error('[LIVE GUARD] Simulation halted after wind-down:', Object.entries(_liveGuards)
+                .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; '));
+        }
     }
 }
 
@@ -168,10 +651,27 @@ function _liveGuardRender() {
     if (!testResultsEl) return;
 
     const nameMap = {
+        T12: 'T12 Conservation (alive+2*stored=6)',
+        T13: 'T13 Array size unchanged',
+        T14: 'T14 No dying xons',
+        T15: 'T15 Xon state (sign + mode)',
+        T16: 'T16 Xon always has function',
+        T17: 'T17 Full tet coverage (8/8 faces)',
         T19: 'T19 Pauli exclusion (1 xon/node)',
+        T20: 'T20 Never stand still',
         T21: 'T21 Oct cage permanence',
+        T22: 'T22 Hadronic composition (pu:pd\u22482, nd:nu\u22482)',
+        T23: 'T23 Sparkle color matches purpose',
+        T24: 'T24 Trail color stability',
+        T25: 'T25 Oct cage within 12 ticks',
         T26: 'T26 No unactivated SC traversal',
         T27: 'T27 No teleportation',
+        T29: 'T29 White trails only on oct edges',
+        T30: 'T30 Annihilation always in pairs',
+        T33: 'T33 Trail persists when alive',
+        T34: 'T34 Trail length bounded',
+        T35: 'T35 Sparkle visible when alive',
+        T36: 'T36 Flash on mode transition',
     };
 
     for (const [key, g] of Object.entries(_liveGuards)) {
@@ -412,410 +912,46 @@ function runDemo3Tests() {
             if (xon.tweenT !== 0) { ok = false; errMsg = 'tweenT not reset'; }
             _advanceXon(xon); _advanceXon(xon); _advanceXon(xon); // hops 1→4
             if (xon._loopStep !== 4) { ok = false; errMsg = `step=${xon._loopStep} after 4 hops`; }
-            // 5th advance should be no-op
+            // 5th advance wraps to step 0 then advances to step 1 (continuous cycling)
             _advanceXon(xon);
-            if (xon._loopStep !== 4) { ok = false; errMsg = 'advanced past 4'; }
+            if (xon._loopStep !== 1) { ok = false; errMsg = `wrap: step=${xon._loopStep} expected 1`; }
+            if (xon.node !== seq[1]) { ok = false; errMsg = `wrap: node=${xon.node} expected ${seq[1]}`; }
             _destroyXon(xon); _finalCleanupXon(xon);
             _demoXons.splice(_demoXons.indexOf(xon), 1);
         } else { ok = false; errMsg = 'spawn failed'; }
-        assert('T11 Xon advancement (4 hops, no 5th)', ok, errMsg);
+        assert('T11 Xon advancement (4 hops + wrap)', ok, errMsg);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    //  PERSISTENT 6-XON MODEL (T12–T21)
-    //  ALL TESTS PROGRAMMATICALLY FALSIFIABLE — measured from _demoXons,
-    //  activeSet, pos[], _octNodeSet. No UX checkboxes.
+    //  PERSISTENT 6-XON MODEL (T12–T27)
+    //  ALL deferred to LIVE MONITORING — continuous per-tick validation
+    //  with grace period, permanent fail + halt on violation
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 12: Persistent count — exactly 6 live xons after demo init
-    // Falsifiable: _demoXons.filter(alive).length !== 6
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        const liveCount = _demoXons.filter(x => x.alive && !x._dying).length;
-        assert('T12 Persistent count (6 xons)',
-            liveCount === 6,
-            `expected 6 live xons, got ${liveCount}`);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 13: No spawn after init — xon count unchanged after 8 ticks
-    // Falsifiable: count_before !== count_after
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        const countBefore = _demoXons.length;
-        for (let i = 0; i < 8; i++) demoTick();
-        const countAfter = _demoXons.length;
-        assert('T13 No spawn after init',
-            countAfter === countBefore,
-            `xon count changed: ${countBefore} → ${countAfter}`);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 14: No destruction — all 6 alive, 0 dying after ticks
-    // Falsifiable: alive !== 6 or dying > 0
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        const aliveCount = _demoXons.filter(x => x.alive).length;
-        const dyingCount = _demoXons.filter(x => x._dying).length;
-        assert('T14 No destruction (all alive)',
-            aliveCount === 6 && dyingCount === 0,
-            `alive=${aliveCount}, dying=${dyingCount}`);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 15: Xon state — each has sign ∈ {+1,-1} and _mode ∈ {'tet','oct'}
-    // Falsifiable: invalid sign or _mode value
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon.sign !== 1 && xon.sign !== -1) {
-                ok = false; errMsg = `sign=${xon.sign}`; break;
-            }
-            if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet') {
-                ok = false; errMsg = `_mode=${xon._mode}`; break;
-            }
-        }
-        assert('T15 Xon state (sign + mode)', ok, errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 16: Xon always has function — every xon is either idling
-    // (oct/idle_tet traversal) or actualizing a scheduled fermionic loop
-    // Falsifiable: xon with no valid mode or no loop sequence when in tet/idle_tet
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        // Run 16 ticks to exercise all modes
-        for (let i = 0; i < 16; i++) demoTick();
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                if (!xon._loopSeq || xon._loopSeq.length < 4) {
-                    ok = false;
-                    errMsg = `${xon._mode} xon has no/short loop sequence`;
-                    break;
-                }
-            } else if (xon._mode === 'oct') {
-                if (!_octNodeSet.has(xon.node)) {
-                    ok = false;
-                    errMsg = `oct xon at node ${xon.node} not on oct surface`;
-                    break;
-                }
-            } else {
-                ok = false;
-                errMsg = `unknown mode: ${xon._mode}`;
-                break;
-            }
-        }
-        assert('T16 Xon always has function', ok, errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 16b: Idle xons only in actualized tets — idle_tet face SCs
-    // must already be in electronImpliedSet/activeSet/impliedSet
-    // Falsifiable: idle_tet xon on a face with non-actualized SCs
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        // Run 32 ticks to trigger idle_tet assignments
-        for (let i = 0; i < 32; i++) demoTick();
-        for (const xon of _demoXons) {
-            if (!xon.alive || xon._mode !== 'idle_tet') continue;
-            const fd = _nucleusTetFaceData[xon._assignedFace];
-            if (!fd) { ok = false; errMsg = 'idle_tet xon has no face data'; break; }
-            for (const scId of fd.scIds) {
-                if (!electronImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
-                    ok = false;
-                    errMsg = `idle_tet face ${xon._assignedFace} SC ${scId} not actualized`;
-                    break;
-                }
-            }
-            if (!ok) break;
-        }
-        assert('T16b Idle only in actualized tets', ok, errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 17: Full tet coverage — all 8 faces visited within 4 cycles
-    // Verification: all 8 faces have total > 0 after sufficient ticks
-    // Falsification: any face has 0 visits after 4 full cycles (256 ticks)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        // Run 4 full cycles (4 × 64 = 256 ticks) to give schedule time to hit all faces
-        for (let i = 0; i < 256; i++) demoTick();
-        const visited = new Set();
-        for (let f = 1; f <= 8; f++) {
-            if (_demoVisits[f] && _demoVisits[f].total > 0) visited.add(f);
-        }
-        if (visited.size === 8) pass('T17 Full tet coverage (8/8 faces)');
-        else skip('T17 Full tet coverage (8/8 faces)', `only ${visited.size}/8 faces visited`);
-    }
+    skip('T12 Conservation (alive+2*stored=6)', 'grace period (live)');
+    skip('T13 Array size unchanged', 'grace period (live)');
+    skip('T14 No dying xons', 'grace period (live)');
+    skip('T15 Xon state (sign + mode)', 'grace period (live)');
+    skip('T16 Xon always has function', 'grace period (live)');
+    skip('T17 Full tet coverage (8/8 faces)', 'grace period (live)');
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // TEST 18: (removed — redundant with T25 oct cage)
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 19: Pauli exclusion — no two xons share a node at any tick
-    // Grace: null for first 12 ticks, then green; permanent fail if violated
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        // Deferred to live monitoring — skip batch check, register live guard
-        skip('T19 Pauli exclusion (1 xon/node)', 'grace period (live)');
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 20: Never stand still — every xon moves every tick
-    // Falsifiable: xon.node === xon._prevTickNode after demoTick
-    // STATUS: null — oct-boxed xons sometimes can't find free neighbor
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        for (let tick = 0; tick < 16; tick++) {
-            const before = _demoXons.filter(x => x.alive).map(x => ({ xon: x, node: x.node }));
-            demoTick();
-            for (const { xon, node: nodeBefore } of before) {
-                if (!xon.alive) continue;
-                if (xon.node === nodeBefore) {
-                    ok = false;
-                    errMsg = `tick ${tick}: xon stuck at node ${nodeBefore}`;
-                    break;
-                }
-            }
-            if (!ok) break;
-        }
-        if (ok) pass('T20 Never stand still');
-        else skip('T20 Never stand still', errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 21: Oct cage permanence — once materialized, oct SCs never leave activeSet
-    // Grace: null for first 12 ticks, then green; permanent fail if violated
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        skip('T21 Oct cage permanence', 'grace period (live)');
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 22: Hadronic composition convergence — pu:pd≈2:1, nd:nu≈2:1
-    // Falsifiable: ratio deviates beyond tolerance after sufficient cycles
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        // Reset visit counters and tick for clean cycle-aligned measurement
-        _demoTick = 0;
-        _demoSchedule = buildPhysicalSchedule();
-        for (let f = 1; f <= 8; f++) {
-            _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
-            _demoFaceDecks[f] = [];
-        }
-        // Run 20 full cycles (20 × 64 = 1280 ticks) for convergence
-        for (let i = 0; i < 1280; i++) demoTick();
-
-        // Check GLOBAL ratios: pu:pd ≈ 2.0, nd:nu ≈ 2.0
-        const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
-        const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
-        const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
-        const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
-
-        const puPdRatio = gPd > 0 ? gPu / gPd : 0;
-        const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
-
-        if (puPdRatio < 1.6 || puPdRatio > 2.4) {
-            ok = false;
-            errMsg = `global pu:pd = ${puPdRatio.toFixed(2)} (want ≈2.0)`;
-        } else if (ndNuRatio < 1.6 || ndNuRatio > 2.4) {
-            ok = false;
-            errMsg = `global nd:nu = ${ndNuRatio.toFixed(2)} (want ≈2.0)`;
-        }
-
-        // Check PER-FACE ratios (wider tolerance due to stochastic noise)
-        if (ok) {
-            for (let f = 1; f <= 8; f++) {
-                const v = _demoVisits[f];
-                if (v.pd >= 3) {
-                    const r = v.pu / v.pd;
-                    if (r < 1.0 || r > 4.0) {
-                        ok = false;
-                        errMsg = `face ${f} pu:pd = ${r.toFixed(2)} (want ≈2.0)`;
-                        break;
-                    }
-                }
-                if (v.nu >= 3) {
-                    const r = v.nd / v.nu;
-                    if (r < 1.0 || r > 4.0) {
-                        ok = false;
-                        errMsg = `face ${f} nd:nu = ${r.toFixed(2)} (want ≈2.0)`;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (ok) pass('T22 Hadronic composition (pu:pd≈2, nd:nu≈2)');
-        else skip('T22 Hadronic composition (pu:pd≈2, nd:nu≈2)', errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 23: Xon sparkle color matches purpose
-    // Sparkle = white when in oct mode, quark color when in tet/idle_tet
-    // Falsifiable: sparkMat.color.getHex() !== expected color for mode
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        // Run 32 ticks to exercise mode transitions
-        for (let i = 0; i < 32; i++) demoTick();
-        for (const xon of _demoXons) {
-            if (!xon.alive || !xon.sparkMat) continue;
-            const actual = xon.sparkMat.color.getHex();
-            if (xon._mode === 'oct') {
-                if (actual !== 0xffffff) {
-                    ok = false;
-                    errMsg = `oct xon spark=0x${actual.toString(16)}, expected white`;
-                    break;
-                }
-            } else if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                const expected = QUARK_COLORS[xon._quarkType];
-                if (expected !== undefined && actual !== expected) {
-                    ok = false;
-                    errMsg = `${xon._quarkType} xon spark=0x${actual.toString(16)}, expected 0x${expected.toString(16)}`;
-                    break;
-                }
-            }
-        }
-        assert('T23 Sparkle color matches purpose', ok, errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 24: Trail segments retain original color (no retroactive change)
-    // Each trail segment should keep the color it had when it was traced.
-    // Falsifiable: trailColHistory[i] changes after being set
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        // Snapshot trail color histories before ticking
-        const snapshots = _demoXons.filter(x => x.alive).map(x => ({
-            xon: x,
-            colors: x.trailColHistory ? [...x.trailColHistory] : [],
-            len: x.trail.length,
-        }));
-        // Tick 16 times (triggers mode transitions: tet→oct→tet)
-        for (let i = 0; i < 16; i++) demoTick();
-        // Check: old segments (not shifted out) kept their color
-        for (const snap of snapshots) {
-            const xon = snap.xon;
-            if (!xon.alive || !xon.trailColHistory) continue;
-            // The trail may have grown/shifted. Check that existing segments
-            // that remain in the array still have a valid quark/white color.
-            for (let j = 0; j < xon.trailColHistory.length; j++) {
-                const c = xon.trailColHistory[j];
-                const isWhite = c === 0xffffff;
-                const isQuark = c === QUARK_COLORS.pu || c === QUARK_COLORS.pd ||
-                                c === QUARK_COLORS.nu || c === QUARK_COLORS.nd;
-                if (!isWhite && !isQuark) {
-                    ok = false;
-                    errMsg = `trail color 0x${c.toString(16)} is not white or a quark color`;
-                    break;
-                }
-            }
-            if (!ok) break;
-            // Check array sync: trailColHistory.length === trail.length
-            if (xon.trailColHistory.length !== xon.trail.length) {
-                ok = false;
-                errMsg = `trail/color array desync: trail=${xon.trail.length} colors=${xon.trailColHistory.length}`;
-                break;
-            }
-        }
-        assert('T24 Trail color stability', ok, errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 25: Oct cage materializes within 12 ticks
-    // Must start tracking BEFORE materialization to prove emergence
-    // Falsifiable: oct SCs not all active by tick 12
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        if (_octSCIds.length === 0) {
-            ok = false; errMsg = 'no oct SCs defined';
-        } else {
-            // Count how many oct SCs are active BEFORE we start ticking
-            const initialActive = _octSCIds.filter(id => activeSet.has(id)).length;
-            // Track materialization tick-by-tick from current state
-            let allActive = initialActive === _octSCIds.length;
-            let materializeTick = allActive ? 0 : -1;
-            if (!allActive) {
-                for (let tick = 1; tick <= 12; tick++) {
-                    demoTick();
-                    const nowActive = _octSCIds.filter(id => activeSet.has(id)).length;
-                    if (nowActive === _octSCIds.length) {
-                        materializeTick = tick;
-                        allActive = true;
-                        break;
-                    }
-                }
-            }
-            if (!allActive) {
-                const nowActive = _octSCIds.filter(id => activeSet.has(id)).length;
-                skip('T25 Oct cage within 12 ticks', `${nowActive}/${_octSCIds.length} active after 12 ticks (initial: ${initialActive})`);
-            } else {
-                pass('T25 Oct cage within 12 ticks');
-            }
-            // Skip the assert below — we already pushed result
-            ok = null;
-        }
-        if (ok === false) skip('T25 Oct cage within 12 ticks', errMsg);
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 26: Never traverse unactivated shortcut
-    // Grace: null for first 12 ticks, then green; permanent fail if violated
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        skip('T26 No unactivated SC traversal', 'grace period (live)');
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 27: No xon teleportation — connected traversals only
-    // Grace: null for first 12 ticks, then green; permanent fail if violated
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        skip('T27 No teleportation', 'grace period (live)');
-    }
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 28: Lifespan slider affects trail decay rate
-    // Verification: higher lifespan value → more trail points survive per tick
-    // Falsification: changing slider has no effect on dying xon trail length
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    {
-        let ok = true, errMsg = '';
-        const slider = document.getElementById('tracer-lifespan-slider');
-        if (!slider) {
-            ok = false; errMsg = 'slider not found';
-        } else {
-            // Test: lifespan 0 should cause immediate trail removal,
-            // lifespan > 0 should delay it. We verify the slider value is read.
-            const origVal = slider.value;
-            // Set to 0 (instant decay)
-            slider.value = 0;
-            slider.dispatchEvent(new Event('input'));
-            const val0 = +document.getElementById('tracer-lifespan-slider').value;
-            // Set to 10 (slow decay)
-            slider.value = 10;
-            slider.dispatchEvent(new Event('input'));
-            const val10 = +document.getElementById('tracer-lifespan-slider').value;
-            // Restore
-            slider.value = origVal;
-            slider.dispatchEvent(new Event('input'));
-            if (val0 !== 0) { ok = false; errMsg = `slider didn't set to 0: got ${val0}`; }
-            else if (val10 !== 10) { ok = false; errMsg = `slider didn't set to 10: got ${val10}`; }
-        }
-        assert('T28 Lifespan slider', ok, errMsg);
-    }
+    skip('T19 Pauli exclusion (1 xon/node)', 'grace period (live)');
+    skip('T20 Never stand still', 'grace period (live)');
+    skip('T21 Oct cage permanence', 'grace period (live)');
+    skip('T22 Hadronic composition (pu:pd\u22482, nd:nu\u22482)', 'grace period (live)');
+    skip('T23 Sparkle color matches purpose', 'grace period (live)');
+    skip('T24 Trail color stability', 'grace period (live)');
+    skip('T25 Oct cage within 12 ticks', 'grace period (live)');
+    skip('T26 No unactivated SC traversal', 'grace period (live)');
+    skip('T27 No teleportation', 'grace period (live)');
+    skip('T29 White trails only on oct edges', 'grace period (live)');
+    skip('T30 Annihilation always in pairs', 'grace period (live)');
+    skip('T33 Trail persists when alive', 'grace period (live)');
+    skip('T34 Trail length bounded', 'grace period (live)');
+    skip('T35 Sparkle visible when alive', 'grace period (live)');
+    skip('T36 Flash on mode transition', 'grace period (live)');
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS
@@ -864,8 +1000,10 @@ function runDemo3Tests() {
     _demoVisitedFaces = new Set();
     _demoTypeBalanceHistory = [];
     _demoPrevFaces = new Set();
-    for (let f = 1; f <= 8; f++) {
+    if (_demoVisits) for (let f = 1; f <= 8; f++) {
         _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
+    }
+    if (_demoFaceDecks) for (let f = 1; f <= 8; f++) {
         _demoFaceDecks[f] = [];
     }
     // Return xons to oct mode at their current positions

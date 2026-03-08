@@ -228,9 +228,9 @@ const NucleusSimulator = (function(){
         if(graphSlider){ graphSlider.value = 5; graphSlider.dispatchEvent(new Event('input')); }
         const shapesSlider = document.getElementById('void-opacity-slider');
         if(shapesSlider){ shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
-        // Speed default ~25% for easier observation
+        // Speed default = slowest (600ms interval) for detailed observation
         const speedSlider = document.getElementById('excitation-speed-slider');
-        if(speedSlider){ speedSlider.value = 25; speedSlider.dispatchEvent(new Event('input')); }
+        if(speedSlider){ speedSlider.value = 1; speedSlider.dispatchEvent(new Event('input')); }
     }
 
     // ── Exit nucleus UI mode ──
@@ -530,12 +530,14 @@ const NucleusSimulator = (function(){
         if(!el) return;
         const toHex = c => '#' + c.toString(16).padStart(6, '0');
         const entries = [
-            { label: 'p-up (F1,F3)',   color: 0xffdd44 },
-            { label: 'p-down (F6,F8)', color: 0x44cc66 },
-            { label: 'n-up (F2,F4)',   color: 0x4488ff },
-            { label: 'n-down (F5,F7)', color: 0xff4444 },
+            { label: 'proton up',   color: 0xffdd44 },
+            { label: 'proton down', color: 0x44cc66 },
+            { label: 'neutron up',  color: 0x4488ff },
+            { label: 'neutron down', color: 0xff4444 },
+            { label: 'barionic',    color: 0xffffff },
+            { label: 'weak',        color: 0xcc44ff },
         ];
-        let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">tet quarks:</div>`;
+        let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;
         for(const e of entries){
             html += `<div style="display:flex; align-items:center; gap:4px; font-size:8px;">`
                 + `<span style="display:inline-block; width:8px; height:8px; background:${toHex(e.color)}; border-radius:2px;"></span>`
