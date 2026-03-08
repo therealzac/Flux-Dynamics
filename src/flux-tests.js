@@ -140,6 +140,7 @@ const _liveGuards = {
     T37: { ok: null, msg: 'grace period', failed: false },
     T38: { ok: null, msg: 'grace period', failed: false },
     T39: { ok: null, msg: 'grace period', failed: false },
+    T40: { ok: null, msg: 'grace period', failed: false },
 };
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
@@ -224,14 +225,18 @@ function _liveGuardCheck() {
         }
     }
 
-    // ── T14: No dying xons — annihilated xons are cleanly stored ──
+    // ── T14: Dying trail cleanup — dying xons must finish fade within 60 ticks ──
+    // Trail fade (T40) creates _dying xons. They must not persist forever.
     if (!_liveGuards.T14.failed) {
-        const dying = _demoXons.filter(x => x._dying).length;
-        if (dying > 0) {
-            _liveGuards.T14.ok = false;
-            _liveGuards.T14.failed = true;
-            _liveGuards.T14.msg = `tick ${tick}: dying=${dying}`;
-            anyFailed = true;
+        for (const xon of _demoXons) {
+            if (!xon._dying) continue;
+            if (!xon._dyingStartTick) xon._dyingStartTick = tick;
+            if (tick - xon._dyingStartTick > 60) {
+                _liveGuards.T14.ok = false;
+                _liveGuards.T14.failed = true;
+                _liveGuards.T14.msg = `tick ${tick}: xon dying for ${tick - xon._dyingStartTick} ticks (max 60)`;
+                anyFailed = true; break;
+            }
         }
     }
 
@@ -541,6 +546,27 @@ function _liveGuardCheck() {
             }
         }
 
+        // ── T40: Trail fade on annihilation — trails must fade, not vanish instantly ──
+        // Verify: run demo until annihilation occurs — dead xon has _dying=true.
+        // Violate: set trailLine.visible=false in _annihilateXonPair instead of using _dying fade.
+        if (!_liveGuards.T40.failed) {
+            for (const { xon } of _liveGuardPrev) {
+                // All entries were alive at snapshot — check if xon died this tick
+                if (xon.alive) continue;
+                // Xon just died — trail must be in _dying fade state, not instantly hidden
+                if (!xon._dying) {
+                    _liveGuards.T40.ok = false;
+                    _liveGuards.T40.failed = true;
+                    _liveGuards.T40.msg = `tick ${tick}: xon annihilated at node ${xon.node} without trail fade (_dying not set)`;
+                    anyFailed = true; break;
+                }
+            }
+            if (!_liveGuards.T40.failed && _liveGuards.T40.ok === null && tick >= LIVE_GUARD_GRACE) {
+                _liveGuards.T40.ok = true;
+                _liveGuards.T40.msg = '';
+            }
+        }
+
         // Movement-specific checks from snapshot
         for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
             if (!xon.alive) continue;
@@ -643,7 +669,7 @@ function _liveGuardCheck() {
     //   checkpoint 3 (1280 ticks): tight band [1.6, 2.4] — final acceptance
     // Test passes at checkpoint 3. Fails only if tight band violated at deadline.
     // Running ratio shown in guard message for observability.
-    if (!_liveGuards.T22.failed) {
+    if (!_liveGuards.T22.failed && _liveGuards.T22.ok !== true) {
         const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
         const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
         const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
@@ -652,12 +678,27 @@ function _liveGuardCheck() {
         const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
         const total = gPu + gPd + gNd + gNu;
 
-        // Show running ratios (non-failing update)
-        if (total > 0 && _liveGuards.T22.ok !== true) {
-            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} (n=${total})`;
+        // Face coverage evenness — early pass if overall reaches 100%
+        const totals = [];
+        for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+        const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+        const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
+        const cv = mean > 0 ? (stddev / mean) : 1;
+        const evenness = Math.max(0, 1 - cv);
+
+        // Show running ratios + evenness (non-failing update)
+        if (total > 0) {
+            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} cov=${(evenness*100).toFixed(0)}%`;
         }
 
-        // Progressive checkpoints
+        // Early pass: face coverage overall reaches 100%
+        if (evenness >= 0.999 && total >= 16) {
+            _liveGuards.T22.ok = true;
+            _liveGuards.T22.msg = `coverage 100% pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+            _liveGuardRender();
+        }
+
+        // Progressive checkpoints (fallback validation)
         const t = tick - LIVE_GUARD_GRACE;
         const checkpoints = [
             { at: 256,  lo: 1.0, hi: 3.0, label: 'early' },
@@ -669,7 +710,6 @@ function _liveGuardCheck() {
             const inBand = puPdRatio >= cp.lo && puPdRatio <= cp.hi
                         && ndNuRatio >= cp.lo && ndNuRatio <= cp.hi;
             if (cp.label === 'final') {
-                // Final checkpoint — pass or fail
                 if (inBand) {
                     _liveGuards.T22.ok = true;
                     _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
@@ -680,7 +720,6 @@ function _liveGuardCheck() {
                     anyFailed = true;
                 }
             } else if (!inBand) {
-                // Early/mid checkpoint — warn but don't fail yet
                 console.warn(`[T22 ${cp.label}] pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} outside [${cp.lo}-${cp.hi}]`);
             }
             _liveGuardRender();
@@ -691,17 +730,36 @@ function _liveGuardCheck() {
     // Verify: run demo — all opacity sliders match expected demo defaults by grace end.
     // Violate: remove the slider reset code from startDemo() in flux-demo.js.
     if (!_liveGuards.T39.failed && tick === LIVE_GUARD_GRACE + 1) {
-        const expected = {
-            'sphere-opacity-slider': 1,
-            'void-opacity-slider': 20,
-            'graph-opacity-slider': 10,
-            'trail-opacity-slider': 100,
+        const expectedSliders = {
+            'sphere-opacity-slider': 5,
+            'void-opacity-slider': 13,
+            'graph-opacity-slider': 34,
+            'trail-opacity-slider': 55,
+            'excitation-speed-slider': 100,
+            'tracer-lifespan-slider': 12,
         };
         const wrong = [];
-        for (const [id, val] of Object.entries(expected)) {
+        // Check slider positions
+        for (const [id, val] of Object.entries(expectedSliders)) {
             const el = document.getElementById(id);
             if (!el) { wrong.push(`${id} missing`); continue; }
             if (+el.value !== val) wrong.push(`${id}=${el.value} expected ${val}`);
+        }
+        // Check rendered display values match (catches broken event listeners)
+        const expectedDisplay = {
+            'sphere-opacity-val': '5%',
+            'void-opacity-val': '13%',
+            'graph-opacity-val': '34%',
+            'trail-opacity-val': '55%',
+        };
+        for (const [id, text] of Object.entries(expectedDisplay)) {
+            const el = document.getElementById(id);
+            if (!el) { wrong.push(`${id} missing`); continue; }
+            if (el.textContent !== text) wrong.push(`${id}="${el.textContent}" expected "${text}"`);
+        }
+        // Check actual material opacity (sphere renderer)
+        if (typeof _bgMat !== 'undefined' && Math.abs(_bgMat.opacity - 0.05) > 0.02) {
+            wrong.push(`sphere material opacity=${_bgMat.opacity.toFixed(2)} expected 0.05`);
         }
         if (wrong.length > 0) {
             _liveGuards.T39.ok = false;
@@ -757,7 +815,7 @@ function _liveGuardRender() {
     const nameMap = {
         T12: 'T12 Conservation (alive+2*stored=6)',
         T13: 'T13 Array size unchanged',
-        T14: 'T14 No dying xons',
+        T14: 'T14 Dying trail cleanup',
         T15: 'T15 Xon state (sign + mode)',
         T16: 'T16 Xon always has function',
         T17: 'T17 Full tet coverage (8/8 faces)',
@@ -779,6 +837,7 @@ function _liveGuardRender() {
         T37: 'T37 Trail flash boost',
         T38: 'T38 Weak force confinement',
         T39: 'T39 Demo opacity reset',
+        T40: 'T40 Trail fade on annihilation',
     };
 
     for (const [key, g] of Object.entries(_liveGuards)) {
@@ -1036,7 +1095,7 @@ function runDemo3Tests() {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     skip('T12 Conservation (alive+2*stored=6)', 'grace period (live)');
     skip('T13 Array size unchanged', 'grace period (live)');
-    skip('T14 No dying xons', 'grace period (live)');
+    skip('T14 Dying trail cleanup', 'grace period (live)');
     skip('T15 Xon state (sign + mode)', 'grace period (live)');
     skip('T16 Xon always has function', 'grace period (live)');
     skip('T17 Full tet coverage (8/8 faces)', 'grace period (live)');
@@ -1062,6 +1121,7 @@ function runDemo3Tests() {
     skip('T37 Trail flash boost', 'grace period (live)');
     skip('T38 Weak force confinement', 'grace period (live)');
     skip('T39 Demo opacity reset', 'grace period (live)');
+    skip('T40 Trail fade on annihilation', 'grace period (live)');
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS

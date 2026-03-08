@@ -662,8 +662,10 @@ document.getElementById('btn-copy-violation').addEventListener('click',function(
     try{ const json=JSON.stringify(buildExportData(),null,2); copyText(json); toast('violation state copied'); }
     catch(e){ toast('export error: '+e.message); console.error('buildExportData failed:',e); }
 });
-document.getElementById('btn-jiggle').addEventListener('click',toggleJiggle);
-document.getElementById('jiggle-slider').addEventListener('input',updateJiggleSpeed);
+const _btnJiggle = document.getElementById('btn-jiggle');
+if (_btnJiggle) _btnJiggle.addEventListener('click',toggleJiggle);
+const _jiggleSlider = document.getElementById('jiggle-slider');
+if (_jiggleSlider) _jiggleSlider.addEventListener('input',updateJiggleSpeed);
 document.getElementById('energy-slider').addEventListener('input',updateEnergy);
 document.getElementById('lattice-slider').addEventListener('input',updateLatticeLevel);
 

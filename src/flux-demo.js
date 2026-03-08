@@ -515,13 +515,19 @@ function _annihilateXonPair(xonA, xonB) {
     // Record weak lifecycle exit if either was in weak mode
     if (xonA._mode === 'weak') _weakLifecycleExit(xonA, 'ANNIHILATED');
     if (xonB._mode === 'weak') _weakLifecycleExit(xonB, 'ANNIHILATED');
-    xonA.alive = false;
-    xonB.alive = false;
-    // Visual cleanup: hide spark + trail
-    if (xonA.group) xonA.group.visible = false;
-    if (xonA.trailLine) xonA.trailLine.visible = false;
-    if (xonB.group) xonB.group.visible = false;
-    if (xonB.trailLine) xonB.trailLine.visible = false;
+    // Graceful trail fade (T40): hide spark, freeze trail for decay.
+    // Keep group/sparkMat intact so _manifestXonPair can reactivate later.
+    for (const xon of [xonA, xonB]) {
+        xon.alive = false;
+        if (xon.group) xon.group.visible = false; // spark vanishes
+        // Freeze trail positions for dying decay
+        xon._frozenPos = xon.trail.map(nodeIdx => {
+            const p = pos[nodeIdx];
+            return p ? [p[0], p[1], p[2]] : [0, 0, 0];
+        });
+        xon._frozenColors = xon.trailColHistory ? [...xon.trailColHistory] : null;
+        xon._dying = true;
+    }
     _gluonStoredPairs++;
     console.log(`[gluon] Annihilation at node ${xonA.node}: stored=${_gluonStoredPairs}, alive=${_demoXons.filter(x=>x.alive).length} modes=[${xonA._mode},${xonB._mode}]`);
 }
@@ -533,8 +539,8 @@ function _manifestXonPair() {
     const aliveCount = _demoXons.filter(x => x.alive).length;
     if (aliveCount >= 6) return false;
 
-    // Find dead xons to reactivate (recycle slots)
-    const dead = _demoXons.filter(x => !x.alive);
+    // Find dead xons to reactivate (recycle slots) — skip dying (trail still fading)
+    const dead = _demoXons.filter(x => !x.alive && !x._dying);
     if (dead.length < 2) return false;
 
     // Find two free adjacent oct nodes
@@ -559,6 +565,9 @@ function _manifestXonPair() {
     // Reactivate two dead xons at nodeA and nodeB
     const xonA = dead[0];
     const xonB = dead[1];
+    // Clear any residual dying state from trail fade
+    xonA._dying = false; xonA._frozenPos = null; xonA._frozenColors = null; xonA._dyingStartTick = null;
+    xonB._dying = false; xonB._frozenPos = null; xonB._frozenColors = null; xonB._dyingStartTick = null;
     xonA.alive = true;
     xonA.node = nodeA; // bypass interceptor for respawn
     xonA.prevNode = nodeA;
@@ -1469,8 +1478,17 @@ function _tickDemoXons(dt) {
         // ── Dying xons: render frozen trail (decay happens in demoTick) ──
         if (xon._dying) {
             if (!xon._frozenPos || xon._frozenPos.length === 0 || !xon.trailGeo) {
-                _finalCleanupXon(xon);
-                _demoXons.splice(xi, 1);
+                // Trail fade complete — if group intact (annihilated), keep in array
+                // for _manifestXonPair reactivation. Only splice fully destroyed xons.
+                if (xon.group) {
+                    // Annihilated xon: keep slot, just finish dying
+                    xon._dying = false;
+                    xon._dyingStartTick = null; // reset for T14
+                    if (xon.trailLine) xon.trailLine.visible = false;
+                } else {
+                    _finalCleanupXon(xon);
+                    _demoXons.splice(xi, 1);
+                }
                 continue;
             }
             // Render from frozen (historical) positions — per-segment colors
@@ -1658,12 +1676,12 @@ function _cleanupDemo3() {
     _demoPrevFaces = new Set();
 }
 
-// Map speed slider (1-100) to demo interval: 1→600ms (slow), 50→30ms, 100→2ms (turbo)
+// Map speed slider (1-100) to demo interval: 1→1000ms (1s cycle), 50→~45ms, 100→2ms (turbo)
 function _getDemoIntervalMs() {
     const slider = document.getElementById('excitation-speed-slider');
-    if (!slider) return 600; // default = slowest
+    if (!slider) return 1000; // default = slowest
     const t = +slider.value / 100;
-    return Math.max(2, Math.round(Math.exp(Math.log(600) * (1 - t) + Math.log(2) * t)));
+    return Math.max(2, Math.round(Math.exp(Math.log(1000) * (1 - t) + Math.log(2) * t)));
 }
 
 /**
@@ -1841,16 +1859,15 @@ function startDemoLoop() {
     const dpTitle = document.querySelector('#deuteron-panel > div:first-child');
     if (dpTitle) dpTitle.textContent = '0 Planck seconds';
 
-    // Demo 3.0 visual setup: shapes subtle, graph visible, spheres ghostly
-    const shapesSlider = document.getElementById('void-opacity-slider');
-    if (shapesSlider) { shapesSlider.value = 20; shapesSlider.dispatchEvent(new Event('input')); }
+    // Demo 3.0 visual setup: opacity defaults per T39 spec
     const spheresSlider = document.getElementById('sphere-opacity-slider');
-    if (spheresSlider) { spheresSlider.value = 1; spheresSlider.dispatchEvent(new Event('input')); }
+    if (spheresSlider) { spheresSlider.value = 5; spheresSlider.dispatchEvent(new Event('input')); }
+    const shapesSlider = document.getElementById('void-opacity-slider');
+    if (shapesSlider) { shapesSlider.value = 13; shapesSlider.dispatchEvent(new Event('input')); }
     const graphSlider = document.getElementById('graph-opacity-slider');
-    if (graphSlider) { graphSlider.value = 10; graphSlider.dispatchEvent(new Event('input')); }
-    // Xon trails at full brightness for demo visibility
+    if (graphSlider) { graphSlider.value = 34; graphSlider.dispatchEvent(new Event('input')); }
     const trailSlider = document.getElementById('trail-opacity-slider');
-    if (trailSlider) { trailSlider.value = 100; trailSlider.dispatchEvent(new Event('input')); }
+    if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
 
     // Zoom camera out for better demo overview
     sph.r = Math.max(12, latticeLevel * 4.5);
@@ -2998,13 +3015,31 @@ function demoTick() {
         }
 
         // If collision persists: ANNIHILATE pairs on-node
+        // Protect weak xons from non-local annihilation — they are mid-return
         const stillHere = _demoXons.filter(x => x.alive && x.node === cNode);
         while (stillHere.length > 1) {
-            const a = stillHere.pop();
-            const b = stillHere.pop();
-            _annihilateXonPair(a, b);
-            _occDel(occupied, cNode);
-            _occDel(occupied, cNode);
+            // Prefer annihilating non-weak pairs; skip if either is weak
+            const nonWeak = stillHere.filter(x => x._mode !== 'weak');
+            if (nonWeak.length >= 2) {
+                const a = nonWeak.pop();
+                const b = nonWeak.pop();
+                stillHere.splice(stillHere.indexOf(a), 1);
+                stillHere.splice(stillHere.indexOf(b), 1);
+                _annihilateXonPair(a, b);
+                _occDel(occupied, cNode);
+                _occDel(occupied, cNode);
+            } else {
+                // Weak xon involved — try scatter the non-weak xon instead
+                const toScatter = stillHere.find(x => x._mode !== 'weak' && !x._movedThisTick);
+                if (toScatter) {
+                    _scatterMove(toScatter, occupied);
+                    if (toScatter.node !== cNode) {
+                        stillHere.splice(stillHere.indexOf(toScatter), 1);
+                        continue;
+                    }
+                }
+                break; // can't resolve — will clear next tick
+            }
         }
     }
 
