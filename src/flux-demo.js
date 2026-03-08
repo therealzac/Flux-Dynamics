@@ -1848,6 +1848,9 @@ function startDemoLoop() {
     if (spheresSlider) { spheresSlider.value = 1; spheresSlider.dispatchEvent(new Event('input')); }
     const graphSlider = document.getElementById('graph-opacity-slider');
     if (graphSlider) { graphSlider.value = 10; graphSlider.dispatchEvent(new Event('input')); }
+    // Xon trails at full brightness for demo visibility
+    const trailSlider = document.getElementById('trail-opacity-slider');
+    if (trailSlider) { trailSlider.value = 100; trailSlider.dispatchEvent(new Event('input')); }
 
     // Zoom camera out for better demo overview
     sph.r = Math.max(12, latticeLevel * 4.5);

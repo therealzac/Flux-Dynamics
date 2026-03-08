@@ -139,6 +139,7 @@ const _liveGuards = {
     T36: { ok: null, msg: 'grace period', failed: false },
     T37: { ok: null, msg: 'grace period', failed: false },
     T38: { ok: null, msg: 'grace period', failed: false },
+    T39: { ok: null, msg: 'grace period', failed: false },
 };
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
@@ -152,7 +153,7 @@ function _liveGuardCheck() {
     const isWindowBoundary = tickInWindow === 0;
 
     // Convergence tests stay null until their deadline is evaluated
-    const CONVERGENCE_TESTS = new Set(['T17', 'T22', 'T25']);
+    const CONVERGENCE_TESTS = new Set(['T17', 'T22', 'T25', 'T39']);
 
     // ── During grace: stay null ──
     if (tick <= LIVE_GUARD_GRACE) {
@@ -523,14 +524,15 @@ function _liveGuardCheck() {
             }
         }
 
-        // ── T38: Weak force confinement — weak xons must never be annihilated ──
-        // Verify: run demo — weak xons always return to oct (never killed).
-        // Violate: allow _annihilateXonPair to kill weak-mode xons in PHASE 4.
+        // ── T38: Weak force confinement — weak xons must never be annihilated while in weak mode ──
+        // Verify: run demo — weak xons always return to oct before any annihilation.
+        // Violate: allow _annihilateXonPair to kill xons still in weak mode in PHASE 4.
+        // Note: if a xon exits weak→oct and THEN gets annihilated as a normal oct xon, that's fine.
         if (!_liveGuards.T38.failed) {
             for (const { xon, mode: prevMode } of _liveGuardPrev) {
                 if (prevMode !== 'weak') continue;
-                // If xon was in weak mode last tick and is now dead, it was annihilated
-                if (!xon.alive) {
+                if (!xon.alive && xon._mode === 'weak') {
+                    // Xon was in weak mode and died while still weak — confinement failure
                     _liveGuards.T38.ok = false;
                     _liveGuards.T38.failed = true;
                     _liveGuards.T38.msg = `tick ${tick}: weak xon annihilated at node ${xon.node}`;
@@ -633,21 +635,82 @@ function _liveGuardCheck() {
         }
     }
 
-    // ── T22: Hadronic composition — pu:pd≈2:1, nd:nu≈2:1 after 1280 ticks ──
-    if (!_liveGuards.T22.failed && tick === LIVE_GUARD_GRACE + 1280) {
+    // ── T22: Hadronic composition — progressive validation ──
+    // Physics: proton = 2pu + 1pd → pu:pd = 2.0, neutron = 2nd + 1nu → nd:nu = 2.0
+    // Validation criteria (programmatic):
+    //   checkpoint 1 (256 ticks): wide band [1.0, 3.0] — early convergence signal
+    //   checkpoint 2 (640 ticks): medium band [1.4, 2.6] — statistical significance
+    //   checkpoint 3 (1280 ticks): tight band [1.6, 2.4] — final acceptance
+    // Test passes at checkpoint 3. Fails only if tight band violated at deadline.
+    // Running ratio shown in guard message for observability.
+    if (!_liveGuards.T22.failed) {
         const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
         const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
         const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
         const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
         const puPdRatio = gPd > 0 ? gPu / gPd : 0;
         const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
-        if (puPdRatio < 1.6 || puPdRatio > 2.4 || ndNuRatio < 1.6 || ndNuRatio > 2.4) {
-            _liveGuards.T22.ok = false;
-            _liveGuards.T22.failed = true;
-            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+        const total = gPu + gPd + gNd + gNu;
+
+        // Show running ratios (non-failing update)
+        if (total > 0 && _liveGuards.T22.ok !== true) {
+            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} (n=${total})`;
+        }
+
+        // Progressive checkpoints
+        const t = tick - LIVE_GUARD_GRACE;
+        const checkpoints = [
+            { at: 256,  lo: 1.0, hi: 3.0, label: 'early' },
+            { at: 640,  lo: 1.4, hi: 2.6, label: 'mid' },
+            { at: 1280, lo: 1.6, hi: 2.4, label: 'final' },
+        ];
+        for (const cp of checkpoints) {
+            if (t !== cp.at) continue;
+            const inBand = puPdRatio >= cp.lo && puPdRatio <= cp.hi
+                        && ndNuRatio >= cp.lo && ndNuRatio <= cp.hi;
+            if (cp.label === 'final') {
+                // Final checkpoint — pass or fail
+                if (inBand) {
+                    _liveGuards.T22.ok = true;
+                    _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+                } else {
+                    _liveGuards.T22.ok = false;
+                    _liveGuards.T22.failed = true;
+                    _liveGuards.T22.msg = `${cp.label}: pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} [${cp.lo}-${cp.hi}]`;
+                    anyFailed = true;
+                }
+            } else if (!inBand) {
+                // Early/mid checkpoint — warn but don't fail yet
+                console.warn(`[T22 ${cp.label}] pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} outside [${cp.lo}-${cp.hi}]`);
+            }
+            _liveGuardRender();
+        }
+    }
+
+    // ── T39: Demo mode opacity reset — verify sliders set on demo entry ──
+    // Verify: run demo — all opacity sliders match expected demo defaults by grace end.
+    // Violate: remove the slider reset code from startDemo() in flux-demo.js.
+    if (!_liveGuards.T39.failed && tick === LIVE_GUARD_GRACE + 1) {
+        const expected = {
+            'sphere-opacity-slider': 1,
+            'void-opacity-slider': 20,
+            'graph-opacity-slider': 10,
+            'trail-opacity-slider': 100,
+        };
+        const wrong = [];
+        for (const [id, val] of Object.entries(expected)) {
+            const el = document.getElementById(id);
+            if (!el) { wrong.push(`${id} missing`); continue; }
+            if (+el.value !== val) wrong.push(`${id}=${el.value} expected ${val}`);
+        }
+        if (wrong.length > 0) {
+            _liveGuards.T39.ok = false;
+            _liveGuards.T39.failed = true;
+            _liveGuards.T39.msg = wrong.join(', ');
             anyFailed = true;
         } else {
-            _liveGuards.T22.ok = true; _liveGuards.T22.msg = '';
+            _liveGuards.T39.ok = true;
+            _liveGuards.T39.msg = '';
         }
         _liveGuardRender();
     }
@@ -715,6 +778,7 @@ function _liveGuardRender() {
         T36: 'T36 Flash on mode transition',
         T37: 'T37 Trail flash boost',
         T38: 'T38 Weak force confinement',
+        T39: 'T39 Demo opacity reset',
     };
 
     for (const [key, g] of Object.entries(_liveGuards)) {
@@ -997,6 +1061,7 @@ function runDemo3Tests() {
     skip('T36 Flash on mode transition', 'grace period (live)');
     skip('T37 Trail flash boost', 'grace period (live)');
     skip('T38 Weak force confinement', 'grace period (live)');
+    skip('T39 Demo opacity reset', 'grace period (live)');
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS
