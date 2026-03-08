@@ -1386,6 +1386,9 @@ function demoTick() {
     if (!_demoActive || !_demoSchedule) return;
     if (simHalted) return;
 
+    // Clear stale movement flags from previous tick so WB processing isn't blocked
+    for (const xon of _demoXons) xon._movedThisTick = false;
+
     // Snapshot xon positions BEFORE advancement for live guard T26/T27
     if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
 
