@@ -2679,8 +2679,10 @@ function demoTick() {
         // Final Pauli safety check before executing
         if ((occupied.get(plan.toNode) || 0) > 0) {
             if (!plan._annihilateMove) continue; // destination still occupied — skip to prevent collision
-            // Annihilation move: allow advance into occupied node.
-            // PHASE 4 will resolve the collision via gluon storage (pair annihilation).
+            // Annihilation move: allow advance into occupied node ONLY if occupant is non-weak.
+            // Weak xons are protected from non-local annihilation (T38).
+            const occupant = _demoXons.find(x => x.alive && x.node === plan.toNode && x !== plan.xon);
+            if (occupant && occupant._mode === 'weak') continue; // don't collide with returning weak xon
         }
         // Verify SC is still active (may have been severed by oct move negotiation)
         if (!_canAdvanceSafely(plan.xon)) continue;
