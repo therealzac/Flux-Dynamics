@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flux Dynamics</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; height: 100vh; font-family: 'Courier New', monospace; }
+        canvas { display: block; position: fixed; top: 0; left: 0; }
+
+        /* Legacy legend CSS removed — deuteron panel is now inline-styled */
+
+        /* Bottom hint */
+        #hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+            font-size: 10px; color: #7a9aaa; letter-spacing: 0.07em;
+            pointer-events: none; user-select: none; white-space: nowrap;
+            text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+        #toast { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%);
+            font-size: 10px; color: #ff7755; letter-spacing: 0.07em; opacity: 0;
+            transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
+            text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
+
+        /* Right panel shell */
+        #side-panel { position: fixed; top: 16px; right: 16px; width: 214px;
+            display: flex; flex-direction: column; gap: 0;
+            font-size: 10px; letter-spacing: 0.06em; color: #8aacbf;
+            user-select: none;
+            max-height: calc(100vh - 32px); overflow-y: auto; overflow-x: hidden;
+            pointer-events: auto; }
+        #side-panel::-webkit-scrollbar { width: 4px; }
+        #side-panel::-webkit-scrollbar-track { background: transparent; }
+        #side-panel::-webkit-scrollbar-thumb { background: rgba(100,140,170,0.3); border-radius: 2px; }
+        #side-panel::-webkit-scrollbar-thumb:hover { background: rgba(100,140,170,0.5); }
+
+        /* Stats block — inside deuteron-panel when visible, standalone when not */
+        #bottom-stats { position: fixed; bottom: 16px; left: 16px; z-index: 1;
+            font-family: 'Courier New', monospace; font-size: 9px; line-height: 1.9;
+            color: #6a8a9a; pointer-events: none; user-select: none;
+            background: rgba(8,14,22,0.6); border: 1px solid rgba(80,120,150,0.15);
+            border-radius: 4px; padding: 4px 8px; backdrop-filter: blur(2px); }
+        #bottom-stats.inline { position: relative; bottom: auto; left: auto;
+            margin-top: 8px; border-top: 1px solid rgba(80,120,150,0.25);
+            background: none; border: none; border-radius: 0; padding: 8px 0 0 0;
+            backdrop-filter: none; pointer-events: none; }
+        #bottom-stats span { color: #8aacbf; }
+
+        /* Sliders + controls */
+        #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; pointer-events: all; }
+        .ctrl-label { font-size: 8px; color: #7a9ab0; width: 42px; flex-shrink: 0;
+            letter-spacing: 0.1em; text-transform: uppercase; }
+        .ctrl-val { font-size: 8px; color: #9abccc; min-width: 28px; text-align: right; letter-spacing: 0.05em; }
+        #lattice-lv { font-size: 8px; color: #9abccc; min-width: 18px; text-align: right; }
+        .ctrl-slider { flex: 1; height: 2px; appearance: none; -webkit-appearance: none;
+            background: rgba(120,160,180,0.2); border-radius: 1px; cursor: pointer; outline: none; }
+        .ctrl-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+            border-radius: 50%; background: #5090b8; border: 1px solid #80c0e0;
+            cursor: pointer; transition: background 0.15s; }
+        .ctrl-slider::-webkit-slider-thumb:hover { background: #70b8e8; }
+
+        /* Jiggle row */
+        #jiggle-row { margin-bottom: 10px; }
+        .jiggle-hidden { display: none !important; }
+        #jiggle-row .action-btn { flex: 0 0 auto; }
+        #jiggle-speed { flex: 1; display: flex; align-items: center; gap: 5px; }
+        #btn-jiggle.active { border-color: #aadd44; color: #ccff66; background: #111a02; }
+        #btn-big-bang { color: #ffaa44; border-color: #ffaa44; }
+        #btn-big-bang.active { border-color: #ffcc66; color: #ffdd88; background: #1a1505; }
+
+        /* Buttons */
+        .action-btn { flex: 1; font-family: 'Courier New', monospace; font-size: 9px;
+            letter-spacing: 0.08em; padding: 5px 4px;
+            background: rgba(10,20,35,0.7); border: 1px solid rgba(100,150,180,0.25);
+            border-radius: 3px; color: #7aaabf; cursor: pointer; transition: all 0.15s; }
+        .action-btn:hover { border-color: rgba(100,180,220,0.6); color: #aaddf0; background: rgba(20,50,70,0.7); }
+        .action-btn.active { border-color: #44aa77; color: #66ddaa; background: rgba(10,40,25,0.7); }
+        #btn-add-excitation.placing { border-color: #ffaa22; color: #ffcc55;
+            animation: pulse-placing 0.8s infinite alternate; }
+        @keyframes pulse-placing { from { opacity: 0.7 } to { opacity: 1 } }
+
+        /* Side actions */
+        #side-actions { display: flex; gap: 6px; margin-top: 8px; pointer-events: all; }
+        #side-context { margin-top: 10px; max-height: calc(100vh - 320px); overflow-y: auto;
+            scrollbar-width: thin; scrollbar-color: rgba(80,130,160,0.3) transparent;
+            background: rgba(8,18,28,0.82); border: 1px solid rgba(80,120,150,0.25);
+            border-radius: 4px; backdrop-filter: blur(4px); pointer-events: all; }
+        #side-context::-webkit-scrollbar { width: 3px; }
+        #side-context::-webkit-scrollbar-thumb { background: rgba(80,130,160,0.3); border-radius: 2px; }
+        /* side-context hides when both children are hidden (empty excitations + empty shortcuts) */
+        #side-context:has(#side-excitations:empty):has(#side-shortcuts.empty) { display: none; }
+
+        /* Shortcut list */
+        #side-shortcuts { pointer-events: all; border-top: 1px solid rgba(60,100,130,0.2); }
+        #side-shortcuts.empty { display: none; }
+        #sh-clear { float: right; cursor: pointer; color: #4a7a90; transition: color 0.15s; font-size: 10px; }
+        #sh-clear:hover { color: #ff6655; }
+        #side-shortcuts .sh-header { padding: 5px 10px; font-size: 9px; color: #6a9ab0;
+            letter-spacing: 0.12em; text-transform: uppercase; border-bottom: 1px solid rgba(80,120,150,0.2); }
+        .sh-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
+            border-bottom: 1px solid rgba(60,100,130,0.15); transition: background 0.1s; }
+        .sh-item:last-child { border-bottom: none; }
+        .sh-item.manual:hover { background: rgba(30,60,90,0.4); }
+        .sh-item.implied { opacity: 0.6; }
+        .sh-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .sh-dot.implied-dot { border-radius: 0; background: transparent !important; border: 1px dashed currentColor; }
+        .sh-label { flex: 1; color: #88b0c8; font-size: 9px; line-height: 1.5; }
+        .sh-label .sh-sub { color: #5a8870; font-size: 8px; display: block; margin-top: 1px; }
+        .sh-sever { font-size: 8px; color: #a05050; letter-spacing: 0.06em; padding: 2px 5px;
+            border: 1px solid rgba(160,80,80,0.3); border-radius: 2px; cursor: pointer;
+            transition: all 0.12s; flex-shrink: 0; }
+        .sh-item.manual:hover .sh-sever { color: #ff7766; border-color: #884444; background: rgba(40,10,10,0.5); }
+        .sh-item.locked { opacity: 0.35; }
+        .sh-sever.sh-locked { font-size: 8px; color: #506070; letter-spacing: 0.06em; padding: 2px 5px;
+            border: 1px solid rgba(60,80,100,0.3); border-radius: 2px; cursor: default; flex-shrink: 0; }
+
+        /* Excitations */
+        #side-excitations { pointer-events: all; }
+        #side-excitations:empty { display: none; }
+        .el-header { padding: 5px 10px; font-size: 9px; color: #6a9ab0;
+            letter-spacing: 0.12em; text-transform: uppercase;
+            border-bottom: 1px solid rgba(60,100,130,0.2); }
+        #el-clear { float: right; cursor: pointer; color: #a05050; font-size: 10px; }
+        #el-clear:hover { color: #ff7766; }
+        .el-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
+            border-bottom: 1px solid rgba(60,100,130,0.12); pointer-events: all; }
+        .el-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .el-label { flex: 1; font-size: 9px; color: #88b0c8; letter-spacing: 0.04em; }
+        .el-remove { font-size: 9px; color: #5a7a8a; cursor: pointer;
+            letter-spacing: 0.05em; transition: color 0.15s; pointer-events: all; }
+        .el-remove:hover { color: #ff6655; }
+
+        /* Violation banner */
+        #violation-banner { display:none; margin-top:6px; padding:6px;
+            background: rgba(40,5,5,0.85); border: 1px solid #cc4444;
+            border-radius: 3px; pointer-events: all; }
+        #violation-msg { font-size: 8px; color: #ff8877; margin-bottom: 5px; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <canvas id="c"></canvas>
+    <!-- ═══ DEUTERON PANEL (replaces old legend tabs) ═══ -->
+    <div id="deuteron-panel" style="display:none; position:fixed; top:16px; left:16px;
+        font-size:11px; line-height:1.8; letter-spacing:0.04em; color:#a0bccf;
+        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:220px;
+        pointer-events:auto; background:rgba(12,18,26,0.88);
+        border:1px solid rgba(100,140,170,0.2); border-radius:6px; padding:12px 14px;
+        backdrop-filter:blur(4px); z-index:100; box-shadow:0 4px 20px rgba(0,0,0,0.4);
+        max-height:calc(100vh - 32px); overflow-y:auto;">
+        <div style="font-size:14px; color:#e0c88a; letter-spacing:0.12em;
+            font-weight:bold; margin-bottom:8px; text-align:center;">DEUTERON</div>
+
+        <!-- Packing density with alarm -->
+        <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="color:#6a8a9a;">density</span>
+            <span><span id="dp-density-val" style="color:#9abccc; font-weight:bold;">--</span>
+            <span id="dp-density-alarm" style="color:#ff4444; display:none; animation:dp-alarm 0.5s infinite alternate; font-size:8px;"> ALARM</span></span>
+        </div>
+
+        <!-- Sync health indicator -->
+        <div style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="color:#6a8a9a;">sync</span>
+            <span>
+                <span id="dp-sync-dot" style="display:inline-block; width:7px; height:7px;
+                    border-radius:50%; background:#44dd44; vertical-align:middle; margin-right:4px;"></span>
+                <span id="dp-sync-label" style="color:#66dd66; font-size:10px;">OK</span>
+                <span id="dp-sync-detail" style="color:#5a7a8a; font-size:8px; margin-left:3px;"></span>
+            </span>
+        </div>
+
+        <!-- Quark color legend -->
+        <div style="margin-top:4px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
+            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em;">TET QUARKS</div>
+            <div id="dp-quark-legend"><!-- populated by JS --></div>
+        </div>
+
+        <!-- Face coverage bars -->
+        <div style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
+            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em;">FACE COVERAGE</div>
+            <div id="dp-coverage-bars" style="font-size:8px; line-height:1.7;"><!-- populated by JS --></div>
+        </div>
+
+        <!-- Unit test results -->
+        <div id="dp-test-section" style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px; display:none;">
+            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em; display:flex; justify-content:space-between; align-items:center;">
+                <span>UNIT TESTS</span>
+                <span id="dp-test-summary" style="color:#667788; font-size:8px;"></span>
+            </div>
+            <div id="dp-test-results" style="font-size:8px; line-height:1.6;"><!-- populated by runDemo3Tests --></div>
+        </div>
+    </div>
+    <style>
+        @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
+        .dp-bar-bg { display:inline-block; width:60px; height:4px; background:rgba(60,80,100,0.4);
+            border-radius:2px; overflow:hidden; vertical-align:middle; }
+        .dp-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
+    </style>
+    <div id="side-panel">
+        <!-- ═══ MANUAL CONTROLS (hidden in nucleus mode) ═══ -->
+        <div id="manual-controls">
+            <div id="jiggle-row" class="ctrl-row">
+                <button class="action-btn" id="btn-jiggle">jiggle</button>
+                <div id="jiggle-speed">
+                    <input type="range" id="jiggle-slider" class="ctrl-slider" min="1" max="100" value="30">
+                    <span id="jiggle-hz" class="ctrl-val">30/s</span>
+                </div>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">lattice</span>
+                <input type="range" id="lattice-slider" class="ctrl-slider" min="1" max="10" value="1" step="1">
+                <span id="lattice-lv">L1</span>
+            </div>
+            <!-- lifespan slider removed from UI; hidden element kept for compatibility -->
+            <div class="ctrl-row" style="display:none;">
+                <span class="ctrl-label">lifespan</span>
+                <input type="range" id="energy-slider" class="ctrl-slider" min="0" max="100" value="50" step="1">
+                <span id="energy-val" class="ctrl-val">44</span>
+            </div>
+        </div>
+        <!-- Opacity sliders — always visible -->
+        <div class="ctrl-row">
+            <span class="ctrl-label">spheres</span>
+            <input type="range" id="sphere-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
+            <span id="sphere-opacity-val" class="ctrl-val">50%</span>
+        </div>
+        <div class="ctrl-row">
+            <span class="ctrl-label">shapes</span>
+            <input type="range" id="void-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
+            <span id="void-opacity-val" class="ctrl-val">50%</span>
+        </div>
+        <div class="ctrl-row">
+            <span class="ctrl-label">graph</span>
+            <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
+            <span id="graph-opacity-val" class="ctrl-val">50%</span>
+        </div>
+        <div class="ctrl-row">
+            <span class="ctrl-label">xons</span>
+            <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
+            <span id="trail-opacity-val" class="ctrl-val">50%</span>
+        </div>
+        <!-- spark slider hidden: unified with xons slider -->
+        <input type="range" id="spark-opacity-slider" style="display:none" min="0" max="100" value="100" step="1">
+        <div class="ctrl-row">
+            <span class="ctrl-label">speed</span>
+            <input type="range" id="excitation-speed-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
+            <span id="excitation-speed-val" class="ctrl-val">30ms</span>
+        </div>
+        <div class="ctrl-row">
+            <span class="ctrl-label">lifespan</span>
+            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="50" value="50" step="1">
+            <span id="tracer-lifespan-val" class="ctrl-val">50</span>
+        </div>
+        <!-- ═══ NUCLEUS SIMULATOR PANEL (primary V2 interface) ═══ -->
+        <div id="nucleus-panel" style="margin-top:6px; padding:6px; border:1px solid #4a3a1a;
+            border-radius:4px; pointer-events:all; background:rgba(30,25,15,0.4);">
+            <div style="font-size:8px; color:#d4a054; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">
+                nucleus simulator
+            </div>
+            <div style="font-size:9px; color:#d4b884; margin-bottom:2px; font-weight:bold;">H-2 DEUTERON</div>
+            <div id="atom-desc" style="font-size:8px; color:#8a7a5a; margin:2px 0;">8 tet quarks · 6 xons</div>
+            <!-- Hidden model select (kept for compatibility) -->
+            <select id="model-select" style="display:none;"></select>
+            <div id="model-desc" style="display:none;"></div>
+            <!-- Action buttons -->
+            <div style="display:flex; gap:4px; margin-top:4px;">
+                <button class="action-btn" id="btn-simulate-nucleus"
+                    style="flex:1; border-color:#6688aa; color:#88aacc;">
+                    demo
+                </button>
+                <button class="action-btn" id="btn-nucleus-pause"
+                    style="flex:0 0 auto; padding:5px 8px; border-color:#44aa77; color:#66ddaa; display:none;"
+                    title="Pause/resume simulation">⏸</button>
+                <button class="action-btn" id="btn-stop-nucleus"
+                    style="flex:0 0 auto; padding:5px 8px; border-color:#8a4040; color:#cc6666; display:none;"
+                    title="Stop and clear nucleus simulation">✕</button>
+            </div>
+            <div id="nucleus-status" style="font-size:7px; color:#5a7a4a; margin-top:3px;
+                text-align:center; min-height:10px; line-height:1.3;">ready</div>
+            <button class="action-btn" id="btn-tournament"
+                style="width:100%; margin-top:4px; border-color:#aa8844; color:#ccaa66;">
+                tournament
+            </button>
+            <div id="demo-status" style="display:none; font-size:9px; color:#88aacc; margin-top:4px; text-align:center; line-height:1.4;"></div>
+            <div id="tournament-status" style="font-size:9px; color:#8a9aaa; margin-top:4px;
+                min-height:12px; line-height:1.5; display:none;"></div>
+            <div id="tournament-playback" style="display:none; margin-top:6px; padding:6px; background:rgba(10,20,15,0.7); border:1px solid #3a5a3a; border-radius:4px; font-size:8px; color:#b0c8a0; line-height:1.6;">
+                <div style="text-align:center; color:#66dd66; font-size:9px; font-weight:bold; margin-bottom:6px; letter-spacing:1px;">TOURNAMENT COMPLETE</div>
+                <select id="playback-algo" style="width:100%; font-size:8px; padding:3px 4px; background:#0a1a15; color:#a0d8b0; border:1px solid #3a6a4a; border-radius:3px; margin-bottom:6px; cursor:pointer;"></select>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span id="playback-tick" style="min-width:20px; text-align:right; color:#d4b884; font-weight:bold;">0</span>
+                    <input type="range" id="playback-slider" min="0" max="49" value="0" style="flex:1; accent-color:#66dd66; cursor:pointer;">
+                    <span id="playback-max" style="min-width:20px; color:#5a7a6a;">49</span>
+                </div>
+                <div id="playback-info" style="margin-top:4px; text-align:center; color:#8aacbf; font-size:7px; line-height:1.5;"></div>
+            </div>
+            <!-- Nucleus info (shown during simulation) -->
+            <div id="nucleus-info" style="display:none; margin-top:6px; border-top:1px solid #4a3a1a;
+                padding-top:6px; font-size:8px; color:#8aac8f; line-height:1.8;">
+            </div>
+            <!-- Live observable metrics -->
+            <div id="nucleus-metrics" style="display:none; margin-top:4px; font-size:7px; color:#7a9a6a; line-height:1.6;">
+            </div>
+            <!-- Quark color legend moved to #deuteron-panel (left side) -->
+        </div>
+        <!-- Selection info & violation banner (contextual, stays in sidebar) -->
+        <div id="st-sel" style="color:#40b0ff; font-size:9px; margin-top:4px;"></div>
+        <div id="violation-banner" style="display:none; margin-top:6px; padding:5px; background:#1a0505; border:1px solid #ff4444; border-radius:3px; pointer-events:all;">
+            <div id="violation-msg" style="font-size:8px; color:#ff6666; margin-bottom:5px; word-break:break-all;"></div>
+            <button class="action-btn" id="btn-copy-violation" style="border-color:#ff4444; color:#ff8888; width:100%;">copy state</button>
+        </div>
+        <!-- V1 controls (hidden in nucleus mode) -->
+        <div id="v1-controls">
+            <div id="side-actions">
+                <button class="action-btn" id="btn-add-excitation">+ excitation</button>
+                <div style="position:relative; flex:1;">
+                    <button class="action-btn" id="btn-big-bang" style="width:100%;">big bang ▾</button>
+                    <div id="big-bang-menu" style="display:none; position:absolute; bottom:100%; left:0; right:0;
+                        background:rgba(10,20,35,0.95); border:1px solid rgba(100,150,180,0.3);
+                        border-radius:4px 4px 0 0; z-index:300; max-height:280px; overflow-y:auto;
+                        font-family:'Courier New',monospace; font-size:9px;">
+                    </div>
+                </div>
+                <button class="action-btn" id="btn-excitation-play" title="play/pause excitation stepping" style="flex:0 0 auto;padding:5px 8px;display:none;">⏸</button>
+            </div>
+            <div style="margin-top:4px;pointer-events:all;">
+                <button class="action-btn" id="btn-export" style="width:100%;">export JSON</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:6px;pointer-events:all;">
+                <button class="action-btn" id="btn-select-mode" title="toggle hover / selection">select</button>
+            </div>
+        </div>
+        <div id="side-context">
+            <div id="side-excitations"></div>
+            <div id="side-shortcuts" class="empty">
+                <div class="sh-header">active shortcuts <span id="sh-clear" title="clear all">✕</span></div>
+                <div id="sh-list"></div>
+            </div>
+        </div>
+    </div>
+    <!-- Current rule title — top center overlay -->
+    <div id="rule-title" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; font-family:monospace; font-size:14px; color:#aaccdd; text-transform:uppercase; letter-spacing:0.15em; text-shadow:0 1px 4px rgba(0,0,0,0.7); white-space:nowrap;"></div>
+    <div id="hint">click sphere to select · click candidate (blue) to add shortcut · click edge to sever</div>
+    <!-- Scale bar (nucleus mode only) -->
+    <div id="scale-bar" style="display:none; position:fixed; bottom:50px; left:50%;
+        transform:translateX(-50%); pointer-events:none; text-align:center; z-index:200;">
+        <div style="width:100px; height:2px; background:#8aac8f; margin:0 auto; border-radius:1px;"></div>
+        <div style="font-size:8px; color:#8aac8f; margin-top:2px; font-family:'Courier New',monospace;
+            letter-spacing:0.05em; text-shadow:0 1px 3px rgba(0,0,0,0.6);">
+            <span id="scale-fm">—</span> Planck lengths
+        </div>
+    </div>
+    <!-- Bottom-left stats overlay -->
+    <div id="bottom-stats">
+        <div>state: <span id="st-state" style="color:#6a9ab0">FCC</span></div>
+        <div>shortcuts: <span id="st-sc" style="color:#9abccc">0 / 18</span></div>
+        <div>density: <span id="st-dens" style="color:#9abccc">—</span></div>
+        <div>K-complexity: <span id="st-kolm" style="color:#9abccc">—</span></div>
+        <div>temporal K: <span id="st-temp-kolm" style="color:#6a8aaa">--</span></div>
+        <div>motion: <span id="st-hamming" style="color:#6a8aaa">--</span></div>
+    </div>
+    <div id="toast"></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="src/flux-constants.js?v=3"></script>
+    <script src="src/flux-demo.js?v=19"></script>
+    <script src="src/flux-solver-render.js?v=3"></script>
+    <script src="src/flux-tournament.js?v=4"></script>
+    <script src="src/flux-ui.js?v=3"></script>
+    <script src="src/flux-electrons.js?v=5"></script>
+    <script src="src/flux-voids.js?v=3"></script>
+    <script src="src/flux-rules-v2.js?v=2"></script>
+    <script src="src/flux-nucleus.js?v=3"></script>
+    <script src="src/flux-tests.js?v=6"></script>
+    <script>
+    // ═══ INIT: deferred calls that depend on cross-file globals ═══
+    // These were top-level calls in the original monolithic script.
+    // Now that code is split across files, they must run after all files load.
+    rebuildLatticeGeometry(1);
+    rebuildSphereMeshes();
+    rebuildVoidSpheres();     // must run before edge rendering (sets v.actualized)
+    rebuildBaseLines();
+    rebuildShortcutLines();
+    applyCamera();
+    applySphereOpacity();
+    updateCandidates(); updateSpheres(); updateStatus();
+    startRenderLoop();       // render loop (moved from flux-voids.js)
+    </script>
+</body>
+</html>
