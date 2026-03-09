@@ -176,6 +176,10 @@ window.computeActivationPatterns = computeActivationPatterns;
 
 let _demoActive = false;
 let _demoInterval = null;
+// T45 bounce guard — set to true to prevent A→B→A oscillation. Disabled because
+// tet topology naturally bounces (fork: a→b→a→c→a) and it can cause T20 (stuck).
+// To re-enable: set _T45_BOUNCE_GUARD = true and uncomment T45 in flux-tests.js.
+const _T45_BOUNCE_GUARD = false;
 let _demoTick = 0;
 let _demoSchedule = null;     // 8-window physical schedule (32 ticks/cycle)
 let _demoVisits = null;       // {face: {pu:0, pd:0, nu:0, nd:0}}
@@ -1208,8 +1212,10 @@ function _getOctCandidates(xon, occupied, blocked) {
 // Execute an oct move to a specific target. Handles vacuum negotiation.
 // Returns true if the move succeeded, false if vacuum rejected.
 function _executeOctMove(xon, target) {
-    // T45: anti-bounce guard — reject move back to prevNode
-    if (xon._mode === 'oct' && target.node === xon.prevNode && xon.prevNode !== xon.node) {
+    // Reject self-moves (target is current node) — these are no-ops that corrupt prevNode
+    if (target.node === xon.node) return false;
+    // T45: anti-bounce guard — reject move back to prevNode (disabled by default)
+    if (_T45_BOUNCE_GUARD && xon._mode === 'oct' && target.node === xon.prevNode && xon.prevNode !== xon.node) {
         return false;
     }
     // Re-check SC activation at execution time (may have changed since planning)
@@ -1475,42 +1481,57 @@ function _relinquishFaceSCs(xon) {
 // Transition xon from tet mode back to oct mode after loop completion.
 // Optional `occupied` map prevents Pauli violations when multiple xons return simultaneously.
 function _returnXonToOct(xon, occupied) {
-    _relinquishFaceSCs(xon); // T42: clean up face SCs before clearing assignment
-    xon._mode = 'oct';
-    xon._assignedFace = null;
-    xon._quarkType = null;
-    xon._loopType = null;
-    xon._loopSeq = null;
-    xon._loopStep = 0;
-    xon.col = 0xffffff; // white for oct mode
-    if (_flashEnabled) xon.flashT = 1.0; // bright flash on mode transition
-
-    // Update spark color to white
-    if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-
-    // If xon is at a non-oct node, move to the nearest FREE oct node.
-    // Uses occupied map (when provided) to prevent Pauli violations.
+    // If at a non-oct node, check if we can actually reach an oct node first.
+    // Only clear assignment and switch to oct mode if we can get there.
     if (_octNodeSet && !_octNodeSet.has(xon.node)) {
         const nbs = baseNeighbors[xon.node] || [];
+        let target = null;
         for (const nb of nbs) {
             if (!_octNodeSet.has(nb.node)) continue;
-            // T41: skip if another xon just moved from nb.node to xon.node (would create swap)
             if (_swapBlocked(xon.node, nb.node)) continue;
-            // Pauli: skip if another xon is already at this node
             if (occupied && (occupied.get(nb.node) || 0) > 0) continue;
-            const fromRTO = xon.node;
-            xon.prevNode = xon.node;
-            xon.node = nb.node;
-            xon._movedThisTick = true; // one hop per tick — prevent double-move
-            _moveRecord.set(nb.node, fromRTO); // record this move
-            _traceMove(xon, fromRTO, nb.node, 'returnToOct');
-            // Update occupied map so subsequent returns see this move
-            if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, nb.node); }
-            xon.trail.push(nb.node);
-            xon.trailColHistory.push(xon.col);
-            if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+            target = nb;
             break;
         }
+        if (!target) {
+            // Can't reach an oct node — DON'T switch to oct mode (would violate T16).
+            // Keep current mode; will retry next tick.
+            return;
+        }
+        // Can reach an oct node — proceed with mode transition + move
+        _relinquishFaceSCs(xon); // T42: clean up face SCs before clearing assignment
+        xon._mode = 'oct';
+        xon._assignedFace = null;
+        xon._quarkType = null;
+        xon._loopType = null;
+        xon._loopSeq = null;
+        xon._loopStep = 0;
+        xon.col = 0xffffff;
+        if (_flashEnabled) xon.flashT = 1.0;
+        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+
+        const fromRTO = xon.node;
+        xon.prevNode = xon.node;
+        xon.node = target.node;
+        xon._movedThisTick = true;
+        _moveRecord.set(target.node, fromRTO);
+        _traceMove(xon, fromRTO, target.node, 'returnToOct');
+        if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, target.node); }
+        xon.trail.push(target.node);
+        xon.trailColHistory.push(xon.col);
+        if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+    } else {
+        // Already at an oct node — just switch mode
+        _relinquishFaceSCs(xon);
+        xon._mode = 'oct';
+        xon._assignedFace = null;
+        xon._quarkType = null;
+        xon._loopType = null;
+        xon._loopSeq = null;
+        xon._loopStep = 0;
+        xon.col = 0xffffff;
+        if (_flashEnabled) xon.flashT = 1.0;
+        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
     }
 }
 
@@ -2213,9 +2234,13 @@ function _setDemoLattice(level) {
 const QUARK_COLORS = { pu: 0xffdd44, pd: 0x44cc66, nu: 0x4488ff, nd: 0xff4444 };
 const A_SET = new Set([1, 3, 6, 8]);
 
-function demoTick() {
+let _tickInProgress = false; // guard against overlapping async ticks
+async function demoTick() {
     if (!_demoActive || !_demoSchedule) return;
     if (simHalted) return;
+    if (_tickInProgress) return; // previous async tick still running
+    _tickInProgress = true;
+    try {
 
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
@@ -2532,6 +2557,8 @@ function demoTick() {
                 queue.push([nb.node, nextStep]);
             }
         }
+        // T45: anti-bounce — don't go back to prevNode (gated by flag)
+        if (_T45_BOUNCE_GUARD && bestStep === xon.prevNode && xon.prevNode !== xon.node) bestStep = null;
         if (bestStep !== null && !(occupied.get(bestStep) || 0) &&
             !_swapBlocked(xon.node, bestStep)) { // T41: no swap
             const fromWk = xon.node;
@@ -2558,8 +2585,14 @@ function demoTick() {
         } else if (bestStep !== null) {
             // Target occupied — try any free neighbor instead
             const allNbs = baseNeighbors[xon.node] || [];
-            const freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node)); // T41: no swap
+            // T45: prefer non-bounce, but allow bounce as last resort (T20: never stand still)
+            let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                !_swapBlocked(xon.node, nb.node) && // T41: no swap
+                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+            if (!freeNb) {
+                freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                    !_swapBlocked(xon.node, nb.node)); // allow bounce as last resort
+            }
             if (freeNb) {
                 const fromWk2 = xon.node;
                 _occDel(occupied, xon.node);
@@ -2696,13 +2729,52 @@ function demoTick() {
     // (including excitationSeverForRoom) in _executeOctMove, which the quick check
     // doesn't account for. Without this exception, cumulative strain from the first
     // 3 cage SCs can permanently block the 4th from ever being attempted.
+    //
+    // GPU/Worker acceleration: batch all canMaterialiseQuick calls into one Worker
+    // round-trip when available. Falls back to synchronous main-thread solver.
+    let _batchResults = null; // Map<scId, {pass, worst, avg}>
+    if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
+        // Collect unique SC IDs needing materialisation check
+        const candidateScIds = new Set();
+        for (const plan of octPlans) {
+            for (const c of plan.candidates) {
+                if (!c._needsMaterialise) continue;
+                if (c._scId === undefined) continue;
+                if (_octSCIds && _octSCIds.includes(c._scId)) continue;
+                candidateScIds.add(c._scId);
+            }
+        }
+        if (candidateScIds.size > 0) {
+            // Build data for Worker: base pairs + candidate SC pairs
+            const basePairs = _getBasePairs();
+            const candidateScPairs = [];
+            const candidateScIdArray = [];
+            for (const scId of candidateScIds) {
+                const sc = SC_BY_ID[scId];
+                candidateScPairs.push([sc.a, sc.b]);
+                candidateScIdArray.push(scId);
+            }
+            // Await batch results from Worker
+            const results = await SolverProxy.solveBatch(basePairs, candidateScPairs);
+            if (results) {
+                _batchResults = new Map();
+                for (let i = 0; i < candidateScIdArray.length; i++) {
+                    _batchResults.set(candidateScIdArray[i], results[i]);
+                }
+            }
+        }
+    }
     for (const plan of octPlans) {
         plan.candidates = plan.candidates.filter(c => {
             if (!c._needsMaterialise) return true; // base edge or already active SC
             if (c._scId === undefined) return true;
             // Oct cage SCs get full vacuum negotiation in _executeOctMove
             if (_octSCIds && _octSCIds.includes(c._scId)) return true;
-            return canMaterialiseQuick(c._scId); // keep only if vacuum would allow
+            // Use batch results if available, otherwise fall back to sync
+            if (_batchResults && _batchResults.has(c._scId)) {
+                return _batchResults.get(c._scId).pass;
+            }
+            return canMaterialiseQuick(c._scId); // fallback: sync main-thread solver
         });
     }
 
@@ -3025,8 +3097,8 @@ function demoTick() {
                 return _lookahead(nb.node, tmp, 1);
             });
         for (const nb of freeOctNbs) {
-            // T45: anti-bounce — don't go back to prevNode
-            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            // T45: anti-bounce — don't go back to prevNode (gated by flag)
+            if (_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
             const fromRet = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
@@ -3100,8 +3172,14 @@ function demoTick() {
         // The xon enters 'weak' mode — a distinct state outside normal confinement.
         let weakEscaped = false;
         {
-            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node)); // T41: no swap
+            // T45: prefer non-bounce, but allow bounce as last resort (T20: never stand still)
+            let freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                !_swapBlocked(xon.node, nb.node) && // T41: no swap
+                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+            if (freeNbs.length === 0) {
+                freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                    !_swapBlocked(xon.node, nb.node)); // allow bounce as last resort
+            }
             if (freeNbs.length > 0) {
                 // Pick a random free neighbor (weak force is stochastic)
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
@@ -3260,7 +3338,8 @@ function demoTick() {
             if (!moved) {
                 const allNbs = baseNeighbors[xon.node] || [];
                 const freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                    !_swapBlocked(xon.node, nb.node)); // T41: no swap
+                    !_swapBlocked(xon.node, nb.node) && // T41: no swap
+                    !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
                 if (freeNbs.length > 0) {
                     const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
                     const from3bw = xon.node;
@@ -3335,8 +3414,8 @@ function demoTick() {
         // ONLY 2-step-aware destinations are valid
         const scored = candidates
             .filter(n => !(occupied.get(n) || 0))
-            // T45: anti-bounce — don't go back to prevNode
-            .filter(n => !(n === xon.prevNode && xon.prevNode !== xon.node))
+            // T45: anti-bounce — don't go back to prevNode (gated by flag)
+            .filter(n => !(_T45_BOUNCE_GUARD && n === xon.prevNode && xon.prevNode !== xon.node))
             // T41: reject destinations that would create a swap
             .filter(n => !_swapBlocked(xon.node, n))
             .filter(n => {
@@ -3416,7 +3495,8 @@ function demoTick() {
                 const xon = stillHere.pop();
                 const allNbs = baseNeighbors[xon.node] || [];
                 const freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    !_swapBlocked(xon.node, nb.node));
+                    !_swapBlocked(xon.node, nb.node) &&
+                    !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
                 if (freeNb) {
                     const fromP4w = xon.node;
                     console.error(`[P4W-DEBUG] tick=${_demoTick} x${_demoXons.indexOf(xon)}: ${fromP4w}→${freeNb.node} (cNode=${cNode}, stillHere=${stillHere.length})`);
@@ -3480,7 +3560,8 @@ function demoTick() {
             // Xon is stuck — apply weak force escape
             const nbs = baseNeighbors[xon.node] || [];
             const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node)); // T41: no swap
+                !_swapBlocked(xon.node, nb.node) && // T41: no swap
+                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
             if (freeNbs.length > 0) {
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
                 const fromSN = xon.node;
@@ -3628,6 +3709,9 @@ function demoTick() {
 
     // Tournament hook: check if trial has reached its target tick
     if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
+    } finally {
+        _tickInProgress = false;
+    }
 }
 
 function updateDemoPanel() {

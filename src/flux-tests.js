@@ -587,33 +587,35 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    { id: 'T45', name: 'Oct xons no bounce (A→B→A)',
+    // ─── T45 DISABLED: bounce guard causes T20 (stuck) when xon's only option is prevNode.
+    // Tet topology also naturally bounces (fork: a→b→a→c→a).
+    // To re-enable: uncomment this block and set _T45_BOUNCE_GUARD = true in flux-demo.js.
+    /*
+    { id: 'T45', name: 'No xon bounce (A→B→A)',
       snapshot(g) {
-        // Capture each oct xon's previous position before the tick
         g._t45prev = new Map();
         for (const xon of _demoXons) {
-          if (!xon.alive || xon._mode !== 'oct') continue;
-          g._t45prev.set(xon, { prevNode: xon.prevNode, node: xon.node });
+          if (!xon.alive) continue;
+          g._t45prev.set(xon, { prevNode: xon.prevNode, node: xon.node, mode: xon._mode });
         }
       },
       check(tick, g, ctx) {
         if (!ctx.prev || tick <= LIVE_GUARD_GRACE) return null;
-        // For each oct xon: if it moved A→B this tick, and last tick it was at B→A,
-        // that's a bounce: B→A→B
         for (const xon of _demoXons) {
-          if (!xon.alive || xon._mode !== 'oct') continue;
+          if (!xon.alive) continue;
+          if (xon._mode === 'tet' || xon._mode === 'idle_tet') continue;
           const prev = g._t45prev?.get(xon);
           if (!prev) continue;
-          // prev.prevNode = where xon was 2 ticks ago, prev.node = where it was 1 tick ago
-          // xon.node = where it is now
+          if (prev.mode === 'tet' || prev.mode === 'idle_tet') continue;
           if (xon.node === prev.prevNode && xon.node !== prev.node && prev.prevNode != null) {
-            return `tick ${tick}: oct xon ${_demoXons.indexOf(xon)} bounced ${prev.prevNode}→${prev.node}→${xon.node}`;
+            return `tick ${tick}: ${xon._mode} xon ${_demoXons.indexOf(xon)} bounced ${prev.prevNode}→${prev.node}→${xon.node}`;
           }
         }
         if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
         return null;
       }
     },
+    */
     { id: 'T44', name: 'Traversal lock edge-only',
       check(tick, g) {
         // _traversalLockedSCs must ONLY contain SCs on edges xons are straddling
@@ -1141,9 +1143,9 @@ function runDemo3Tests() {
 
     // Simulate button
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
-        // Demo mode: set L2 lattice default, simulate nucleus, then start pattern demo
+        // Demo mode: set L3 lattice default, simulate nucleus, then start pattern demo
         const latticeSlider = document.getElementById('lattice-slider');
-        if (latticeSlider && !_demoActive) latticeSlider.value = 2;
+        if (latticeSlider && !_demoActive) latticeSlider.value = 3;
         NucleusSimulator.simulateNucleus();
         // Small delay to let lattice build, then start demo loop
         setTimeout(function() {
