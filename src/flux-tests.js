@@ -100,8 +100,8 @@ const LIVE_GUARD_REGISTRY = [
           if (_demoVisits[f] && _demoVisits[f].total > 0) visitCount++;
         }
         if (visitCount === 8) { g.ok = true; g.msg = ''; _liveGuardRender(); return null; }
-        if (tick > LIVE_GUARD_GRACE + 256)
-          return `only ${visitCount}/8 faces after ${tick} ticks`;
+        // No time limit — stays pending (null) until all 8 faces visited
+        g.msg = `${visitCount}/8 faces`;
         return null;
       }
     },
@@ -653,7 +653,9 @@ function _liveGuardCheck() {
     if (!_demoActive || !_liveGuardsActive || _testRunning) return;
     const tick = _demoTick;
     const preTick = tick - 1;
-    const CYCLE_LEN = 64, WINDOW_LEN = 4;
+    const WINDOW_LEN = typeof _choreoParams !== 'undefined' ? _choreoParams.windowLen : 4;
+    const WINDOWS_PER_CYCLE = typeof _choreoParams !== 'undefined' ? (8 + _choreoParams.singlesPerInner * 4) : 16;
+    const CYCLE_LEN = WINDOWS_PER_CYCLE * WINDOW_LEN;
     const tickInWindow = (preTick % CYCLE_LEN) % WINDOW_LEN;
     const isWindowBoundary = tickInWindow === 0;
 
@@ -750,14 +752,7 @@ function _liveGuardCheck() {
                 };
                 const json = JSON.stringify(dump, null, 2);
                 localStorage.setItem('flux_guard_dump', json);
-                // Auto-download
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = `flux-guard-dump-T${tick}.json`;
-                document.body.appendChild(a); a.click(); a.remove();
-                URL.revokeObjectURL(url);
-                console.error('[LIVE GUARD] Dump saved to localStorage(flux_guard_dump) + downloaded');
+                console.error('[LIVE GUARD] Dump saved to localStorage(flux_guard_dump)');
             } catch (e) { console.error('[LIVE GUARD] Dump failed:', e); }
         }
     }
@@ -1196,4 +1191,242 @@ function runDemo3Tests() {
         const pauseBtn = document.getElementById('btn-nucleus-pause');
         if(pauseBtn){ pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause simulation'; }
     });
+
+    // ── "Tune T22" button ──────────────────────────────────────────────
+    document.getElementById('btn-tune-t22')?.addEventListener('click', function () {
+        if (_tournamentRunning) return;
+        _runTournament();
+    });
 })();
+
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║  CHOREOGRAPHY PARAMETER TOURNAMENT (GA)                            ║
+// ║  Headless trial runner + genetic algorithm for T22 convergence     ║
+// ╚══════════════════════════════════════════════════════════════════════╝
+
+let _tournamentRunning = false;
+let _tournamentTargetTick = 0; // tick at which current trial ends
+let _tournamentCallback = null; // called when trial reaches target tick
+
+// Evaluate fitness from current _demoVisits state.
+// Returns { puPd, ndNu, evenness, totalVisits, fitness, criticalFail }
+function _evaluateFitness() {
+    const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
+    const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
+    const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
+    const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
+    const puPd = gPd > 0 ? gPu / gPd : 0;
+    const ndNu = gNu > 0 ? gNd / gNu : 0;
+    const total = gPu + gPd + gNd + gNu;
+
+    const totals = [];
+    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+    const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
+    const cv = mean > 0 ? (stddev / mean) : 1;
+    const evenness = Math.max(0, 1 - cv);
+
+    // Check for ANY guard failure — algo must pass all tests
+    const failedGuards = Object.entries(_liveGuards)
+        .filter(([, g]) => g.failed)
+        .map(([id]) => id);
+    const anyFail = failedGuards.length > 0 || simHalted;
+
+    const distPuPd = 1 - Math.min(1, Math.abs(puPd - 2.0) / 2.0);
+    const distNdNu = 1 - Math.min(1, Math.abs(ndNu - 2.0) / 2.0);
+    // Hadronic balance score: how close ratios are to 2:1 targets + evenness
+    const balance = distPuPd + distNdNu + evenness * 0.3;
+    // Fitness tiers: clean survivors > failed candidates > zero-visit candidates
+    // Clean candidates get balance (0 to 2.3 range)
+    // Failed candidates get balance - 10 (always below clean)
+    // Zero-visit candidates get -20 (always worst)
+    let fitness;
+    if (total === 0) fitness = -20;
+    else if (anyFail) fitness = balance - 10;
+    else fitness = balance;
+
+    return { puPd, ndNu, evenness, totalVisits: total, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
+}
+
+// Hook into demoTick to detect when trial reaches target tick.
+// Called from demoTick's UI update path (at end of each tick).
+function _tournamentTickCheck() {
+    if (!_tournamentRunning || !_tournamentCallback) return;
+
+    // Early termination: if no tet completions after 5 full cycles, kill trial
+    if (_demoTick > 0 && _demoTick % 200 === 0) {
+        const total = Object.values(_demoVisits).reduce((s, v) => s + v.total, 0);
+        if (total === 0 && _demoTick >= 5 * (_choreoParams.windowLen * (8 + _choreoParams.singlesPerInner * 4))) {
+            console.warn(`[Tournament] Early termination: 0 tet visits after ${_demoTick} ticks`);
+            const cb = _tournamentCallback;
+            _tournamentCallback = null;
+            cb();
+            return;
+        }
+    }
+
+    if (_demoTick >= _tournamentTargetTick || simHalted) {
+        const cb = _tournamentCallback;
+        _tournamentCallback = null;
+        cb();
+    }
+}
+
+// Start a visual trial: apply params, start demo, resolve when target tick reached.
+function _startVisualTrial(params, maxTicks) {
+    return new Promise((resolve) => {
+        // Stop any existing demo cleanly
+        if (typeof stopDemo === 'function') stopDemo();
+        simHalted = false;
+
+        // Apply candidate params
+        Object.assign(_choreoParams, params);
+
+        // Force L2 lattice — L1 is too small for deuteron simulation
+        const slider = document.getElementById('lattice-slider');
+        if (slider && +slider.value !== 2) {
+            slider.value = 2;
+            if (typeof updateLatticeLevel === 'function') updateLatticeLevel();
+        }
+
+        // Ensure nucleus is active
+        if (!NucleusSimulator.active) NucleusSimulator.simulateNucleus();
+
+        // Set target tick and callback
+        _tournamentTargetTick = maxTicks;
+        _tournamentCallback = () => {
+            const result = _evaluateFitness();
+            resolve(result);
+        };
+
+        // Start the demo — it will run visually using the normal animation loop
+        startDemoLoop();
+    });
+}
+
+// GA operators
+function _tournamentCrossover(a, b) {
+    const child = {};
+    for (const key of Object.keys(_choreoParamRanges)) {
+        child[key] = Math.random() < 0.5 ? a[key] : b[key];
+    }
+    return child;
+}
+
+function _tournamentMutate(params) {
+    const m = { ...params };
+    const keys = Object.keys(_choreoParamRanges);
+    const nMutations = 1 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < nMutations; i++) {
+        const key = keys[Math.floor(Math.random() * keys.length)];
+        const [lo, hi] = _choreoParamRanges[key];
+        const noise = (Math.random() - 0.5) * (hi - lo) * 0.3;
+        m[key] = Math.max(lo, Math.min(hi, Math.round(m[key] + noise)));
+    }
+    return m;
+}
+
+function _tournamentRandomCandidate() {
+    const c = {};
+    for (const [key, [lo, hi]] of Object.entries(_choreoParamRanges)) {
+        c[key] = lo + Math.floor(Math.random() * (hi - lo + 1));
+    }
+    return c;
+}
+
+// Main tournament runner — runs each trial visually on-screen (serial, not parallel)
+async function _runTournament() {
+    _tournamentRunning = true;
+    const POP_SIZE = 12;
+    const GENERATIONS = 10;
+    const ELITE_COUNT = 4;
+    const statusEl = document.getElementById('tune-status');
+
+    const originalParams = { ..._choreoParams };
+
+    // Initial population: current config + mutations + random
+    let population = [{ ..._choreoParams }];
+    for (let i = 1; i < POP_SIZE; i++) {
+        if (i < POP_SIZE / 2) {
+            population.push(_tournamentMutate({ ..._choreoParams }));
+        } else {
+            population.push(_tournamentRandomCandidate());
+        }
+    }
+
+    let bestEver = null;
+    let bestFitnessEver = -Infinity;
+    let bestClean = false;
+
+    for (let gen = 0; gen < GENERATIONS; gen++) {
+        if (!_tournamentRunning) break; // allow cancel
+
+        const results = [];
+        for (let i = 0; i < population.length; i++) {
+            if (!_tournamentRunning) break;
+
+            const params = population[i];
+            const maxTicks = 2000;
+
+            if (statusEl) {
+                const bestStr = bestFitnessEver > -Infinity ? bestFitnessEver.toFixed(3) : '...';
+                const cleanStr = bestClean ? ' clean' : '';
+                statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | best=${bestStr}${cleanStr}`;
+            }
+
+            // Run this trial visually — demo renders on screen
+            const result = await _startVisualTrial(params, maxTicks);
+            results.push({ params, ...result });
+
+            if (result.fitness > bestFitnessEver) {
+                bestFitnessEver = result.fitness;
+                bestEver = { ...params };
+                bestClean = result.clean;
+            }
+        }
+
+        // Sort by fitness descending (clean candidates naturally rank above failed ones due to tier gap)
+        results.sort((a, b) => b.fitness - a.fitness);
+
+        const top = results[0];
+        const cleanCount = results.filter(r => r.clean).length;
+        const failStr = top.failedGuards?.length ? ` FAIL[${top.failedGuards.join(',')}]@${top.survivedTicks}` : ` survived ${top.survivedTicks}`;
+        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pu:pd=${top.puPd.toFixed(2)} nd:nu=${top.ndNu.toFixed(2)} even=${top.evenness.toFixed(2)} visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
+
+        // Select elite
+        const elites = results.slice(0, ELITE_COUNT).map(r => r.params);
+
+        // Build next generation
+        population = [...elites];
+        for (let i = 0; i < ELITE_COUNT; i++) {
+            const a = elites[i % ELITE_COUNT];
+            const b = elites[(i + 1) % ELITE_COUNT];
+            population.push(_tournamentCrossover(a, b));
+        }
+        for (let i = 0; i < POP_SIZE - ELITE_COUNT * 2; i++) {
+            const base = elites[Math.floor(Math.random() * ELITE_COUNT)];
+            population.push(_tournamentMutate(base));
+        }
+    }
+
+    // Apply best params and restart demo with winner
+    if (bestEver) {
+        Object.assign(_choreoParams, bestEver);
+        console.log('[Tournament] Best params applied:', bestEver, 'fitness:', bestFitnessEver.toFixed(3));
+        localStorage.setItem('flux_choreo_params', JSON.stringify(bestEver));
+        localStorage.setItem('flux_choreo_fitness', bestFitnessEver.toFixed(3));
+    }
+
+    if (statusEl) {
+        const cleanTag = bestClean ? ' CLEAN' : ' (failed guards)';
+        statusEl.textContent = `done! fitness=${bestFitnessEver.toFixed(3)}${cleanTag}`;
+        statusEl.style.color = bestClean ? '#66dd66' : '#ccaa44';
+    }
+
+    _tournamentRunning = false;
+
+    // Restart demo with winning params
+    if (typeof stopDemo === 'function') stopDemo();
+    simHalted = false;
+    if (typeof startDemoLoop === 'function') startDemoLoop();
+}

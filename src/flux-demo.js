@@ -227,6 +227,38 @@ function _traceMove(xon, from, to, path) {
 // Lookahead can query _scAttribution to make informed SC decisions.
 const _scAttribution = new Map();
 
+// ── Tunable choreography parameters (genome for GA tournament) ──
+// All hardcoded magic numbers extracted here for parameterized optimization.
+const _choreoParams = {
+    // Choreography genes (movement & scoring)
+    lookahead: 12,           // PHASE 0 eviction foresight depth
+    congestionMax: 4,        // oct cage xon count triggering idle_tet demotion
+    faceOnBonus: 10,         // WB: prefer xon already on face's oct node
+    faceNearBonus: 5,        // WB: prefer xon neighbor of face
+    octDeadEndPenalty: 10,   // PHASE 2: penalize 1-move dead ends
+    octContentionWeight: 2,  // PHASE 2: per-window contention penalty multiplier
+    octCageBonus: 20,        // PHASE 2: bonus for materializing oct cage SCs
+    contentionPeek: 3,       // windows ahead to check schedule contention
+    // Pattern machine genes (schedule structure)
+    windowLen: 4,            // ticks per actualization window
+    singlesPerInner: 2,      // single-tet catch-up windows per inner face
+    singlesDeckMajority: 2,  // majority quark cards in 3-card singles deck
+};
+// Ranges for GA mutation (used by tournament engine in flux-tests.js)
+const _choreoParamRanges = {
+    lookahead:            [2, 30],
+    congestionMax:        [1, 8],
+    faceOnBonus:          [0, 50],
+    faceNearBonus:        [0, 50],
+    octDeadEndPenalty:    [0, 50],
+    octContentionWeight:  [0, 20],
+    octCageBonus:         [0, 100],
+    contentionPeek:       [0, 10],
+    windowLen:            [1, 12],
+    singlesPerInner:      [0, 6],
+    singlesDeckMajority:  [1, 3],
+};
+
 // Loop topology → concrete node sequence, given tet cycle [a, b, c, d]
 // a=octNode0, b=extNode, c=octNode1, d=octNode2
 const LOOP_SEQUENCES = {
@@ -762,7 +794,7 @@ function _maxBipartiteAssignment(plans, blocked) {
 // faces/quark types are assigned in upcoming windows. _peekSchedule()
 // returns the next N window assignments so lookahead can anticipate
 // which tet paths will be active and which nodes will be contested.
-const LOOKAHEAD_DEPTH = 12;
+// Lookahead depth now reads from _choreoParams.lookahead (GA-tunable)
 
 // Generic graph lookahead for oct xons (flexible movement).
 // Validates against: T19 (Pauli), T26 (SC activation), T27 (connectivity),
@@ -908,8 +940,8 @@ function _lookaheadForXon(xon, node, occupied, depth) {
 // Returns an array of { faces, ticksUntil } for the next `count` windows.
 function _peekSchedule(count) {
     if (!_demoSchedule) return [];
-    const CYCLE_LEN = 64;
-    const WINDOW_LEN = 4;
+    const WINDOW_LEN = _choreoParams.windowLen;
+    const CYCLE_LEN = _demoSchedule.length * WINDOW_LEN;
     const tickInCycle = _demoTick % CYCLE_LEN;
     const currentWindow = Math.floor(tickInCycle / WINDOW_LEN);
     const tickInWindow = tickInCycle % WINDOW_LEN;
@@ -929,7 +961,7 @@ function _peekSchedule(count) {
 // Returns a "contention score" — higher means more upcoming windows will use
 // tet faces that include this node. Used to penalize moves toward congested areas.
 function _nodeScheduleContention(node) {
-    const upcoming = _peekSchedule(3); // look 3 windows ahead
+    const upcoming = _peekSchedule(_choreoParams.contentionPeek); // look N windows ahead
     let contention = 0;
     for (const { faces } of upcoming) {
         for (const f of faces) {
@@ -1006,8 +1038,8 @@ function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
                 stepAfter1st = (xon._loopStep >= 4 ? 0 : xon._loopStep) + 1;
             }
             if (stepAfter1st >= 4) stepAfter1st = 0;
-            // Check remaining loop path for LOOKAHEAD_DEPTH - 1 steps (we already used 1)
-            has2nd = _lookaheadTetPath(xon._loopSeq, stepAfter1st, projected, LOOKAHEAD_DEPTH - 1, xon);
+            // Check remaining loop path for _choreoParams.lookahead - 1 steps (we already used 1)
+            has2nd = _lookaheadTetPath(xon._loopSeq, stepAfter1st, projected, _choreoParams.lookahead - 1, xon);
         }
     } else {
         // Oct mode: any reachable neighbor is a valid 2nd move
@@ -1147,7 +1179,7 @@ function _getOctCandidates(xon, occupied, blocked) {
     for (const c of candidates) {
         _occAdd(tmpOcc, c.node);
         if (!_lookahead(c.node, tmpOcc, 1)) {
-            c.score -= 10; // strong penalty — but NOT eliminated, since other
+            c.score -= _choreoParams.octDeadEndPenalty; // strong penalty — but NOT eliminated, since other
                            // oct xons may vacate and open up 2nd-move paths
         }
         _occDel(tmpOcc, c.node);
@@ -1156,13 +1188,13 @@ function _getOctCandidates(xon, occupied, blocked) {
         // upcoming windows will activate. These nodes will become contested
         // by tet xon assignments, making them poor oct parking spots.
         const contention = _nodeScheduleContention(c.node);
-        c.score -= contention * 2; // -2 per upcoming window that uses this node's face
+        c.score -= contention * _choreoParams.octContentionWeight; // penalize per upcoming window that uses this node's face
 
         // Oct cage priority: strongly prefer traversals that would materialize
         // unmaterialized oct cage SCs (helps T25 — cage must complete by tick 36)
         if (c._scId !== undefined && c._needsMaterialise && _octSCIds &&
             _octSCIds.includes(c._scId)) {
-            c.score += 20; // highest priority — materializing oct cage SCs
+            c.score += _choreoParams.octCageBonus; // highest priority — materializing oct cage SCs
         }
     }
 
@@ -1920,6 +1952,27 @@ const L1_VALID_TRIPLES = [
 ];
 const L1_INNER_FACES = [1, 2, 3, 4];
 
+// Build a singles deck for a given face, parameterized by singlesDeckMajority.
+// A-faces get neutron types (opposite of proton triples), B-faces get proton types.
+// singlesDeckMajority=2 → [maj,maj,min] (2:1 ratio, the default)
+// singlesDeckMajority=1 → [maj,min,min] (1:2 ratio)
+// singlesDeckMajority=3 → [maj,maj,maj] (all majority, no minority)
+function _buildSinglesDeck(face) {
+    const isA = A_SET.has(face);
+    const maj = isA ? 'nd' : 'pu'; // majority quark type
+    const min = isA ? 'nu' : 'pd'; // minority quark type
+    const n = _choreoParams.singlesDeckMajority;
+    const deck = [];
+    for (let i = 0; i < n; i++) deck.push(maj);
+    for (let i = n; i < 3; i++) deck.push(min);
+    // Fisher-Yates shuffle
+    for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    return deck;
+}
+
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  NON-DELETABLE: MINIMAL ACTION PRINCIPLE                           ║
 // ║                                                                    ║
@@ -1951,11 +2004,12 @@ function buildPhysicalSchedule() {
     for (const triple of L1_VALID_TRIPLES) {
         windows.push({ faces: [...triple] });
     }
-    // 8 single-tet windows — inner face coverage equalization
-    // Each inner face (1-4) gets 2 singles to match outer faces' 4 total
+    // Single-tet windows — inner face coverage equalization
+    // Each inner face gets singlesPerInner windows to balance outer faces' triple exposure
     for (const f of L1_INNER_FACES) {
-        windows.push({ faces: [f] });
-        windows.push({ faces: [f] });
+        for (let s = 0; s < _choreoParams.singlesPerInner; s++) {
+            windows.push({ faces: [f] });
+        }
     }
     // Fisher-Yates shuffle
     for (let i = windows.length - 1; i > 0; i--) {
@@ -2168,9 +2222,9 @@ function demoTick() {
 
     let _solverNeeded = false;
 
-    const CYCLE_LEN = 64;       // 16 windows × 4 ticks
-    const WINDOW_LEN = 4;       // ticks per actualization window
-    const WINDOWS_PER_CYCLE = 16;
+    const WINDOW_LEN = _choreoParams.windowLen;
+    const WINDOWS_PER_CYCLE = 8 + _choreoParams.singlesPerInner * 4;
+    const CYCLE_LEN = WINDOWS_PER_CYCLE * WINDOW_LEN;
 
     const tickInCycle = _demoTick % CYCLE_LEN;
     const windowIdx = Math.floor(tickInCycle / WINDOW_LEN);
@@ -2215,14 +2269,7 @@ function demoTick() {
             // Global 2:1 ratio maintained: pu:pd = nd:nu = 2:1
             const f = faces[0];
             if (!_demoFaceDecks[f] || _demoFaceDecks[f].length === 0) {
-                _demoFaceDecks[f] = A_SET.has(f)
-                    ? ['nd', 'nd', 'nu']    // A-face (proton triples) → neutron singles
-                    : ['pu', 'pu', 'pd'];   // B-face (neutron triples) → proton singles
-                // Fisher-Yates shuffle
-                for (let i = _demoFaceDecks[f].length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [_demoFaceDecks[f][i], _demoFaceDecks[f][j]] = [_demoFaceDecks[f][j], _demoFaceDecks[f][i]];
-                }
+                _demoFaceDecks[f] = _buildSinglesDeck(f);
             }
             _demoWindowTypes[f] = _demoFaceDecks[f].pop();
         }
@@ -2340,11 +2387,11 @@ function demoTick() {
             for (const xon of _demoXons) {
                 if (!xon.alive || xon._mode !== 'oct') continue;
                 let score = 0;
-                if (faceOctNodes.has(xon.node)) score = 10;
+                if (faceOctNodes.has(xon.node)) score = _choreoParams.faceOnBonus;
                 else {
                     const nbs = baseNeighbors[xon.node];
                     for (const nb of nbs) {
-                        if (faceOctNodes.has(nb.node)) { score = 5; break; }
+                        if (faceOctNodes.has(nb.node)) { score = _choreoParams.faceNearBonus; break; }
                     }
                 }
                 if (score > bestScore) { bestScore = score; bestXon = xon; }
@@ -2433,7 +2480,7 @@ function demoTick() {
                 const tmpOcc = new Map(occupied);
                 _occDel(tmpOcc, xon.node);
                 _occAdd(tmpOcc, nextNode);
-                if (!_lookaheadTetPath(xon._loopSeq, effectiveStep + 1, tmpOcc, LOOKAHEAD_DEPTH, xon)) shouldEvict = true;
+                if (!_lookaheadTetPath(xon._loopSeq, effectiveStep + 1, tmpOcc, _choreoParams.lookahead, xon)) shouldEvict = true;
             }
 
             if (shouldEvict) {
@@ -2556,7 +2603,7 @@ function demoTick() {
             _occDel(tmpOcc, plan.fromNode);
             _occAdd(tmpOcc, plan.toNode);
             const effectiveStep = plan.xon._loopStep >= 4 ? 0 : plan.xon._loopStep;
-            if (_lookaheadTetPath(plan.xon._loopSeq, effectiveStep + 1, tmpOcc, LOOKAHEAD_DEPTH, plan.xon)) {
+            if (_lookaheadTetPath(plan.xon._loopSeq, effectiveStep + 1, tmpOcc, _choreoParams.lookahead, plan.xon)) {
                 plan.approved = true;
                 planned.add(plan.toNode);
             }
@@ -2690,22 +2737,22 @@ function demoTick() {
 
     // Proactive congestion relief: if the oct cage is crowded,
     // send some assigned oct xons into idle_tet to reduce density.
-    // With 12 oct nodes and 6 xons, >4 xons on oct is congested.
+    // With 12 oct nodes and 6 xons, >congestionMax xons on oct is congested.
     const octOnCage = octPlans.filter(p => p.assigned || (!p.assigned && !p.idleTet)).length;
-    if (octOnCage > 4) {
+    if (octOnCage > _choreoParams.congestionMax) {
         // Demote the lowest-scored assigned oct xons to idle_tet
         const demotable = octPlans
             .filter(p => p.assigned && p.assigned.score !== undefined)
             .sort((a, b) => (a.assigned.score || 0) - (b.assigned.score || 0));
         for (const plan of demotable) {
-            if (octOnCage - (demotable.indexOf(plan) < demotable.length ? 1 : 0) <= 4) break;
+            if (octOnCage - (demotable.indexOf(plan) < demotable.length ? 1 : 0) <= _choreoParams.congestionMax) break;
             // Try idle_tet for this xon instead of its oct move
             if (plan.xon._evictedThisTick) continue; // evicted this tick — don't re-assign
             if (_startIdleTetLoop(plan.xon, allBlocked)) {
                 const dest = plan.xon._loopSeq[plan.xon._loopStep + 1];
                 // Loop-shape-aware lookahead: verify this specific loop path is viable
                 const tmpCheck = new Map(allBlocked); _occAdd(tmpCheck, dest);
-                if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, LOOKAHEAD_DEPTH, plan.xon)) {
+                if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, _choreoParams.lookahead, plan.xon)) {
                     octClaimed.delete(plan.assigned.node);
                     plan.assigned = null;
                     plan.idleTet = true;
@@ -2732,7 +2779,7 @@ function demoTick() {
             const dest = plan.xon._loopSeq[plan.xon._loopStep + 1];
             // Loop-shape-aware lookahead: verify this specific loop path is viable
             const tmpCheck = new Map(allBlocked); _occAdd(tmpCheck, dest);
-            if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, LOOKAHEAD_DEPTH, plan.xon)) {
+            if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, _choreoParams.lookahead, plan.xon)) {
                 plan.idleTet = true;
                 _occAdd(allBlocked, dest);
             } else {
@@ -3568,10 +3615,13 @@ function demoTick() {
         updateDemoPanel();
         updateStatus();
     }
+
+    // Tournament hook: check if trial has reached its target tick
+    if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
 }
 
 function updateDemoPanel() {
-    const CYCLE_LEN = 64;
+    const CYCLE_LEN = (8 + _choreoParams.singlesPerInner * 4) * _choreoParams.windowLen;
     const cycles = Math.floor(_demoTick / CYCLE_LEN);
 
     // ── Update demo-status (right panel, below button) ──
@@ -3581,7 +3631,7 @@ function updateDemoPanel() {
     }
 
     // ── Update left panel coverage bars (skip during test execution) ──
-    if (_testRunning) { _demoTick++; return; }
+    if (_testRunning) return;
     const el = document.getElementById('dp-coverage-bars');
     if (!el) return;
 
@@ -3632,7 +3682,7 @@ function updateDemoPanel() {
     }
     const calcEvenness = (arr) => {
         const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-        if (m === 0) return 1;
+        if (m === 0) return 0; // no visits = 0% balance
         const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
         return Math.max(0, 1 - sd / m);
     };
