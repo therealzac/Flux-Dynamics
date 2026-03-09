@@ -2136,7 +2136,7 @@ function startDemoLoop() {
     }
 
     // Update left panel header
-    const dpTitle = document.querySelector('#deuteron-panel > div:first-child');
+    const dpTitle = document.getElementById('dp-title');
     if (dpTitle) dpTitle.textContent = '0 Planck seconds';
 
     // Demo 3.0 visual setup: opacity defaults per T39 spec
@@ -3816,8 +3816,14 @@ async function demoTick() {
     // Update Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
     if (_tickerEl) _tickerEl.textContent = `${_demoTick} Planck seconds`;
-    const _dpTitle = document.querySelector('#deuteron-panel > div:first-child');
+    const _dpTitle = document.getElementById('dp-title');
     if (_dpTitle) _dpTitle.textContent = `${_demoTick} Planck seconds`;
+    // Top-center title: during tournament, show trial label + tick count
+    const _ruleTitle = document.getElementById('rule-title');
+    if (_ruleTitle && _tournamentRunning) {
+        const base = _ruleTitle.dataset.trialLabel || '';
+        _ruleTitle.textContent = base ? `${base}  ·  t${_demoTick}` : `TOURNAMENT  ·  t${_demoTick}`;
+    }
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
     const _gT0 = performance.now();

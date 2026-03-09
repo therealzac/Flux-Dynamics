@@ -1389,6 +1389,7 @@ async function _runTournament() {
     const statusEl = document.getElementById('tune-status');
 
     const originalParams = { ..._choreoParams };
+    const titleEl = document.getElementById('rule-title');
 
     // Initial population: current config + mutations + random
     let population = [{ ..._choreoParams }];
@@ -1418,6 +1419,16 @@ async function _runTournament() {
                 const bestStr = bestFitnessEver > -Infinity ? bestFitnessEver.toFixed(3) : '...';
                 const cleanStr = bestClean ? ' clean' : '';
                 statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | best=${bestStr}${cleanStr}`;
+            }
+
+            // Update top-center title with trial signature
+            if (titleEl) {
+                const p = params;
+                const origin = i === 0 && gen === 0 ? 'seed' : i < ELITE_COUNT ? 'elite' : i < ELITE_COUNT * 2 ? 'cross' : 'mutant';
+                const label = `G${gen+1} #${i+1} ${origin}`;
+                titleEl.textContent = label;
+                titleEl.dataset.trialLabel = label; // used by demoTick to append tick count
+                titleEl.title = `la=${p.lookahead} cg=${p.congestionMax} wl=${p.windowLen} sp=${p.singlesPerInner} sm=${p.singlesDeckMajority}`;
             }
 
             // Run this trial visually — demo renders on screen
@@ -1470,6 +1481,13 @@ async function _runTournament() {
     }
 
     _tournamentRunning = false;
+
+    // Restore top-center title
+    if (titleEl) {
+        titleEl.textContent = 'NUCLEUS: DEUTERON';
+        titleEl.title = '';
+        delete titleEl.dataset.trialLabel;
+    }
 
     // Restart demo with winning params
     if (typeof stopDemo === 'function') stopDemo();
