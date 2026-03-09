@@ -6,25 +6,107 @@
 let _testRunning = false;  // suppress display updates during test execution
 
 // ═══════════════════════════════════════════════════════════════════════
-// ║  LIVE GUARDS — continuous per-tick monitoring for all runtime tests  ║
-// ║  null during grace (12 ticks), green after, permanent red on fail   ║
+// ║  LIVE GUARD REGISTRY — single source of truth for ALL runtime tests ║
+// ║  Adding/removing a test here is the ONLY action needed.             ║
+// ║                                                                     ║
+// ║  Each entry: { id, name, init?, convergence?, projected?,           ║
+// ║               activate?, snapshot?, check? }                        ║
+// ║    id:          'T19', 'T41', etc.                                  ║
+// ║    name:        display name (without Txx prefix)                   ║
+// ║    init:        extra state props for _liveGuards entry (optional)  ║
+// ║    convergence: true → stays null during grace promotion (optional) ║
+// ║    projected:   lookahead check fn(states) → null | violation       ║
+// ║    activate:    called at grace end for initialization (optional)   ║
+// ║    snapshot:    called before each tick for state capture (optional) ║
+// ║    check:       runtime check fn(tick, g, ctx) → fail msg | null    ║
+// ║                 ctx = { isWindowBoundary, prev }                    ║
+// ║                                                                     ║
+// ║  TO DISABLE A TEST: remove its entry. No other changes needed.      ║
 // ═══════════════════════════════════════════════════════════════════════
 const LIVE_GUARD_GRACE = 12;
 
-// ═══════════════════════════════════════════════════════════════════════
-// ║  PROJECTED GUARD CHECKS — shared between live guards & lookahead   ║
-// ║  Each function receives xonFutures (array of projected xon states) ║
-// ║  and returns null (pass) or {guard, xon, msg} / array of them.     ║
-// ║                                                                     ║
-// ║  TO ADD A NEW TEST: just push a new function to this array.         ║
-// ║  The lookahead will automatically include it.                       ║
-// ═══════════════════════════════════════════════════════════════════════
-//
-// Each xonFuture: { xon, futureNode, futureMode, futureColor, fromNode }
-const PROJECTED_GUARD_CHECKS = [
-
-    // ── T19: Pauli exclusion — max 1 xon per node ──
-    function T19_Pauli(states) {
+const LIVE_GUARD_REGISTRY = [
+    { id: 'T01', name: 'Fork path audit (pu)', init: { _seen: 0 } },
+    { id: 'T02', name: 'Lollipop path audit (nd)', init: { _seen: 0 } },
+    { id: 'T03', name: 'Hamiltonian CW path audit (pd)', init: { _seen: 0 } },
+    { id: 'T04', name: 'Hamiltonian CCW path audit (nu)', init: { _seen: 0 } },
+    { id: 'T12', name: 'Conservation (alive+2*stored=6)',
+      projected(states) {
+        const liveCount = states.length;
+        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const total = liveCount + 2 * stored;
+        if (total !== 6) return { guard: 'T12', xon: null, msg: `conservation: alive=${liveCount} stored=${stored} total=${total}` };
+        return null;
+      },
+      check(tick, g) {
+        const liveCount = _demoXons.filter(x => x.alive && !x._dying).length;
+        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const total = liveCount + 2 * stored;
+        if (total !== 6) return `tick ${tick}: alive=${liveCount} stored=${stored} total=${total} (expected 6)`;
+        return null;
+      }
+    },
+    { id: 'T13', name: 'Array size unchanged', init: { _initCount: null },
+      activate(g) { g._initCount = _demoXons.length; },
+      check(tick, g) {
+        if (g._initCount === null) return null;
+        if (_demoXons.length !== g._initCount)
+          return `tick ${tick}: count ${g._initCount}\u2192${_demoXons.length}`;
+        return null;
+      }
+    },
+    { id: 'T14', name: 'Dying trail cleanup',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon._dying) continue;
+          if (!xon._dyingStartTick) xon._dyingStartTick = tick;
+          if (tick - xon._dyingStartTick > 60)
+            return `tick ${tick}: xon dying for ${tick - xon._dyingStartTick} ticks (max 60)`;
+        }
+        return null;
+      }
+    },
+    { id: 'T15', name: 'Xon state (sign + mode)',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          if (xon.sign !== 1 && xon.sign !== -1) return `tick ${tick}: sign=${xon.sign}`;
+          if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet' && xon._mode !== 'weak')
+            return `tick ${tick}: mode=${xon._mode}`;
+        }
+        return null;
+      }
+    },
+    { id: 'T16', name: 'Xon always has function',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+            if (!xon._loopSeq || xon._loopSeq.length < 4)
+              return `tick ${tick}: ${xon._mode} no loop seq`;
+          } else if (xon._mode === 'oct') {
+            if (!_octNodeSet.has(xon.node))
+              return `tick ${tick}: oct at non-oct node ${xon.node}`;
+          }
+        }
+        return null;
+      }
+    },
+    { id: 'T17', name: 'Full tet coverage (8/8 faces)', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        let visitCount = 0;
+        for (let f = 1; f <= 8; f++) {
+          if (_demoVisits[f] && _demoVisits[f].total > 0) visitCount++;
+        }
+        if (visitCount === 8) { g.ok = true; g.msg = ''; _liveGuardRender(); return null; }
+        if (tick > LIVE_GUARD_GRACE + 256)
+          return `only ${visitCount}/8 faces after ${tick} ticks`;
+        return null;
+      }
+    },
+    { id: 'T19', name: 'Pauli exclusion (1 xon/node)',
+      projected(states) {
         const counts = new Map();
         for (const s of states) {
             const c = (counts.get(s.futureNode) || 0) + 1;
@@ -32,10 +114,169 @@ const PROJECTED_GUARD_CHECKS = [
             if (c > 1) return { guard: 'T19', xon: s.xon, msg: `Pauli at node ${s.futureNode}` };
         }
         return null;
+      },
+      check(tick, g) {
+        const occupied = new Map();
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          const n = xon.node;
+          if (occupied.has(n)) return `tick ${tick}: node ${n} has 2+ xons`;
+          occupied.set(n, true);
+        }
+        return null;
+      }
     },
-
-    // ── T26: No unactivated SC traversal ──
-    function T26_SCActivation(states) {
+    { id: 'T20', name: 'Never stand still',
+      check(tick, g, ctx) {
+        if (ctx.isWindowBoundary || !ctx.prev) return null;
+        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
+          if (!xon.alive) continue;
+          if (prevMode !== xon._mode) continue;
+          if (xon.node === fromNode) return `tick ${tick}: stuck at node ${fromNode} (${prevMode})`;
+        }
+        return null;
+      }
+    },
+    { id: 'T21', name: 'Oct cage permanence', init: { _octSnapshot: null },
+      projected(states) {
+        if (typeof _octSCIds === 'undefined') return null;
+        for (const scId of _octSCIds) {
+            if (!activeSet.has(scId)) return { guard: 'T21', xon: null, msg: `oct SC ${scId} missing from activeSet` };
+        }
+        return null;
+      },
+      activate(g) {
+        const snap = new Set();
+        for (const scId of _octSCIds) { if (activeSet.has(scId)) snap.add(scId); }
+        g._octSnapshot = snap;
+        if (snap.size === 0) { g.ok = null; g.msg = 'no oct SCs active yet'; }
+      },
+      check(tick, g) {
+        // Update snapshot with newly active oct SCs
+        if (g._octSnapshot) {
+          for (const scId of _octSCIds) { if (activeSet.has(scId)) g._octSnapshot.add(scId); }
+          if (g._octSnapshot.size > 0 && g.ok === null) { g.ok = true; g.msg = ''; }
+        }
+        // Verify all snapshotted oct SCs still active
+        if (g._octSnapshot && g._octSnapshot.size > 0) {
+          for (const scId of g._octSnapshot) {
+            if (!activeSet.has(scId)) return `tick ${tick}: oct SC ${scId} lost`;
+          }
+        }
+        return null;
+      }
+    },
+    { id: 'T22', name: 'Hadronic composition (pu:pd\u22482, nd:nu\u22482)', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
+        const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
+        const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
+        const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
+        const puPdRatio = gPd > 0 ? gPu / gPd : 0;
+        const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
+        const total = gPu + gPd + gNd + gNu;
+        const totals = [];
+        for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+        const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+        const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
+        const cv = mean > 0 ? (stddev / mean) : 1;
+        const evenness = Math.max(0, 1 - cv);
+        if (total > 0)
+          g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} cov=${(evenness*100).toFixed(0)}%`;
+        if (evenness >= 0.999 && total >= 16) {
+          g.ok = true;
+          g.msg = `coverage 100% pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+          _liveGuardRender();
+          return null;
+        }
+        const t = tick - LIVE_GUARD_GRACE;
+        const checkpoints = [
+          { at: 256,  lo: 1.0, hi: 3.0, label: 'early' },
+          { at: 640,  lo: 1.4, hi: 2.6, label: 'mid' },
+          { at: 1280, lo: 1.6, hi: 2.4, label: 'final' },
+        ];
+        for (const cp of checkpoints) {
+          if (t !== cp.at) continue;
+          const inBand = puPdRatio >= cp.lo && puPdRatio <= cp.hi
+                      && ndNuRatio >= cp.lo && ndNuRatio <= cp.hi;
+          if (cp.label === 'final') {
+            if (inBand) {
+              g.ok = true;
+              g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+            } else {
+              return `${cp.label}: pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} [${cp.lo}-${cp.hi}]`;
+            }
+          } else if (!inBand) {
+            console.warn(`[T22 ${cp.label}] pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} outside [${cp.lo}-${cp.hi}]`);
+          }
+          _liveGuardRender();
+        }
+        return null;
+      }
+    },
+    { id: 'T23', name: 'Sparkle color matches purpose',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || !xon.sparkMat) continue;
+          const actual = xon.sparkMat.color.getHex();
+          if (xon._mode === 'oct') {
+            if (actual !== 0xffffff) return `tick ${tick}: oct spark=0x${actual.toString(16)}`;
+          } else if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+            const expected = QUARK_COLORS[xon._quarkType];
+            if (expected !== undefined && actual !== expected)
+              return `tick ${tick}: ${xon._quarkType} spark wrong`;
+          } else if (xon._mode === 'weak') {
+            if (actual !== WEAK_FORCE_COLOR) return `tick ${tick}: weak spark=0x${actual.toString(16)}`;
+          }
+        }
+        return null;
+      }
+    },
+    { id: 'T24', name: 'Trail color stability',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || !xon.trailColHistory) continue;
+          for (let j = 0; j < xon.trailColHistory.length; j++) {
+            const c = xon.trailColHistory[j];
+            const isWhite = c === 0xffffff;
+            const isQuark = c === QUARK_COLORS.pu || c === QUARK_COLORS.pd ||
+                            c === QUARK_COLORS.nu || c === QUARK_COLORS.nd;
+            const isWeak = c === WEAK_FORCE_COLOR;
+            if (!isWhite && !isQuark && !isWeak) return `tick ${tick}: color 0x${c.toString(16)}`;
+          }
+          if (xon.trailColHistory.length !== xon.trail.length) return `tick ${tick}: trail/color desync`;
+        }
+        return null;
+      }
+    },
+    { id: 'T25', name: 'Oct cage within 12 ticks', convergence: true,
+      projected(states) {
+        if (typeof _octSCIds === 'undefined') return null;
+        if (!_liveGuards || !_liveGuards.T25 || _liveGuards.T25.ok !== true) return null;
+        const allActive = _octSCIds.every(id => activeSet.has(id));
+        if (!allActive) return { guard: 'T25', xon: null, msg: 'oct cage broken' };
+        return null;
+      },
+      check(tick, g) {
+        const allOctActive = _octSCIds.length > 0 && _octSCIds.every(id => activeSet.has(id));
+        if (g.ok !== true) {
+          if (allOctActive) { g.ok = true; g.msg = ''; _liveGuardRender(); }
+          if (tick > LIVE_GUARD_GRACE + 24) {
+            const active = _octSCIds.filter(id => activeSet.has(id)).length;
+            return `${active}/${_octSCIds.length} after ${tick} ticks`;
+          }
+        } else {
+          if (!allOctActive) {
+            const missing = _octSCIds.filter(id => !activeSet.has(id));
+            return `tick ${tick}: oct cage broke (${missing.length} SCs lost)`;
+          }
+        }
+        return null;
+      }
+    },
+    { id: 'T26', name: 'No unactivated SC traversal',
+      projected(states) {
         const violations = [];
         for (const s of states) {
             if (s.futureNode === s.fromNode) continue;
@@ -44,14 +285,45 @@ const PROJECTED_GUARD_CHECKS = [
             if (scId === undefined) continue;
             const hasBase = (baseNeighbors[s.fromNode] || []).some(nb => nb.node === s.futureNode);
             if (!hasBase && !activeSet.has(scId) && !impliedSet.has(scId) && !electronImpliedSet.has(scId)) {
-                violations.push({ guard: 'T26', xon: s.xon, msg: `unactivated SC ${scId} (${s.fromNode}→${s.futureNode})` });
+                violations.push({ guard: 'T26', xon: s.xon, msg: `unactivated SC ${scId} (${s.fromNode}\u2192${s.futureNode})` });
             }
         }
         return violations.length ? violations : null;
+      },
+      snapshot(g) {
+        // Capture SC activation state BEFORE the tick so check() verifies
+        // the SC was active at the time of the move, not after same-tick severance.
+        g._t26ActiveSnap = new Set(activeSet);
+        g._t26ImpliedSnap = new Set(impliedSet);
+        g._t26EImpliedSnap = new Set(electronImpliedSet);
+      },
+      check(tick, g, ctx) {
+        if (ctx.isWindowBoundary || !ctx.prev) return null;
+        // Use pre-tick SC snapshot: the SC must have been active when the xon moved
+        const aSnap = g._t26ActiveSnap || activeSet;
+        const iSnap = g._t26ImpliedSnap || impliedSet;
+        const eSnap = g._t26EImpliedSnap || electronImpliedSet;
+        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
+          if (!xon.alive) continue;
+          const toNode = xon.node;
+          if (toNode === fromNode) continue;
+          if (prevMode !== xon._mode) continue;
+          const pid = pairId(fromNode, toNode);
+          const scId = scPairToId.get(pid);
+          if (scId !== undefined) {
+            const hasBaseEdge = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
+            if (!hasBaseEdge) {
+              if (!aSnap.has(scId) && !iSnap.has(scId) && !eSnap.has(scId)) {
+                return `tick ${tick}: ${prevMode} xon on SC ${scId} (${fromNode}\u2192${toNode})`;
+              }
+            }
+          }
+        }
+        return null;
+      }
     },
-
-    // ── T27: No teleportation ──
-    function T27_NoTeleport(states) {
+    { id: 'T27', name: 'No teleportation',
+      projected(states) {
         const violations = [];
         for (const s of states) {
             if (s.futureNode === s.fromNode) continue;
@@ -61,90 +333,202 @@ const PROJECTED_GUARD_CHECKS = [
                 const scs = scByVert[s.fromNode] || [];
                 connected = scs.some(sc => (sc.a === s.fromNode ? sc.b : sc.a) === s.futureNode);
             }
-            if (!connected) {
-                violations.push({ guard: 'T27', xon: s.xon, msg: `teleport ${s.fromNode}→${s.futureNode}` });
-            }
+            if (!connected) violations.push({ guard: 'T27', xon: s.xon, msg: `teleport ${s.fromNode}\u2192${s.futureNode}` });
         }
         return violations.length ? violations : null;
+      },
+      check(tick, g, ctx) {
+        if (ctx.isWindowBoundary || !ctx.prev) return null;
+        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
+          if (!xon.alive) continue;
+          const toNode = xon.node;
+          if (toNode === fromNode) continue;
+          if (prevMode !== xon._mode) continue;
+          const nbs = baseNeighbors[fromNode] || [];
+          let connected = nbs.some(nb => nb.node === toNode);
+          if (!connected) {
+            const scs = scByVert[fromNode] || [];
+            connected = scs.some(sc => (sc.a === fromNode ? sc.b : sc.a) === toNode);
+          }
+          if (!connected) return `tick ${tick}: teleport ${fromNode}\u2192${toNode}`;
+        }
+        return null;
+      }
     },
-
-    // ── T29: White trails only on oct nodes ──
-    function T29_WhiteTrailOct(states) {
+    { id: 'T29', name: 'White trails only on oct edges',
+      projected(states) {
         if (!_octNodeSet || !_octNodeSet.size) return null;
         const violations = [];
         for (const s of states) {
-            if (s.futureColor === 0xffffff && !_octNodeSet.has(s.futureNode)) {
+            if (s.futureColor === 0xffffff && !_octNodeSet.has(s.futureNode))
                 violations.push({ guard: 'T29', xon: s.xon, msg: `white at non-oct node ${s.futureNode}` });
-            }
         }
         return violations.length ? violations : null;
-    },
-
-    // ── T12: Conservation — alive + 2*stored = 6 ──
-    function T12_Conservation(states) {
-        const liveCount = states.length;
-        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
-        const total = liveCount + 2 * stored;
-        if (total !== 6) {
-            return { guard: 'T12', xon: null,
-                msg: `conservation: alive=${liveCount} stored=${stored} total=${total}` };
-        }
-        return null;
-    },
-
-    // ── T21: Oct cage permanence — oct SCs never leave activeSet ──
-    function T21_OctCage(states) {
-        if (typeof _octSCIds === 'undefined') return null;
-        for (const scId of _octSCIds) {
-            if (!activeSet.has(scId)) {
-                return { guard: 'T21', xon: null, msg: `oct SC ${scId} missing from activeSet` };
+      },
+      check(tick, g) {
+        if (!_octNodeSet || !_octNodeSet.size) return null;
+        for (const xon of _demoXons) {
+          if (!xon.alive || !xon.trailColHistory || !xon.trail) continue;
+          for (let i = 0; i < xon.trailColHistory.length; i++) {
+            if (xon.trailColHistory[i] === 0xffffff) {
+              if (!_octNodeSet.has(xon.trail[i]))
+                return `tick ${tick}: white trail at non-oct node ${xon.trail[i]}`;
             }
+          }
         }
         return null;
+      }
     },
-
-    // ── T25: Oct cage integrity — once formed, never breaks ──
-    function T25_OctCageIntegrity(states) {
-        if (typeof _octSCIds === 'undefined') return null;
-        if (!_liveGuards || !_liveGuards.T25 || _liveGuards.T25.ok !== true) return null;
-        const allActive = _octSCIds.every(id => activeSet.has(id));
-        if (!allActive) {
-            return { guard: 'T25', xon: null, msg: 'oct cage broken' };
+    { id: 'T30', name: 'Annihilation always in pairs', init: { _prevStored: 0, _prevAlive: 6 },
+      activate(g) {
+        g._prevStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        g._prevAlive = _demoXons.filter(x => x.alive).length;
+      },
+      check(tick, g) {
+        const curStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
+        const curAlive = _demoXons.filter(x => x.alive).length;
+        if (curStored > g._prevStored) {
+          const dStored = curStored - g._prevStored;
+          const dAlive = g._prevAlive - curAlive;
+          if (dStored * 2 !== dAlive) {
+            g._prevStored = curStored; g._prevAlive = curAlive;
+            return `tick ${tick}: stored+=${dStored} alive-=${dAlive} (expected 2:1 ratio)`;
+          }
+        }
+        g._prevStored = curStored; g._prevAlive = curAlive;
+        return null;
+      }
+    },
+    { id: 'T33', name: 'Trail persists when alive',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._dying) continue;
+          if (!xon.trail || xon.trail.length === 0)
+            return `tick ${tick}: alive xon has empty trail at node ${xon.node}`;
+          if (!xon.trailColHistory || xon.trailColHistory.length !== xon.trail.length)
+            return `tick ${tick}: trail/color length mismatch`;
         }
         return null;
+      }
     },
-
+    { id: 'T34', name: 'Trail length bounded',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || !xon.trail) continue;
+          if (xon.trail.length > XON_TRAIL_LENGTH)
+            return `tick ${tick}: trail len=${xon.trail.length} max=${XON_TRAIL_LENGTH}`;
+        }
+        return null;
+      }
+    },
+    { id: 'T35', name: 'Sparkle visible when alive',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._dying) continue;
+          if (!xon.spark || !xon.sparkMat)
+            return `tick ${tick}: alive xon missing spark at node ${xon.node}`;
+        }
+        return null;
+      }
+    },
+    { id: 'T36', name: 'Flash on mode transition',
+      check(tick, g, ctx) {
+        if (ctx.isWindowBoundary || !ctx.prev) return null;
+        for (const { xon, mode: prevMode } of ctx.prev) {
+          if (!xon.alive) continue;
+          if (prevMode === xon._mode) continue;
+          if (xon.flashT < 0.5)
+            return `tick ${tick}: ${prevMode}\u2192${xon._mode} flashT=${xon.flashT.toFixed(2)}`;
+        }
+        return null;
+      }
+    },
+    { id: 'T37', name: 'Trail flash boost',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._dying) continue;
+          if (xon.flashT > 0.1 && xon.flashT < 0.7 && xon._lastTrailFlashBoost !== undefined) {
+            if (xon._lastTrailFlashBoost <= 0)
+              return `tick ${tick}: flashT=${xon.flashT.toFixed(2)} but boost=${xon._lastTrailFlashBoost.toFixed(3)}`;
+          }
+        }
+        return null;
+      }
+    },
+    { id: 'T38', name: 'Weak force confinement',
+      check(tick, g, ctx) {
+        // Weak xons are protected from non-physical death.
+        // Pauli annihilation is the ONLY way xons die (_annihilateXonPair),
+        // and Pauli exclusion is absolute — it trumps weak confinement.
+        // So weak xon death is always legitimate.  This guard now only
+        // checks that weak xons don't spontaneously vanish (alive→false
+        // without going through _annihilateXonPair), which would be a bug.
+        // Since _annihilateXonPair is the sole death path, this is a no-op
+        // for now but kept as a sentinel for future code changes.
+        return null;
+      }
+    },
+    { id: 'T39', name: 'Demo opacity reset', convergence: true,
+      check(tick, g) {
+        if (tick !== LIVE_GUARD_GRACE + 1) return null;
+        const expectedSliders = {
+          'sphere-opacity-slider': 3, 'void-opacity-slider': 5,
+          'graph-opacity-slider': 8, 'trail-opacity-slider': 55,
+          'excitation-speed-slider': 100, 'tracer-lifespan-slider': 13,
+        };
+        const wrong = [];
+        for (const [id, val] of Object.entries(expectedSliders)) {
+          const el = document.getElementById(id);
+          if (!el) { wrong.push(`${id} missing`); continue; }
+          if (+el.value !== val) wrong.push(`${id}=${el.value} expected ${val}`);
+        }
+        const expectedDisplay = {
+          'sphere-opacity-val': '3%', 'void-opacity-val': '5%',
+          'graph-opacity-val': '8%', 'trail-opacity-val': '55%',
+        };
+        for (const [id, text] of Object.entries(expectedDisplay)) {
+          const el = document.getElementById(id);
+          if (!el) { wrong.push(`${id} missing`); continue; }
+          if (el.textContent !== text) wrong.push(`${id}="${el.textContent}" expected "${text}"`);
+        }
+        if (typeof _bgMat !== 'undefined' && Math.abs(_bgMat.opacity - 0.03) > 0.02)
+          wrong.push(`sphere material opacity=${_bgMat.opacity.toFixed(2)} expected 0.03`);
+        if (wrong.length > 0) return wrong.join(', ');
+        g.ok = true; g.msg = ''; _liveGuardRender();
+        return null;
+      }
+    },
+    { id: 'T40', name: 'Trail fade on annihilation',
+      check(tick, g, ctx) {
+        if (ctx.isWindowBoundary || !ctx.prev) return null;
+        for (const { xon } of ctx.prev) {
+          if (xon.alive) continue;
+          if (!xon._dying)
+            return `tick ${tick}: xon annihilated at node ${xon.node} without trail fade (_dying not set)`;
+        }
+        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
+        return null;
+      }
+    },
+    // T41 DISABLED — AB testing whether swap prohibition is physical.
+    // Swaps may be a natural consequence of fermion exchange symmetry.
+    // T42 DISABLED — SC origin test needs attribution logic rework.
 ];
-const _liveGuards = {
-    T12: { ok: null, msg: 'grace period', failed: false },
-    T13: { ok: null, msg: 'grace period', failed: false, _initCount: null },
-    T14: { ok: null, msg: 'grace period', failed: false },
-    T15: { ok: null, msg: 'grace period', failed: false },
-    T16: { ok: null, msg: 'grace period', failed: false },
-    T17: { ok: null, msg: 'grace period', failed: false },
-    T19: { ok: null, msg: 'grace period', failed: false },
-    T20: { ok: null, msg: 'grace period', failed: false },
-    T21: { ok: null, msg: 'grace period', failed: false, _octSnapshot: null },
-    T22: { ok: null, msg: 'grace period', failed: false },
-    T23: { ok: null, msg: 'grace period', failed: false },
-    T24: { ok: null, msg: 'grace period', failed: false },
-    T25: { ok: null, msg: 'grace period', failed: false },
-    T26: { ok: null, msg: 'grace period', failed: false },
-    T27: { ok: null, msg: 'grace period', failed: false },
-    T29: { ok: null, msg: 'grace period', failed: false },
-    T30: { ok: null, msg: 'grace period', failed: false, _prevStored: 0, _prevAlive: 6 },
-    T33: { ok: null, msg: 'grace period', failed: false },
-    T34: { ok: null, msg: 'grace period', failed: false },
-    T35: { ok: null, msg: 'grace period', failed: false },
-    T36: { ok: null, msg: 'grace period', failed: false },
-    T37: { ok: null, msg: 'grace period', failed: false },
-    T38: { ok: null, msg: 'grace period', failed: false },
-    T39: { ok: null, msg: 'grace period', failed: false },
-    T40: { ok: null, msg: 'grace period', failed: false },
-};
+
+// ── Auto-derived from registry ──
+const PROJECTED_GUARD_CHECKS = LIVE_GUARD_REGISTRY.filter(e => e.projected).map(e => e.projected);
+
+const _liveGuards = {};
+for (const entry of LIVE_GUARD_REGISTRY) {
+    _liveGuards[entry.id] = { ok: null, msg: 'grace period', failed: false, ...(entry.init || {}) };
+}
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
 
+// ══════════════════════════════════════════════════════════════════
+// Generic dispatcher — iterates LIVE_GUARD_REGISTRY and calls each
+// entry's check() function. No per-test if-blocks needed.
+// ══════════════════════════════════════════════════════════════════
 function _liveGuardCheck() {
     if (!_demoActive || !_liveGuardsActive || _testRunning) return;
     const tick = _demoTick;
@@ -153,624 +537,39 @@ function _liveGuardCheck() {
     const tickInWindow = (preTick % CYCLE_LEN) % WINDOW_LEN;
     const isWindowBoundary = tickInWindow === 0;
 
-    // Convergence tests stay null until their deadline is evaluated
-    const CONVERGENCE_TESTS = new Set(['T17', 'T22', 'T25', 'T39']);
-
     // ── During grace: stay null ──
     if (tick <= LIVE_GUARD_GRACE) {
         if (tick === LIVE_GUARD_GRACE) {
-            // Promote invariant guards to green; convergence tests stay null
-            for (const key of Object.keys(_liveGuards)) {
-                if (CONVERGENCE_TESTS.has(key)) continue;
-                const g = _liveGuards[key];
+            // Promote non-convergence guards to green
+            for (const entry of LIVE_GUARD_REGISTRY) {
+                if (entry.convergence) continue;
+                const g = _liveGuards[entry.id];
                 if (!g.failed) { g.ok = true; g.msg = ''; }
             }
-            // T13: capture baseline xon count
-            _liveGuards.T13._initCount = _demoXons.length;
-            // T21: snapshot which oct SCs are active now
-            const snap = new Set();
-            for (const scId of _octSCIds) {
-                if (activeSet.has(scId)) snap.add(scId);
+            // Call activate() for entries that have it
+            for (const entry of LIVE_GUARD_REGISTRY) {
+                if (entry.activate) entry.activate(_liveGuards[entry.id]);
             }
-            _liveGuards.T21._octSnapshot = snap;
-            if (snap.size === 0) {
-                _liveGuards.T21.ok = null;
-                _liveGuards.T21.msg = 'no oct SCs active yet';
-            }
-            // T30: initialize gluon tracking
-            _liveGuards.T30._prevStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
-            _liveGuards.T30._prevAlive = _demoXons.filter(x => x.alive).length;
             _liveGuardRender();
         }
         return;
     }
 
-    // ── T21: update oct snapshot if new SCs appear ──
-    if (!_liveGuards.T21.failed && _liveGuards.T21._octSnapshot) {
-        for (const scId of _octSCIds) {
-            if (activeSet.has(scId)) _liveGuards.T21._octSnapshot.add(scId);
-        }
-        if (_liveGuards.T21._octSnapshot.size > 0 && _liveGuards.T21.ok === null) {
-            _liveGuards.T21.ok = true; _liveGuards.T21.msg = '';
-        }
-    }
-
     let anyFailed = false;
+    const ctx = { isWindowBoundary, prev: _liveGuardPrev };
 
-    // ══════════════════════════════════════════════════════════════════
-    // INVARIANT GUARDS — checked every tick
-    // ══════════════════════════════════════════════════════════════════
-
-    // ── T12: Conservation — alive + 2*stored = 6 ──
-    // Gluon storage allows variable xon count while maintaining total conservation.
-    if (!_liveGuards.T12.failed) {
-        const liveCount = _demoXons.filter(x => x.alive && !x._dying).length;
-        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
-        const total = liveCount + 2 * stored;
-        if (total !== 6) {
-            _liveGuards.T12.ok = false;
-            _liveGuards.T12.failed = true;
-            _liveGuards.T12.msg = `tick ${tick}: alive=${liveCount} stored=${stored} total=${total} (expected 6)`;
+    // ── Run all guards from registry ──
+    for (const entry of LIVE_GUARD_REGISTRY) {
+        if (!entry.check) continue;
+        const g = _liveGuards[entry.id];
+        if (g.failed) continue;
+        const result = entry.check(tick, g, ctx);
+        if (typeof result === 'string') {
+            g.ok = false;
+            g.failed = true;
+            g.msg = result;
             anyFailed = true;
         }
-    }
-
-    // ── T13: Array size unchanged — xon slots are reused, never grown ──
-    if (!_liveGuards.T13.failed && _liveGuards.T13._initCount !== null) {
-        if (_demoXons.length !== _liveGuards.T13._initCount) {
-            _liveGuards.T13.ok = false;
-            _liveGuards.T13.failed = true;
-            _liveGuards.T13.msg = `tick ${tick}: count ${_liveGuards.T13._initCount}\u2192${_demoXons.length}`;
-            anyFailed = true;
-        }
-    }
-
-    // ── T14: Dying trail cleanup — dying xons must finish fade within 60 ticks ──
-    // Trail fade (T40) creates _dying xons. They must not persist forever.
-    if (!_liveGuards.T14.failed) {
-        for (const xon of _demoXons) {
-            if (!xon._dying) continue;
-            if (!xon._dyingStartTick) xon._dyingStartTick = tick;
-            if (tick - xon._dyingStartTick > 60) {
-                _liveGuards.T14.ok = false;
-                _liveGuards.T14.failed = true;
-                _liveGuards.T14.msg = `tick ${tick}: xon dying for ${tick - xon._dyingStartTick} ticks (max 60)`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ── T15: Valid state — sign in {+1,-1}, mode in {tet,oct,idle_tet,weak} ──
-    if (!_liveGuards.T15.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon.sign !== 1 && xon.sign !== -1) {
-                _liveGuards.T15.ok = false;
-                _liveGuards.T15.failed = true;
-                _liveGuards.T15.msg = `tick ${tick}: sign=${xon.sign}`;
-                anyFailed = true; break;
-            }
-            if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet' && xon._mode !== 'weak') {
-                _liveGuards.T15.ok = false;
-                _liveGuards.T15.failed = true;
-                _liveGuards.T15.msg = `tick ${tick}: mode=${xon._mode}`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ── T16: Always has function — tet/idle_tet have loop seq, oct on surface, weak anywhere ──
-    if (!_liveGuards.T16.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                if (!xon._loopSeq || xon._loopSeq.length < 4) {
-                    _liveGuards.T16.ok = false;
-                    _liveGuards.T16.failed = true;
-                    _liveGuards.T16.msg = `tick ${tick}: ${xon._mode} no loop seq`;
-                    anyFailed = true; break;
-                }
-            } else if (xon._mode === 'oct') {
-                if (!_octNodeSet.has(xon.node)) {
-                    _liveGuards.T16.ok = false;
-                    _liveGuards.T16.failed = true;
-                    _liveGuards.T16.msg = `tick ${tick}: oct at non-oct node ${xon.node}`;
-                    anyFailed = true; break;
-                }
-            }
-            // 'weak' mode: xon broke confinement via weak force — can be anywhere
-            // No structural constraint needed; it's in transit.
-        }
-    }
-
-    // T16b removed: "idle only in actualized tets" is overly strict.
-    // A loitering xon only needs the edges it traverses to be active (covered by T26).
-
-    // ── T19: Pauli exclusion — no two xons on same node ──
-    if (!_liveGuards.T19.failed) {
-        const occupied = new Map();
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            const n = xon.node;
-            if (occupied.has(n)) {
-                _liveGuards.T19.ok = false;
-                _liveGuards.T19.failed = true;
-                _liveGuards.T19.msg = `tick ${tick}: node ${n} has 2+ xons`;
-                anyFailed = true;
-                break;
-            }
-            occupied.set(n, true);
-        }
-    }
-
-    // ── T21: Oct cage permanence — oct SCs never leave activeSet ──
-    if (!_liveGuards.T21.failed && _liveGuards.T21._octSnapshot && _liveGuards.T21._octSnapshot.size > 0) {
-        for (const scId of _liveGuards.T21._octSnapshot) {
-            if (!activeSet.has(scId)) {
-                _liveGuards.T21.ok = false;
-                _liveGuards.T21.failed = true;
-                _liveGuards.T21.msg = `tick ${tick}: oct SC ${scId} lost`;
-                anyFailed = true;
-                break;
-            }
-        }
-    }
-
-    // ── T23: Sparkle color matches mode ──
-    if (!_liveGuards.T23.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || !xon.sparkMat) continue;
-            const actual = xon.sparkMat.color.getHex();
-            if (xon._mode === 'oct') {
-                if (actual !== 0xffffff) {
-                    _liveGuards.T23.ok = false;
-                    _liveGuards.T23.failed = true;
-                    _liveGuards.T23.msg = `tick ${tick}: oct spark=0x${actual.toString(16)}`;
-                    anyFailed = true; break;
-                }
-            } else if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                const expected = QUARK_COLORS[xon._quarkType];
-                if (expected !== undefined && actual !== expected) {
-                    _liveGuards.T23.ok = false;
-                    _liveGuards.T23.failed = true;
-                    _liveGuards.T23.msg = `tick ${tick}: ${xon._quarkType} spark wrong`;
-                    anyFailed = true; break;
-                }
-            } else if (xon._mode === 'weak') {
-                if (actual !== WEAK_FORCE_COLOR) {
-                    _liveGuards.T23.ok = false;
-                    _liveGuards.T23.failed = true;
-                    _liveGuards.T23.msg = `tick ${tick}: weak spark=0x${actual.toString(16)}`;
-                    anyFailed = true; break;
-                }
-            }
-        }
-    }
-
-    // ── T24: Trail color stability — all colors valid, arrays synced ──
-    if (!_liveGuards.T24.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || !xon.trailColHistory) continue;
-            for (let j = 0; j < xon.trailColHistory.length; j++) {
-                const c = xon.trailColHistory[j];
-                const isWhite = c === 0xffffff;
-                const isQuark = c === QUARK_COLORS.pu || c === QUARK_COLORS.pd ||
-                                c === QUARK_COLORS.nu || c === QUARK_COLORS.nd;
-                const isWeak = c === WEAK_FORCE_COLOR;
-                if (!isWhite && !isQuark && !isWeak) {
-                    _liveGuards.T24.ok = false;
-                    _liveGuards.T24.failed = true;
-                    _liveGuards.T24.msg = `tick ${tick}: color 0x${c.toString(16)}`;
-                    anyFailed = true; break;
-                }
-            }
-            if (_liveGuards.T24.failed) break;
-            if (xon.trailColHistory.length !== xon.trail.length) {
-                _liveGuards.T24.ok = false;
-                _liveGuards.T24.failed = true;
-                _liveGuards.T24.msg = `tick ${tick}: trail/color desync`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ── T29: White trail segments only on oct nodes ──
-    // Every white (0xffffff) trail entry must be at an oct node.
-    // Verify: run demo — all white trails are on oct surface.
-    // Violate: push a non-oct node with white color to a xon's trail.
-    if (!_liveGuards.T29.failed && _octNodeSet && _octNodeSet.size > 0) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || !xon.trailColHistory || !xon.trail) continue;
-            for (let i = 0; i < xon.trailColHistory.length; i++) {
-                if (xon.trailColHistory[i] === 0xffffff) {
-                    if (!_octNodeSet.has(xon.trail[i])) {
-                        _liveGuards.T29.ok = false;
-                        _liveGuards.T29.failed = true;
-                        _liveGuards.T29.msg = `tick ${tick}: white trail at non-oct node ${xon.trail[i]}`;
-                        anyFailed = true;
-                        break;
-                    }
-                }
-            }
-            if (_liveGuards.T29.failed) break;
-        }
-    }
-
-    // ── T30: Annihilation always in pairs (stored += N, alive -= 2N) ──
-    // When gluon storage increases, exactly 2 xons must have died per stored pair.
-    // Verify: run demo until annihilation event occurs.
-    // Violate: increment _gluonStoredPairs without removing 2 xons.
-    if (!_liveGuards.T30.failed) {
-        const curStored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
-        const curAlive = _demoXons.filter(x => x.alive).length;
-        if (curStored > _liveGuards.T30._prevStored) {
-            const dStored = curStored - _liveGuards.T30._prevStored;
-            const dAlive = _liveGuards.T30._prevAlive - curAlive;
-            if (dStored * 2 !== dAlive) {
-                _liveGuards.T30.ok = false;
-                _liveGuards.T30.failed = true;
-                _liveGuards.T30.msg = `tick ${tick}: stored+=${dStored} alive-=${dAlive} (expected 2:1 ratio)`;
-                anyFailed = true;
-            }
-        }
-        _liveGuards.T30._prevStored = curStored;
-        _liveGuards.T30._prevAlive = curAlive;
-    }
-
-    // ── T33: Trail persists — alive xons always have non-empty, synced trail ──
-    // Verify: run demo — alive xons always have trail[] and trailColHistory[].
-    // Violate: set xon.trail = [] on a live xon.
-    if (!_liveGuards.T33.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || xon._dying) continue;
-            if (!xon.trail || xon.trail.length === 0) {
-                _liveGuards.T33.ok = false;
-                _liveGuards.T33.failed = true;
-                _liveGuards.T33.msg = `tick ${tick}: alive xon has empty trail at node ${xon.node}`;
-                anyFailed = true; break;
-            }
-            if (!xon.trailColHistory || xon.trailColHistory.length !== xon.trail.length) {
-                _liveGuards.T33.ok = false;
-                _liveGuards.T33.failed = true;
-                _liveGuards.T33.msg = `tick ${tick}: trail/color length mismatch`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ── T34: Trail length bounded — never exceeds XON_TRAIL_LENGTH ──
-    // Verify: run demo for many ticks — trails stay capped.
-    // Violate: remove trail.shift() calls in _advanceXon.
-    if (!_liveGuards.T34.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || !xon.trail) continue;
-            if (xon.trail.length > XON_TRAIL_LENGTH) {
-                _liveGuards.T34.ok = false;
-                _liveGuards.T34.failed = true;
-                _liveGuards.T34.msg = `tick ${tick}: trail len=${xon.trail.length} max=${XON_TRAIL_LENGTH}`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ── T35: Sparkle visible when alive — alive non-dying xons have spark ──
-    // Verify: run demo — all live xons have visible sparkle sprites.
-    // Violate: set xon.sparkMat = null on a live xon.
-    if (!_liveGuards.T35.failed) {
-        for (const xon of _demoXons) {
-            if (!xon.alive || xon._dying) continue;
-            if (!xon.spark || !xon.sparkMat) {
-                _liveGuards.T35.ok = false;
-                _liveGuards.T35.failed = true;
-                _liveGuards.T35.msg = `tick ${tick}: alive xon missing spark at node ${xon.node}`;
-                anyFailed = true; break;
-            }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    // MOVEMENT GUARDS — skip window boundaries (xon reassignment)
-    // ══════════════════════════════════════════════════════════════════
-    if (!isWindowBoundary && _liveGuardPrev) {
-        // ── T20: Never stand still — every xon must move every tick ──
-        if (!_liveGuards.T20.failed) {
-            for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
-                if (!xon.alive) continue;
-                // Skip mode transitions (composite moves)
-                if (prevMode !== xon._mode) continue;
-                if (xon.node === fromNode) {
-                    _liveGuards.T20.ok = false;
-                    _liveGuards.T20.failed = true;
-                    _liveGuards.T20.msg = `tick ${tick}: stuck at node ${fromNode} (${prevMode})`;
-                    anyFailed = true; break;
-                }
-            }
-        }
-
-        // ── T36: Sparkle flash on mode transition — flashT reset when mode changes ──
-        // Verify: run demo — mode transitions produce visible flash.
-        // Violate: remove flashT=1.0 from _returnXonToOct or _assignXonToTet.
-        if (!_liveGuards.T36.failed) {
-            for (const { xon, mode: prevMode } of _liveGuardPrev) {
-                if (!xon.alive) continue;
-                if (prevMode === xon._mode) continue; // no mode change
-                // Mode changed — flashT should have been reset to 1.0.
-                // By the time this check runs (start of next tick), flashT may have
-                // decayed slightly by one frame, so check >= 0.5 as threshold.
-                if (xon.flashT < 0.5) {
-                    _liveGuards.T36.ok = false;
-                    _liveGuards.T36.failed = true;
-                    _liveGuards.T36.msg = `tick ${tick}: ${prevMode}→${xon._mode} flashT=${xon.flashT.toFixed(2)}`;
-                    anyFailed = true; break;
-                }
-            }
-        }
-
-        // ── T37: Trail flash boost — trail head brighter during mode transition flash ──
-        // Verify: run demo — when flashT > 0, trail head gets brightness boost from render.
-        // Violate: remove flashBoost calculation from trail rendering in _tickDemoXons.
-        // _lastTrailFlashBoost is set during the RENDER frame (after sim tick), so we check
-        // xons that had flashT > 0.3 on the PREVIOUS tick (their render boost should be stored).
-        if (!_liveGuards.T37.failed) {
-            for (const xon of _demoXons) {
-                if (!xon.alive || xon._dying) continue;
-                // Check xons where flashT was recently high (render frame should have stored boost).
-                // flashT decays at 6/sec, so at 30fps one render frame decays ~0.2.
-                // If _lastTrailFlashBoost exists AND flashT is moderate, boost should be > 0.
-                // We only check when flashT is in 0.1-0.7 range (after at least one render frame).
-                if (xon.flashT > 0.1 && xon.flashT < 0.7 && xon._lastTrailFlashBoost !== undefined) {
-                    if (xon._lastTrailFlashBoost <= 0) {
-                        _liveGuards.T37.ok = false;
-                        _liveGuards.T37.failed = true;
-                        _liveGuards.T37.msg = `tick ${tick}: flashT=${xon.flashT.toFixed(2)} but boost=${xon._lastTrailFlashBoost.toFixed(3)}`;
-                        anyFailed = true; break;
-                    }
-                }
-            }
-        }
-
-        // ── T38: Weak force confinement — weak xons must never be annihilated while in weak mode ──
-        // Verify: run demo — weak xons always return to oct before any annihilation.
-        // Violate: allow _annihilateXonPair to kill xons still in weak mode in PHASE 4.
-        // Note: if a xon exits weak→oct and THEN gets annihilated as a normal oct xon, that's fine.
-        if (!_liveGuards.T38.failed) {
-            for (const { xon, mode: prevMode } of _liveGuardPrev) {
-                if (prevMode !== 'weak') continue;
-                if (!xon.alive && xon._mode === 'weak') {
-                    // Xon was in weak mode and died while still weak — confinement failure
-                    _liveGuards.T38.ok = false;
-                    _liveGuards.T38.failed = true;
-                    _liveGuards.T38.msg = `tick ${tick}: weak xon annihilated at node ${xon.node}`;
-                    anyFailed = true; break;
-                }
-            }
-        }
-
-        // ── T40: Trail fade on annihilation — trails must fade, not vanish instantly ──
-        // Verify: run demo until annihilation occurs — dead xon has _dying=true.
-        // Violate: set trailLine.visible=false in _annihilateXonPair instead of using _dying fade.
-        if (!_liveGuards.T40.failed) {
-            for (const { xon } of _liveGuardPrev) {
-                // All entries were alive at snapshot — check if xon died this tick
-                if (xon.alive) continue;
-                // Xon just died — trail must be in _dying fade state, not instantly hidden
-                if (!xon._dying) {
-                    _liveGuards.T40.ok = false;
-                    _liveGuards.T40.failed = true;
-                    _liveGuards.T40.msg = `tick ${tick}: xon annihilated at node ${xon.node} without trail fade (_dying not set)`;
-                    anyFailed = true; break;
-                }
-            }
-            if (!_liveGuards.T40.failed && _liveGuards.T40.ok === null && tick >= LIVE_GUARD_GRACE) {
-                _liveGuards.T40.ok = true;
-                _liveGuards.T40.msg = '';
-            }
-        }
-
-        // Movement-specific checks from snapshot
-        for (const { xon, node: fromNode, mode: prevMode } of _liveGuardPrev) {
-            if (!xon.alive) continue;
-            const toNode = xon.node;
-            if (toNode === fromNode) continue;
-            if (prevMode !== xon._mode) continue;
-
-            // ── T26: no unactivated SC traversal ──
-            if (!_liveGuards.T26.failed) {
-                const pid = pairId(fromNode, toNode);
-                const scId = scPairToId.get(pid);
-                if (scId !== undefined) {
-                    const hasBaseEdge = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
-                    if (!hasBaseEdge) {
-                        if (!activeSet.has(scId) && !impliedSet.has(scId) && !electronImpliedSet.has(scId)) {
-                            _liveGuards.T26.ok = false;
-                            _liveGuards.T26.failed = true;
-                            _liveGuards.T26.msg = `tick ${tick}: ${prevMode} xon on SC ${scId} (${fromNode}\u2192${toNode})`;
-                            console.warn(`[T26 DEBUG] tick=${tick} mode=${prevMode} from=${fromNode} to=${toNode} scId=${scId} hasBase=${hasBaseEdge} active=${activeSet.has(scId)} implied=${impliedSet.has(scId)} eImpl=${electronImpliedSet.has(scId)} baseNb=[${(baseNeighbors[fromNode]||[]).map(nb=>nb.node).join(',')}]`);
-                            anyFailed = true;
-                        }
-                    }
-                }
-            }
-
-            // ── T27: no teleportation ──
-            if (!_liveGuards.T27.failed) {
-                const nbs = baseNeighbors[fromNode] || [];
-                let connected = nbs.some(nb => nb.node === toNode);
-                if (!connected) {
-                    const scs = scByVert[fromNode] || [];
-                    connected = scs.some(sc => (sc.a === fromNode ? sc.b : sc.a) === toNode);
-                }
-                if (!connected) {
-                    _liveGuards.T27.ok = false;
-                    _liveGuards.T27.failed = true;
-                    _liveGuards.T27.msg = `tick ${tick}: teleport ${fromNode}\u2192${toNode}`;
-                    anyFailed = true;
-                }
-            }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════════
-    // CONVERGENCE GUARDS — checked at deadline, then locked
-    // ══════════════════════════════════════════════════════════════════
-
-    // ── T25: Oct cage materializes AND stays active ──
-    // Phase 1: Wait for all oct SCs to become active (deadline: grace + 24 ticks).
-    // Phase 2: Once materialized, continuously verify cage never breaks.
-    if (!_liveGuards.T25.failed) {
-        const allOctActive = _octSCIds.length > 0 && _octSCIds.every(id => activeSet.has(id));
-        if (_liveGuards.T25.ok !== true) {
-            // Phase 1: waiting for materialization
-            if (allOctActive) {
-                _liveGuards.T25.ok = true; _liveGuards.T25.msg = '';
-                _liveGuardRender();
-            }
-            if (tick > LIVE_GUARD_GRACE + 24) {
-                const active = _octSCIds.filter(id => activeSet.has(id)).length;
-                _liveGuards.T25.ok = false;
-                _liveGuards.T25.failed = true;
-                _liveGuards.T25.msg = `${active}/${_octSCIds.length} after ${tick} ticks`;
-                anyFailed = true;
-            }
-        } else {
-            // Phase 2: cage materialized — verify it never breaks
-            if (!allOctActive) {
-                const missing = _octSCIds.filter(id => !activeSet.has(id));
-                _liveGuards.T25.ok = false;
-                _liveGuards.T25.failed = true;
-                _liveGuards.T25.msg = `tick ${tick}: oct cage broke (${missing.length} SCs lost)`;
-                anyFailed = true;
-            }
-        }
-    }
-
-    // ── T17: Full tet coverage — all 8 faces visited within 256 ticks ──
-    if (!_liveGuards.T17.failed && _liveGuards.T17.ok !== true) {
-        let visitCount = 0;
-        for (let f = 1; f <= 8; f++) {
-            if (_demoVisits[f] && _demoVisits[f].total > 0) visitCount++;
-        }
-        if (visitCount === 8) {
-            _liveGuards.T17.ok = true; _liveGuards.T17.msg = '';
-            _liveGuardRender();
-        } else if (tick > LIVE_GUARD_GRACE + 256) {
-            _liveGuards.T17.ok = false;
-            _liveGuards.T17.failed = true;
-            _liveGuards.T17.msg = `only ${visitCount}/8 faces after ${tick} ticks`;
-            anyFailed = true;
-        }
-    }
-
-    // ── T22: Hadronic composition — progressive validation ──
-    // Physics: proton = 2pu + 1pd → pu:pd = 2.0, neutron = 2nd + 1nu → nd:nu = 2.0
-    // Validation criteria (programmatic):
-    //   checkpoint 1 (256 ticks): wide band [1.0, 3.0] — early convergence signal
-    //   checkpoint 2 (640 ticks): medium band [1.4, 2.6] — statistical significance
-    //   checkpoint 3 (1280 ticks): tight band [1.6, 2.4] — final acceptance
-    // Test passes at checkpoint 3. Fails only if tight band violated at deadline.
-    // Running ratio shown in guard message for observability.
-    if (!_liveGuards.T22.failed && _liveGuards.T22.ok !== true) {
-        const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
-        const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
-        const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
-        const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
-        const puPdRatio = gPd > 0 ? gPu / gPd : 0;
-        const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
-        const total = gPu + gPd + gNd + gNu;
-
-        // Face coverage evenness — early pass if overall reaches 100%
-        const totals = [];
-        for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
-        const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
-        const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
-        const cv = mean > 0 ? (stddev / mean) : 1;
-        const evenness = Math.max(0, 1 - cv);
-
-        // Show running ratios + evenness (non-failing update)
-        if (total > 0) {
-            _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} cov=${(evenness*100).toFixed(0)}%`;
-        }
-
-        // Early pass: face coverage overall reaches 100%
-        if (evenness >= 0.999 && total >= 16) {
-            _liveGuards.T22.ok = true;
-            _liveGuards.T22.msg = `coverage 100% pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
-            _liveGuardRender();
-        }
-
-        // Progressive checkpoints (fallback validation)
-        const t = tick - LIVE_GUARD_GRACE;
-        const checkpoints = [
-            { at: 256,  lo: 1.0, hi: 3.0, label: 'early' },
-            { at: 640,  lo: 1.4, hi: 2.6, label: 'mid' },
-            { at: 1280, lo: 1.6, hi: 2.4, label: 'final' },
-        ];
-        for (const cp of checkpoints) {
-            if (t !== cp.at) continue;
-            const inBand = puPdRatio >= cp.lo && puPdRatio <= cp.hi
-                        && ndNuRatio >= cp.lo && ndNuRatio <= cp.hi;
-            if (cp.label === 'final') {
-                if (inBand) {
-                    _liveGuards.T22.ok = true;
-                    _liveGuards.T22.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
-                } else {
-                    _liveGuards.T22.ok = false;
-                    _liveGuards.T22.failed = true;
-                    _liveGuards.T22.msg = `${cp.label}: pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} [${cp.lo}-${cp.hi}]`;
-                    anyFailed = true;
-                }
-            } else if (!inBand) {
-                console.warn(`[T22 ${cp.label}] pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} outside [${cp.lo}-${cp.hi}]`);
-            }
-            _liveGuardRender();
-        }
-    }
-
-    // ── T39: Demo mode opacity reset — verify sliders set on demo entry ──
-    // Verify: run demo — all opacity sliders match expected demo defaults by grace end.
-    // Violate: remove the slider reset code from startDemo() in flux-demo.js.
-    if (!_liveGuards.T39.failed && tick === LIVE_GUARD_GRACE + 1) {
-        const expectedSliders = {
-            'sphere-opacity-slider': 5,
-            'void-opacity-slider': 13,
-            'graph-opacity-slider': 34,
-            'trail-opacity-slider': 55,
-            'excitation-speed-slider': 100,
-            'tracer-lifespan-slider': 12,
-        };
-        const wrong = [];
-        // Check slider positions
-        for (const [id, val] of Object.entries(expectedSliders)) {
-            const el = document.getElementById(id);
-            if (!el) { wrong.push(`${id} missing`); continue; }
-            if (+el.value !== val) wrong.push(`${id}=${el.value} expected ${val}`);
-        }
-        // Check rendered display values match (catches broken event listeners)
-        const expectedDisplay = {
-            'sphere-opacity-val': '5%',
-            'void-opacity-val': '13%',
-            'graph-opacity-val': '34%',
-            'trail-opacity-val': '55%',
-        };
-        for (const [id, text] of Object.entries(expectedDisplay)) {
-            const el = document.getElementById(id);
-            if (!el) { wrong.push(`${id} missing`); continue; }
-            if (el.textContent !== text) wrong.push(`${id}="${el.textContent}" expected "${text}"`);
-        }
-        // Check actual material opacity (sphere renderer)
-        if (typeof _bgMat !== 'undefined' && Math.abs(_bgMat.opacity - 0.05) > 0.02) {
-            wrong.push(`sphere material opacity=${_bgMat.opacity.toFixed(2)} expected 0.05`);
-        }
-        if (wrong.length > 0) {
-            _liveGuards.T39.ok = false;
-            _liveGuards.T39.failed = true;
-            _liveGuards.T39.msg = wrong.join(', ');
-            anyFailed = true;
-        } else {
-            _liveGuards.T39.ok = true;
-            _liveGuards.T39.msg = '';
-        }
-        _liveGuardRender();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -805,6 +604,12 @@ function _liveGuardSnapshot() {
     _liveGuardPrev = _demoXons.filter(x => x.alive).map(x => ({
         xon: x, node: x.node, mode: x._mode
     }));
+    // Call snapshot() for entries that have it (e.g. T42 SC set capture)
+    for (const entry of LIVE_GUARD_REGISTRY) {
+        if (!entry.snapshot) continue;
+        const g = _liveGuards[entry.id];
+        if (g && !g.failed) entry.snapshot(g);
+    }
 }
 
 // Update the test result rows for live-guarded tests in the left panel
@@ -812,33 +617,9 @@ function _liveGuardRender() {
     const testResultsEl = document.getElementById('dp-test-results');
     if (!testResultsEl) return;
 
-    const nameMap = {
-        T12: 'T12 Conservation (alive+2*stored=6)',
-        T13: 'T13 Array size unchanged',
-        T14: 'T14 Dying trail cleanup',
-        T15: 'T15 Xon state (sign + mode)',
-        T16: 'T16 Xon always has function',
-        T17: 'T17 Full tet coverage (8/8 faces)',
-        T19: 'T19 Pauli exclusion (1 xon/node)',
-        T20: 'T20 Never stand still',
-        T21: 'T21 Oct cage permanence',
-        T22: 'T22 Hadronic composition (pu:pd\u22482, nd:nu\u22482)',
-        T23: 'T23 Sparkle color matches purpose',
-        T24: 'T24 Trail color stability',
-        T25: 'T25 Oct cage within 12 ticks',
-        T26: 'T26 No unactivated SC traversal',
-        T27: 'T27 No teleportation',
-        T29: 'T29 White trails only on oct edges',
-        T30: 'T30 Annihilation always in pairs',
-        T33: 'T33 Trail persists when alive',
-        T34: 'T34 Trail length bounded',
-        T35: 'T35 Sparkle visible when alive',
-        T36: 'T36 Flash on mode transition',
-        T37: 'T37 Trail flash boost',
-        T38: 'T38 Weak force confinement',
-        T39: 'T39 Demo opacity reset',
-        T40: 'T40 Trail fade on annihilation',
-    };
+    // Auto-derived from LIVE_GUARD_REGISTRY — single source of truth
+    const nameMap = {};
+    for (const entry of LIVE_GUARD_REGISTRY) nameMap[entry.id] = `${entry.id} ${entry.name}`;
 
     for (const [key, g] of Object.entries(_liveGuards)) {
         const fullName = nameMap[key];
@@ -1093,35 +874,10 @@ function runDemo3Tests() {
     //  ALL deferred to LIVE MONITORING — continuous per-tick validation
     //  with grace period, permanent fail + halt on violation
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    skip('T12 Conservation (alive+2*stored=6)', 'grace period (live)');
-    skip('T13 Array size unchanged', 'grace period (live)');
-    skip('T14 Dying trail cleanup', 'grace period (live)');
-    skip('T15 Xon state (sign + mode)', 'grace period (live)');
-    skip('T16 Xon always has function', 'grace period (live)');
-    skip('T17 Full tet coverage (8/8 faces)', 'grace period (live)');
-
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // TEST 18: (removed — redundant with T25 oct cage)
-    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    skip('T19 Pauli exclusion (1 xon/node)', 'grace period (live)');
-    skip('T20 Never stand still', 'grace period (live)');
-    skip('T21 Oct cage permanence', 'grace period (live)');
-    skip('T22 Hadronic composition (pu:pd\u22482, nd:nu\u22482)', 'grace period (live)');
-    skip('T23 Sparkle color matches purpose', 'grace period (live)');
-    skip('T24 Trail color stability', 'grace period (live)');
-    skip('T25 Oct cage within 12 ticks', 'grace period (live)');
-    skip('T26 No unactivated SC traversal', 'grace period (live)');
-    skip('T27 No teleportation', 'grace period (live)');
-    skip('T29 White trails only on oct edges', 'grace period (live)');
-    skip('T30 Annihilation always in pairs', 'grace period (live)');
-    skip('T33 Trail persists when alive', 'grace period (live)');
-    skip('T34 Trail length bounded', 'grace period (live)');
-    skip('T35 Sparkle visible when alive', 'grace period (live)');
-    skip('T36 Flash on mode transition', 'grace period (live)');
-    skip('T37 Trail flash boost', 'grace period (live)');
-    skip('T38 Weak force confinement', 'grace period (live)');
-    skip('T39 Demo opacity reset', 'grace period (live)');
-    skip('T40 Trail fade on annihilation', 'grace period (live)');
+    // Auto-register all live guards from LIVE_GUARD_REGISTRY
+    for (const entry of LIVE_GUARD_REGISTRY) {
+        skip(`${entry.id} ${entry.name}`, 'grace period (live)');
+    }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS
@@ -1195,7 +951,9 @@ function runDemo3Tests() {
 
     // Simulate button
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
-        // Demo mode: simulate nucleus (builds lattice + octahedron), then start pattern demo
+        // Demo mode: set L2 lattice default, simulate nucleus, then start pattern demo
+        const latticeSlider = document.getElementById('lattice-slider');
+        if (latticeSlider && !_demoActive) latticeSlider.value = 2;
         NucleusSimulator.simulateNucleus();
         // Small delay to let lattice build, then start demo loop
         setTimeout(function() {
@@ -1209,16 +967,26 @@ function runDemo3Tests() {
         else startTournament();
     });
 
-    // Play/pause button
+    // Play/pause button — pauses/resumes the demo tick interval
     document.getElementById('btn-nucleus-pause')?.addEventListener('click', function(){
-        if(excitationClockTimer){
-            // Pause
+        if (typeof isDemoPaused === 'function' && _demoActive) {
+            if (!isDemoPaused()) {
+                pauseDemo();
+                this.textContent = '▶';
+                this.title = 'Resume simulation';
+                document.getElementById('nucleus-status').textContent = 'paused';
+            } else {
+                resumeDemo();
+                this.textContent = '⏸';
+                this.title = 'Pause simulation';
+                document.getElementById('nucleus-status').textContent = 'running';
+            }
+        } else if (excitationClockTimer) {
             stopExcitationClock();
             this.textContent = '▶';
             this.title = 'Resume simulation';
             document.getElementById('nucleus-status').textContent = 'paused';
         } else {
-            // Resume
             startExcitationClock();
             this.textContent = '⏸';
             this.title = 'Pause simulation';

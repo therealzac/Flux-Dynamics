@@ -208,7 +208,6 @@ const NucleusSimulator = (function(){
         if(sa) sa.style.display = 'none';
         document.getElementById('nucleus-info').style.display = 'block';
         document.getElementById('nucleus-metrics').style.display = 'block';
-        document.getElementById('btn-stop-nucleus').style.display = '';
         document.getElementById('btn-nucleus-pause').style.display = '';
         // Show the new deuteron panel (left side)
         const dp = document.getElementById('deuteron-panel');
@@ -241,7 +240,6 @@ const NucleusSimulator = (function(){
         if(sa) sa.style.display = '';
         document.getElementById('nucleus-info').style.display = 'none';
         document.getElementById('nucleus-metrics').style.display = 'none';
-        document.getElementById('btn-stop-nucleus').style.display = 'none';
         document.getElementById('btn-nucleus-pause').style.display = 'none';
         document.getElementById('nucleus-status').textContent = 'ready';
         const ts = document.getElementById('tournament-status');
@@ -291,8 +289,8 @@ const NucleusSimulator = (function(){
         const statusEl = document.getElementById('nucleus-status');
         if(statusEl) statusEl.textContent = 'initializing...';
 
-        // 1. Set L3 lattice — nucleus needs L3 for full tet geometry + surrounding space
-        document.getElementById('lattice-slider').value = 3;
+        // 1. Use current lattice slider value (set by _setDemoLattice or default)
+        // Do NOT hardcode — lattice toggle buttons set the slider before calling this
         if(typeof updateLatticeLevel === 'function') updateLatticeLevel();
 
         // 2. Clear state

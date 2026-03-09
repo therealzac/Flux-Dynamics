@@ -194,6 +194,12 @@ let _demoXons = [];               // active xon objects (dynamic count)
 let _demoGluons = [];             // active gluon objects (lightweight)
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
+// T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
+// Used to prevent adjacent xon swaps (A→B while B→A in the same tick).
+const _moveRecord = new Map();
+// T42: accumulate all SCs ever in impliedSet during the tick.
+// Geometric side-effects (SCs induced by traversing other SCs) are exempt.
+const _t42ImpliedAccum = new Set();
 
 // Loop topology → concrete node sequence, given tet cycle [a, b, c, d]
 // a=octNode0, b=extNode, c=octNode1, d=octNode2
@@ -1167,10 +1173,47 @@ function _advanceOctXon(xon, occupied) {
     return false;
 }
 
+// ── Traversal Lock ──────────────────────────────────────────────
+// Returns a Set of SC IDs that xons are currently sitting on (prevNode→node).
+// These SCs MUST NOT be removed from any set until the next tick.
+// Call this before any SC deletion to check if the SC is locked.
+function _traversalLockedSCs() {
+    const locked = new Set();
+    for (const xon of _demoXons) {
+        if (!xon.alive || xon.prevNode == null) continue;
+        const pid = pairId(xon.prevNode, xon.node);
+        const scId = scPairToId.get(pid);
+        if (scId !== undefined) locked.add(scId);
+        // Also lock ALL face SCs for tet/idle_tet xons — they need them for upcoming steps
+        if ((xon._mode === 'tet' || xon._mode === 'idle_tet') && xon._assignedFace != null) {
+            const fd = _nucleusTetFaceData[xon._assignedFace];
+            if (fd && fd.scIds) {
+                for (const id of fd.scIds) locked.add(id);
+            }
+        }
+    }
+    return locked;
+}
+
+// Promote impliedSet-only face SCs into electronImpliedSet so they persist.
+// impliedSet is ephemeral (rebuilt each solver tick). When a xon is assigned
+// to a face, the SCs it will traverse must be in a persistent set.
+function _promoteFaceSCs(face) {
+    const fd = _nucleusTetFaceData[face];
+    if (!fd) return;
+    for (const scId of fd.scIds) {
+        if (impliedSet.has(scId) && !electronImpliedSet.has(scId) && !activeSet.has(scId)) {
+            electronImpliedSet.add(scId);
+            stateVersion++;
+        }
+    }
+}
+
 // Transition xon from oct mode to tet mode (assigned to actualize a face)
 function _assignXonToTet(xon, face, quarkType) {
     const fd = _nucleusTetFaceData[face];
     if (!fd) return;
+    _promoteFaceSCs(face);
 
     let seq = LOOP_SEQUENCES[quarkType](fd.cycle);
     const col = QUARK_COLORS[quarkType];
@@ -1223,8 +1266,12 @@ function _assignXonToTet(xon, face, quarkType) {
     if (xon.sparkMat) xon.sparkMat.color.setHex(col);
 
     // Start from xon's current position (should already be at seq[0] after walk)
-    xon.prevNode = xon.node;
-    xon.node = seq[0];
+    if (xon.node !== seq[0]) {
+        const fromAssign = xon.node;
+        xon.prevNode = xon.node;
+        xon.node = seq[0];
+        _moveRecord.set(seq[0], fromAssign); // T41: record assignment hop
+    }
 }
 
 // Walk xon to nearest node in targetNodes via connected edges (BFS).
@@ -1287,8 +1334,10 @@ function _walkToFace(xon, targetNodes) {
     path.reverse(); // path[0] is first step from xon.node, path[last] is target
 
     for (const step of path) {
+        const fromWF = xon.node;
         xon.prevNode = xon.node;
         xon.node = step;
+        _moveRecord.set(step, fromWF); // T41: record each walk hop
         xon.trail.push(step);
         xon.trailColHistory.push(0xffffff); // white while walking to face
         if (xon.trail.length > XON_TRAIL_LENGTH) {
@@ -1300,8 +1349,25 @@ function _walkToFace(xon, targetNodes) {
     return found;
 }
 
+// T42: Clean up face SCs from electronImpliedSet when a xon abandons its tet face.
+// Respects traversal lock — won't remove SCs being traversed by other xons.
+function _relinquishFaceSCs(xon) {
+    if (xon._assignedFace == null) return;
+    const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
+    if (!fd) return;
+    const locked = _traversalLockedSCs();
+    for (const scId of fd.scIds) {
+        if (locked.has(scId)) continue;
+        if (electronImpliedSet.has(scId) && !activeSet.has(scId)) {
+            electronImpliedSet.delete(scId);
+            stateVersion++;
+        }
+    }
+}
+
 // Transition xon from tet mode back to oct mode after loop completion
 function _returnXonToOct(xon) {
+    _relinquishFaceSCs(xon); // T42: clean up face SCs before clearing assignment
     xon._mode = 'oct';
     xon._assignedFace = null;
     xon._quarkType = null;
@@ -1320,14 +1386,16 @@ function _returnXonToOct(xon) {
     if (_octNodeSet && !_octNodeSet.has(xon.node)) {
         const nbs = baseNeighbors[xon.node] || [];
         for (const nb of nbs) {
-            if (_octNodeSet.has(nb.node)) {
-                xon.prevNode = xon.node;
-                xon.node = nb.node;
-                xon.trail.push(nb.node);
-                xon.trailColHistory.push(xon.col);
-                if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
-                break;
-            }
+            if (!_octNodeSet.has(nb.node)) continue;
+            // T41: skip if another xon just moved from nb.node to xon.node (would create swap)
+            if (_moveRecord.get(xon.node) === nb.node) continue;
+            xon.prevNode = xon.node;
+            xon.node = nb.node;
+            _moveRecord.set(nb.node, xon.prevNode); // record this move
+            xon.trail.push(nb.node);
+            xon.trailColHistory.push(xon.col);
+            if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+            break;
         }
     }
 }
@@ -1378,6 +1446,7 @@ function _startIdleTetLoop(xon, occupied) {
                 const seq = LOOP_SEQUENCES[qType](rotated);
                 const dest = seq[1];
                 if (occupied && occupied.has(dest)) continue;
+                _promoteFaceSCs(face);
                 xon._mode = 'idle_tet';
                 xon._loopSeq = seq;
                 xon._loopStep = 0;
@@ -1399,6 +1468,7 @@ function _startIdleTetLoop(xon, occupied) {
             }
         }
         if (bestSeq) {
+            _promoteFaceSCs(bestFace);
             xon._mode = 'idle_tet';
             xon._loopSeq = bestSeq;
             xon._loopStep = 0;
@@ -1458,7 +1528,36 @@ function _startIdleTetLoop(xon, occupied) {
         }
     }
 
-    if (newlyActualized.length > 0 && tryFaces(newlyActualized)) return true;
+    if (newlyActualized.length > 0) {
+        const _idleLocked = _traversalLockedSCs();
+        if (tryFaces(newlyActualized)) {
+            // Rollback SCs for faces we manifested but didn't use
+            const assignedFace = xon._assignedFace;
+            for (const face of newlyActualized) {
+                if (face === assignedFace) continue;
+                const fd = _nucleusTetFaceData[face];
+                for (const scId of fd.scIds) {
+                    if (_idleLocked.has(scId)) continue; // xon traversing this SC
+                    if (electronImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                        electronImpliedSet.delete(scId);
+                        stateVersion++;
+                    }
+                }
+            }
+            return true;
+        }
+        // tryFaces failed — rollback ALL newly manifested SCs
+        for (const face of newlyActualized) {
+            const fd = _nucleusTetFaceData[face];
+            for (const scId of fd.scIds) {
+                if (_idleLocked.has(scId)) continue; // xon traversing this SC
+                if (electronImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                    electronImpliedSet.delete(scId);
+                    stateVersion++;
+                }
+            }
+        }
+    }
 
     // ── Fallback: use any blocked actualized face ──
     // (caller handles Pauli if this destination is occupied)
@@ -1669,6 +1768,7 @@ function _cleanupDemo3() {
         _finalCleanupXon(xon);
     }
     _demoXons = [];
+    _gluonStoredPairs = 0;
     for (const g of _demoGluons) {
         if (g.sprite) { scene.remove(g.sprite); g.sprite.material.dispose(); }
     }
@@ -1847,10 +1947,12 @@ function startDemoLoop() {
             toggleDiv.style.cssText = 'margin-top:4px; text-align:center;';
             toggleDiv.innerHTML = `<span style="font-size:8px; color:#667788; margin-right:4px;">lattice:</span>`
                 + `<button id="demo-l2-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#1a2a3a; color:#88bbdd; border:1px solid #3a5a7a; border-radius:3px; cursor:pointer;">L2</button>`
-                + `<button id="demo-l3-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#0a1a2a; color:#556677; border:1px solid #2a3a4a; border-radius:3px; cursor:pointer;">L3</button>`;
+                + `<button id="demo-l3-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#0a1a2a; color:#556677; border:1px solid #2a3a4a; border-radius:3px; cursor:pointer;">L3</button>`
+                + `<button id="demo-l4-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#0a1a2a; color:#556677; border:1px solid #2a3a4a; border-radius:3px; cursor:pointer;">L4</button>`;
             ds.parentNode.insertBefore(toggleDiv, ds.nextSibling);
             document.getElementById('demo-l2-btn').addEventListener('click', () => _setDemoLattice(2));
             document.getElementById('demo-l3-btn').addEventListener('click', () => _setDemoLattice(3));
+            document.getElementById('demo-l4-btn').addEventListener('click', () => _setDemoLattice(4));
         }
         _updateDemoLatticeButtons();
     }
@@ -1861,11 +1963,11 @@ function startDemoLoop() {
 
     // Demo 3.0 visual setup: opacity defaults per T39 spec
     const spheresSlider = document.getElementById('sphere-opacity-slider');
-    if (spheresSlider) { spheresSlider.value = 5; spheresSlider.dispatchEvent(new Event('input')); }
+    if (spheresSlider) { spheresSlider.value = 3; spheresSlider.dispatchEvent(new Event('input')); }
     const shapesSlider = document.getElementById('void-opacity-slider');
-    if (shapesSlider) { shapesSlider.value = 13; shapesSlider.dispatchEvent(new Event('input')); }
+    if (shapesSlider) { shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
     const graphSlider = document.getElementById('graph-opacity-slider');
-    if (graphSlider) { graphSlider.value = 34; graphSlider.dispatchEvent(new Event('input')); }
+    if (graphSlider) { graphSlider.value = 8; graphSlider.dispatchEvent(new Event('input')); }
     const trailSlider = document.getElementById('trail-opacity-slider');
     if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
 
@@ -1878,7 +1980,7 @@ function startDemoLoop() {
     if (speedSlider) { speedSlider.value = 100; speedSlider.dispatchEvent(new Event('input')); }
     // Default lifespan: visible trail length (how many of 50 stored ticks to show)
     const lifespanSlider = document.getElementById('tracer-lifespan-slider');
-    if (lifespanSlider) { lifespanSlider.value = 12; lifespanSlider.dispatchEvent(new Event('input')); }
+    if (lifespanSlider) { lifespanSlider.value = 13; lifespanSlider.dispatchEvent(new Event('input')); }
     // Demo 3.1: Spawn 6 persistent xons on oct cage nodes
     _initPersistentXons();
 
@@ -1927,16 +2029,15 @@ function startDemoLoop() {
 
 // L2/L3 toggle for demo mode — switches lattice and restarts demo
 function _updateDemoLatticeButtons() {
-    const l2 = document.getElementById('demo-l2-btn');
-    const l3 = document.getElementById('demo-l3-btn');
-    if (!l2 || !l3) return;
     const lv = +document.getElementById('lattice-slider').value;
-    l2.style.background = lv === 2 ? '#1a2a3a' : '#0a1a2a';
-    l2.style.color = lv === 2 ? '#88bbdd' : '#556677';
-    l2.style.borderColor = lv === 2 ? '#3a5a7a' : '#2a3a4a';
-    l3.style.background = lv === 3 ? '#1a2a3a' : '#0a1a2a';
-    l3.style.color = lv === 3 ? '#88bbdd' : '#556677';
-    l3.style.borderColor = lv === 3 ? '#3a5a7a' : '#2a3a4a';
+    for (const [id, level] of [['demo-l2-btn', 2], ['demo-l3-btn', 3], ['demo-l4-btn', 4]]) {
+        const btn = document.getElementById(id);
+        if (!btn) continue;
+        const active = lv === level;
+        btn.style.background = active ? '#1a2a3a' : '#0a1a2a';
+        btn.style.color = active ? '#88bbdd' : '#556677';
+        btn.style.borderColor = active ? '#3a5a7a' : '#2a3a4a';
+    }
 }
 function _setDemoLattice(level) {
     const slider = document.getElementById('lattice-slider');
@@ -1961,6 +2062,8 @@ function demoTick() {
 
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
+    _moveRecord.clear(); // T41: clear tick-level move record
+    _t42ImpliedAccum.clear(); // T42: clear side-effect accumulator
 
     // Snapshot xon positions BEFORE advancement for live guard T26/T27
     if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
@@ -2097,9 +2200,12 @@ function demoTick() {
                     const targets = viable2step.length > 0 ? viable2step : combined.filter(n => !(taken.get(n) || 0));
                     let moved = false;
                     for (const n of targets) {
+                        if (_moveRecord.get(xon.node) === n) continue; // T41: no swap
+                        const fromW = xon.node;
                         xon.prevNode = xon.node;
                         xon.node = n;
                         _occAdd(taken, n);
+                        _moveRecord.set(n, fromW); // T41: record
                         moved = true;
                         break;
                     }
@@ -2108,11 +2214,13 @@ function demoTick() {
             }
         }
 
-        // 2. Relinquish SCs for faces LEAVING active set
+        // 2. Relinquish SCs for faces LEAVING active set (respects traversal lock)
+        const _wndLocked = _traversalLockedSCs();
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
             const fId = parseInt(fIdStr);
             if (!newFaceSet.has(fId)) {
                 for (const scId of fd.scIds) {
+                    if (_wndLocked.has(scId)) continue; // xon is traversing this SC
                     if (electronImpliedSet.delete(scId)) {
                         _solverNeeded = true;
                         stateVersion++; // invalidate _getBasePairs cache
@@ -2271,11 +2379,14 @@ function demoTick() {
                 queue.push([nb.node, nextStep]);
             }
         }
-        if (bestStep !== null && !(occupied.get(bestStep) || 0)) {
+        if (bestStep !== null && !(occupied.get(bestStep) || 0) &&
+            _moveRecord.get(xon.node) !== bestStep) { // T41: no swap
+            const fromWk = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
             xon.node = bestStep;
             _occAdd(occupied, bestStep);
+            _moveRecord.set(bestStep, fromWk); // T41: record
             xon.trail.push(bestStep);
             xon.trailColHistory.push(WEAK_FORCE_COLOR);
             if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
@@ -2293,12 +2404,15 @@ function demoTick() {
         } else if (bestStep !== null) {
             // Target occupied — try any free neighbor instead
             const allNbs = baseNeighbors[xon.node] || [];
-            const freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0));
+            const freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                _moveRecord.get(xon.node) !== nb.node); // T41: no swap
             if (freeNb) {
+                const fromWk2 = xon.node;
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = freeNb.node;
                 _occAdd(occupied, freeNb.node);
+                _moveRecord.set(freeNb.node, fromWk2); // T41: record
                 xon.trail.push(freeNb.node);
                 xon.trailColHistory.push(WEAK_FORCE_COLOR);
                 if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
@@ -2485,6 +2599,7 @@ function demoTick() {
                     plan.idleTet = true;
                     _occAdd(allBlocked, dest);
                 } else {
+                    _relinquishFaceSCs(plan.xon); // T42: cleanup before clearing face
                     plan.xon._mode = 'oct';
                     plan.xon.flashT = 1.0;
                     plan.xon._loopSeq = null;
@@ -2509,6 +2624,7 @@ function demoTick() {
                 plan.idleTet = true;
                 _occAdd(allBlocked, dest);
             } else {
+                _relinquishFaceSCs(plan.xon); // T42: cleanup before clearing face
                 plan.xon._mode = 'oct';
                 plan.xon.flashT = 1.0;
                 plan.xon._loopSeq = null;
@@ -2570,6 +2686,7 @@ function demoTick() {
                             octPlan.assigned = null;
                             _occAdd(allBlocked, dest);
                         } else {
+                            _relinquishFaceSCs(xon); // T42: cleanup
                             xon._mode = 'oct';
                             xon.flashT = 1.0;
                             xon._loopSeq = null;
@@ -2631,10 +2748,17 @@ function demoTick() {
         if (plan._needsOctVacate) octToTetDep.set(plan._needsOctVacate, plan);
     }
 
-    // Execute oct moves first
+    // Execute oct moves first (includes idle_tet advances)
     for (const plan of octPlans) {
         if (plan.assigned) {
             const target = plan.assigned;
+            const fromNode = plan.xon.node;
+            // T41 swap check: reject if another xon just moved FROM target.node TO fromNode
+            if (_moveRecord.get(fromNode) === target.node) {
+                const depTet = octToTetDep.get(plan.xon);
+                if (depTet) { depTet.approved = false; planned.delete(depTet.toNode); }
+                continue;
+            }
             _occDel(occupied, plan.xon.node);
             const ok = _executeOctMove(plan.xon, target);
             if (!ok) {
@@ -2647,6 +2771,7 @@ function demoTick() {
                 }
             } else {
                 anyMoved = true;
+                _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;
                     plan.xon._solverNeeded = false;
@@ -2666,9 +2791,16 @@ function demoTick() {
                 _returnXonToOct(plan.xon); // destination occupied — return to oct
                 continue;
             }
+            // T41 swap check: reject if another xon just moved FROM idleDest TO xon.node
+            if (idleDest !== undefined && _moveRecord.get(plan.xon.node) === idleDest) {
+                _returnXonToOct(plan.xon); // would swap — return to oct
+                continue;
+            }
+            const fromNode = plan.xon.node;
             _occDel(occupied, plan.xon.node);
             _advanceXon(plan.xon);
             _occAdd(occupied, plan.xon.node);
+            _moveRecord.set(plan.xon.node, fromNode); // T41: record idle_tet move
             anyMoved = true;
         }
     }
@@ -2684,11 +2816,15 @@ function demoTick() {
             const occupant = _demoXons.find(x => x.alive && x.node === plan.toNode && x !== plan.xon);
             if (occupant && occupant._mode === 'weak') continue; // don't collide with returning weak xon
         }
+        // T41 swap check: reject if any xon just moved FROM plan.toNode TO plan.xon.node
+        if (_moveRecord.get(plan.xon.node) === plan.toNode) continue;
         // Verify SC is still active (may have been severed by oct move negotiation)
         if (!_canAdvanceSafely(plan.xon)) continue;
+        const tetFrom = plan.xon.node;
         _advanceXon(plan.xon);
         _occDel(occupied, plan.xon.prevNode);
         _occAdd(occupied, plan.xon.node);
+        _moveRecord.set(plan.xon.node, tetFrom); // T41: record tet move
         anyMoved = true;
     }
 
@@ -2711,19 +2847,23 @@ function demoTick() {
             .filter(nb => {
                 if (!_octNodeSet.has(nb.node)) return false;
                 if (occupied.get(nb.node) || 0) return false;
+                if (_moveRecord.get(xon.node) === nb.node) return false; // T41: no swap
                 // 2-step awareness: MUST have a valid 2nd move from this destination
                 const tmp = new Map(occupied); _occAdd(tmp, nb.node);
                 return _lookahead(nb.node, tmp, 1);
             });
         for (const nb of freeOctNbs) {
+            const fromRet = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
             xon.node = nb.node;
             _occAdd(occupied, nb.node);
+            _moveRecord.set(nb.node, fromRet); // T41: record
             xon.trail.push(nb.node);
             xon.trailColHistory.push(0xffffff);
             if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
             xon.tweenT = 0;
+            _relinquishFaceSCs(xon); // T42: cleanup before clearing face
             xon._mode = 'oct';
             xon.flashT = 1.0;
             xon._assignedFace = null;
@@ -2742,6 +2882,7 @@ function demoTick() {
         // Priority 2: already at an oct node but all oct neighbors occupied.
         // Mode change alone satisfies T20 (tet→oct).
         if (_octNodeSet.has(xon.node)) {
+            _relinquishFaceSCs(xon); // T42: cleanup before clearing face
             xon._mode = 'oct';
             xon.flashT = 1.0;
             xon._assignedFace = null;
@@ -2760,10 +2901,14 @@ function demoTick() {
         let p3ok = false;
         if (_startIdleTetLoop(xon, occupied)) {
             const dest = xon._loopSeq ? xon._loopSeq[xon._loopStep + 1] : null;
-            if (dest !== undefined && !(occupied.get(dest) || 0) && _canAdvanceSafely(xon)) {
+            if (dest !== undefined && !(occupied.get(dest) || 0) &&
+                _moveRecord.get(xon.node) !== dest && // T41: no swap
+                _canAdvanceSafely(xon)) {
+                const fromP3 = xon.node;
                 _advanceXon(xon);
                 _occDel(occupied, xon.prevNode);
                 _occAdd(occupied, xon.node);
+                _moveRecord.set(xon.node, fromP3); // T41: record
                 anyMoved = true;
                 p3ok = true;
             }
@@ -2777,18 +2922,22 @@ function demoTick() {
         // The xon enters 'weak' mode — a distinct state outside normal confinement.
         let weakEscaped = false;
         {
-            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0));
+            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                _moveRecord.get(xon.node) !== nb.node); // T41: no swap
             if (freeNbs.length > 0) {
                 // Pick a random free neighbor (weak force is stochastic)
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                const fromWe = xon.node;
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = nb.node;
                 _occAdd(occupied, nb.node);
+                _moveRecord.set(nb.node, fromWe); // T41: record
                 xon.trail.push(nb.node);
                 xon.trailColHistory.push(WEAK_FORCE_COLOR);
                 if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
                 xon.tweenT = 0;
+                _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'weak';
                 xon.flashT = 1.0;
                 xon._assignedFace = null;
@@ -2810,18 +2959,22 @@ function demoTick() {
         // This resolves the traffic jam by reducing xon count temporarily.
         // Trail uses quark color (xon is still a fermion during this move).
         for (const nb of nbs) {
+            if (_moveRecord.get(xon.node) === nb.node) continue; // T41: no swap
             const occupant = _demoXons.find(x =>
                 x.alive && x !== xon && x.node === nb.node);
             if (occupant) {
+                const fromAn = xon.node;
                 const prevCol = xon.col; // preserve quark color for trail
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = nb.node;
+                _moveRecord.set(nb.node, fromAn); // T41: record
                 xon.trail.push(nb.node);
                 xon.trailColHistory.push(prevCol); // quark color, NOT white
                 if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
                 xon.tweenT = 0;
                 // Don't _occAdd — PHASE 4 will handle the collision
+                _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'oct'; // switch to oct so PHASE 4 scatter/annihilate catches it
                 xon.flashT = 1.0;
                 xon._assignedFace = null;
@@ -2854,14 +3007,17 @@ function demoTick() {
         let moved = false;
         for (const nb of allOctNbs) {
             if (occupied.get(nb.node) || 0) continue; // Pauli
+            if (_moveRecord.get(xon.node) === nb.node) continue; // T41: no swap
             // 2-step awareness check
             const tmp = new Map(occupied);
             _occDel(tmp, xon.node); _occAdd(tmp, nb.node);
             if (!_lookahead(nb.node, tmp, 1)) continue;
             // Execute the move
+            const from3br = xon.node;
             if (_executeOctMove(xon, { node: nb.node, dirIdx: 0, _scId: undefined, _needsMaterialise: false })) {
                 _occDel(occupied, plan.fromNode);
                 _occAdd(occupied, xon.node);
+                _moveRecord.set(xon.node, from3br); // T41: record
                 anyMoved = true;
                 moved = true;
                 break;
@@ -2871,15 +3027,20 @@ function demoTick() {
         if (!moved) {
             if (_startIdleTetLoop(xon, occupied)) {
                 const dest = xon._loopSeq ? xon._loopSeq[xon._loopStep + 1] : null;
-                if (dest !== undefined && !(occupied.get(dest) || 0) && _canAdvanceSafely(xon)) {
+                if (dest !== undefined && !(occupied.get(dest) || 0) &&
+                    _moveRecord.get(xon.node) !== dest && // T41: no swap
+                    _canAdvanceSafely(xon)) {
+                    const from3b = xon.node;
                     _occDel(occupied, xon.node);
                     _advanceXon(xon);
                     _occAdd(occupied, xon.node);
+                    _moveRecord.set(xon.node, from3b); // T41: record
                     anyMoved = true;
                     moved = true;
                 } else {
                     // Advance failed — revert to oct mode so annihilation fallback can run.
                     // Must reset color to avoid T23 (oct xon with quark sparkMat).
+                    _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                     xon._mode = 'oct';
                     xon.flashT = 1.0;
                     xon._loopSeq = null;
@@ -2895,9 +3056,12 @@ function demoTick() {
             // Try any free oct neighbor (even without 2-step awareness)
             for (const nb of allOctNbs) {
                 if (occupied.get(nb.node) || 0) continue;
+                if (_moveRecord.get(xon.node) === nb.node) continue; // T41: no swap
+                const fromLR = xon.node;
                 if (_executeOctMove(xon, { node: nb.node, dirIdx: 0, _scId: undefined, _needsMaterialise: false })) {
                     _occDel(occupied, plan.fromNode);
                     _occAdd(occupied, xon.node);
+                    _moveRecord.set(xon.node, fromLR); // T41: record
                     anyMoved = true;
                     moved = true;
                     break;
@@ -2908,13 +3072,16 @@ function demoTick() {
             // Enters 'weak' mode with purple trail/sparkle.
             if (!moved) {
                 const allNbs = baseNeighbors[xon.node] || [];
-                const freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0));
+                const freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                    _moveRecord.get(xon.node) !== nb.node); // T41: no swap
                 if (freeNbs.length > 0) {
                     const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                    const from3bw = xon.node;
                     _occDel(occupied, xon.node);
                     xon.prevNode = xon.node;
                     xon.node = nb.node;
                     _occAdd(occupied, nb.node);
+                    _moveRecord.set(nb.node, from3bw); // T41: record
                     xon.trail.push(nb.node);
                     xon.trailColHistory.push(WEAK_FORCE_COLOR);
                     if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
@@ -2936,12 +3103,15 @@ function demoTick() {
             // If still stuck: move to occupied neighbor for annihilation
             if (!moved) {
                 for (const nb of allOctNbs) {
+                    if (_moveRecord.get(xon.node) === nb.node) continue; // T41: no swap
                     const occupant = _demoXons.find(x =>
                         x.alive && x !== xon && x.node === nb.node);
                     if (occupant) {
+                        const from3ba = xon.node;
                         _occDel(occupied, xon.node);
                         xon.prevNode = xon.node;
                         xon.node = nb.node;
+                        _moveRecord.set(nb.node, from3ba); // T41: record
                         xon.trail.push(nb.node);
                         xon.trailColHistory.push(xon.col);
                         if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
@@ -2976,15 +3146,19 @@ function demoTick() {
         // ONLY 2-step-aware destinations are valid
         const scored = candidates
             .filter(n => !(occupied.get(n) || 0))
+            // T41: reject destinations that would create a swap
+            .filter(n => _moveRecord.get(xon.node) !== n)
             .filter(n => {
                 const tmp = new Map(occupied); _occAdd(tmp, n);
                 return _lookahead(n, tmp, 1);
             });
         for (const n of scored) {
+            const fromNode = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
             xon.node = n;
             _occAdd(occupied, n);
+            _moveRecord.set(n, fromNode); // T41: record scatter move
             xon.trail.push(n);
             xon.trailColHistory.push(xon.col);
             if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
@@ -2994,10 +3168,14 @@ function demoTick() {
         // Fallback: try idle_tet
         if (_startIdleTetLoop(xon, occupied)) {
             const dest = xon._loopSeq[xon._loopStep + 1];
-            if (dest !== undefined && !(occupied.get(dest) || 0) && _canAdvanceSafely(xon)) {
+            if (dest !== undefined && !(occupied.get(dest) || 0) &&
+                _moveRecord.get(xon.node) !== dest && // T41: no swap
+                _canAdvanceSafely(xon)) {
+                const fromNode = xon.node;
                 _advanceXon(xon);
                 _occDel(occupied, xon.prevNode);
                 _occAdd(occupied, xon.node);
+                _moveRecord.set(xon.node, fromNode); // T41: record
                 return true;
             }
         }
@@ -3009,39 +3187,22 @@ function demoTick() {
         const atNode = _demoXons.filter(x => x.alive && x.node === cNode);
         if (atNode.length <= 1) continue;
 
-        // Try scatter first for oct-mode xons that haven't moved
-        const scatterable = atNode.filter(x => x._mode === 'oct' && !x._movedThisTick);
+        // Try scatter first for ANY xon that hasn't moved this tick
+        const scatterable = atNode.filter(x => !x._movedThisTick);
         for (const xon of scatterable) {
             if ((occupied.get(cNode) || 0) <= 1) break; // resolved
             _scatterMove(xon, occupied);
         }
 
-        // If collision persists: ANNIHILATE pairs on-node
-        // Protect weak xons from non-local annihilation — they are mid-return
+        // If collision persists: ANNIHILATE pairs on-node.
+        // Pauli exclusion is absolute — no collision survives PHASE 4.
         const stillHere = _demoXons.filter(x => x.alive && x.node === cNode);
         while (stillHere.length > 1) {
-            // Prefer annihilating non-weak pairs; skip if either is weak
-            const nonWeak = stillHere.filter(x => x._mode !== 'weak');
-            if (nonWeak.length >= 2) {
-                const a = nonWeak.pop();
-                const b = nonWeak.pop();
-                stillHere.splice(stillHere.indexOf(a), 1);
-                stillHere.splice(stillHere.indexOf(b), 1);
-                _annihilateXonPair(a, b);
-                _occDel(occupied, cNode);
-                _occDel(occupied, cNode);
-            } else {
-                // Weak xon involved — try scatter the non-weak xon instead
-                const toScatter = stillHere.find(x => x._mode !== 'weak' && !x._movedThisTick);
-                if (toScatter) {
-                    _scatterMove(toScatter, occupied);
-                    if (toScatter.node !== cNode) {
-                        stillHere.splice(stillHere.indexOf(toScatter), 1);
-                        continue;
-                    }
-                }
-                break; // can't resolve — will clear next tick
-            }
+            const a = stillHere.pop();
+            const b = stillHere.pop();
+            _annihilateXonPair(a, b);
+            _occDel(occupied, cNode);
+            _occDel(occupied, cNode);
         }
     }
 
@@ -3057,17 +3218,21 @@ function demoTick() {
             if (xon.node !== prevNode || xon._mode !== prevMode) continue;
             // Xon is stuck — apply weak force escape
             const nbs = baseNeighbors[xon.node] || [];
-            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0));
+            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                _moveRecord.get(xon.node) !== nb.node); // T41: no swap
             if (freeNbs.length > 0) {
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
+                const fromSN = xon.node;
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = nb.node;
                 _occAdd(occupied, nb.node);
+                _moveRecord.set(nb.node, fromSN); // T41: record
                 xon.trail.push(nb.node);
                 xon.trailColHistory.push(WEAK_FORCE_COLOR);
                 if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
                 xon.tweenT = 0;
+                _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'weak';
                 xon.flashT = 1.0;
                 xon._assignedFace = null;
@@ -3082,6 +3247,7 @@ function demoTick() {
             } else {
                 // All neighbors occupied — at minimum change mode to satisfy T20
                 if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+                    _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                     const newMode = _octNodeSet.has(xon.node) ? 'oct' : 'weak';
                     xon._mode = newMode;
                     xon._assignedFace = null;
@@ -3122,6 +3288,8 @@ function demoTick() {
         electronImpliedSet.forEach(id => {
             if (!activeSet.has(id)) { impliedSet.add(id); impliedBy.set(id, new Set()); }
         });
+        // T42: accumulate all SCs seen in impliedSet (side-effects of xon traversals)
+        impliedSet.forEach(id => _t42ImpliedAccum.add(id));
         applyPositions(pSolved);
         updateSpheres();
     }
@@ -3176,13 +3344,11 @@ function demoTick() {
 function updateDemoPanel() {
     const CYCLE_LEN = 64;
     const cycles = Math.floor(_demoTick / CYCLE_LEN);
-    const windows = Math.floor(_demoTick / 4);
 
     // ── Update demo-status (right panel, below button) ──
     const ds = document.getElementById('demo-status');
     if (ds) {
-        ds.innerHTML = `<span style="color:#88bbdd;">cycle ${cycles}</span> · ` +
-            `<span style="color:#667788;">window ${windows}</span>`;
+        ds.innerHTML = `<span style="color:#88bbdd;">cycle ${cycles}</span>`;
     }
 
     // ── Update left panel coverage bars (skip during test execution) ──
@@ -3321,6 +3487,19 @@ function updateDemoPanel() {
     const syncRow = document.querySelector('#deuteron-panel > div:nth-child(3)');
     if (densityRow) densityRow.style.display = 'none';
     if (syncRow) syncRow.style.display = 'none';
+}
+
+function pauseDemo() {
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+}
+function resumeDemo() {
+    if (_demoActive && !_demoInterval) {
+        const intervalMs = _getDemoIntervalMs();
+        _demoInterval = setInterval(demoTick, intervalMs);
+    }
+}
+function isDemoPaused() {
+    return _demoActive && !_demoInterval;
 }
 
 function stopDemo() {

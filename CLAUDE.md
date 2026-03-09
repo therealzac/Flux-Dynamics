@@ -16,6 +16,22 @@ ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND
 
 ---
 
+## ABSOLUTE PROHIBITIONS
+
+### NEVER monkey-patch Set/Map prototype methods
+**NEVER intercept, wrap, or replace `.add()`, `.delete()`, `.set()`, `.get()`, or any other method on `electronImpliedSet`, `activeSet`, `impliedSet`, `impliedBy`, or any other global Set/Map.** This includes debug interceptors, proxies, or any form of method replacement. Doing so corrupts the unified architecture — shapes stop driving spheres, the solver becomes detached from rendering, and the simulation breaks catastrophically. If you need to trace who adds to a Set, use `console.error` with stack traces at the CALL SITE, not by wrapping the Set method.
+
+### Speed sanity check
+If a change causes the Planck-second counter to run ~25x faster than normal, **you probably broke the physics solver.** The solver is the bottleneck — if the simulation suddenly flies, it means constraints are no longer being enforced and the results are meaningless. Treat unexpected speedups as a regression, not an improvement.
+
+### NEVER gut the framework to bypass tests
+**We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
+
+### `_moveRecord` — useful audit tool, MUST NOT affect physics
+`_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
+
+---
+
 ## Quick Start
 - **Press the "demo" button** to start the deuteron simulation
 - Dev server: `python3 -m http.server 8080` from project root, open `flux-v2.html`
@@ -209,6 +225,24 @@ All moves planned before execution to prevent Pauli violations.
 
 ## 6. Test Suite (flux-tests.js)
 
+### LIVE_GUARD_REGISTRY — Unified Architecture (Single Source of Truth)
+Each test lives in ONE registry entry in `LIVE_GUARD_REGISTRY` (array at top of flux-tests.js). The entry contains ALL logic for that test:
+
+| Field | Purpose | Called by |
+|-------|---------|-----------|
+| `id` | Unique test ID (e.g. 'T19') | All systems |
+| `name` | Human-readable description | UI panel |
+| `init` | Extra state props | `_liveGuards` init |
+| `convergence` | Stay null during grace | Grace promotion |
+| `projected(states)` | Pre-move validation | Lookahead planner |
+| `activate(g)` | Grace-end initialization | `_liveGuardCheck` |
+| `snapshot(g)` | Pre-tick state capture | `_liveGuardSnapshot` |
+| `check(tick, g, ctx)` | Post-move validation | `_liveGuardCheck` |
+
+**To disable a test: remove its entry from the registry. That's ALL you need to do.** No check blocks, no separate code paths, no second file to edit. The `_liveGuardCheck()` dispatcher iterates the registry and calls each entry's `check()` function — there are no per-test if-blocks.
+
+**`projected()` and `check()` are the same test in two modes.** `projected(states)` runs BEFORE moves with hypothetical future positions. `check(tick, g, ctx)` runs AFTER moves with actual state. Both live in the same registry entry — removing the entry disables both simultaneously.
+
 ### Test Inventory (T01-T28)
 | ID | Name | What it tests |
 |----|------|---------------|
@@ -237,12 +271,13 @@ All moves planned before execution to prevent Pauli violations.
 | **T27** | **No teleportation** | **LIVE GUARD**: xons only move via connected edges |
 | T28 | Lifespan slider | DOM integration works |
 
-### Live Guard System (T19, T21, T26, T27)
+### Live Guard System (Unified Dispatcher)
 - **Grace period**: 12 ticks (LIVE_GUARD_GRACE). Guards stay null (yellow "–") during grace.
-- **Activation**: At tick 12, all guards promoted to green if no violations.
-- **Permanent failure**: Once a guard fails, it stays red and **halts the simulation**.
-- **Snapshot system**: `_liveGuardSnapshot()` called BEFORE each tick captures xon positions. `_liveGuardCheck()` called AFTER compares pre/post positions.
-- **Window boundary skip**: T26/T27 don't check at window boundaries (tick % 4 === 0) since xon reassignment is expected there.
+- **Activation**: At tick 12, `activate()` called for entries that have it, non-convergence guards promoted to green.
+- **Permanent failure**: Once a guard fails, it stays red and **halts the simulation** after 4-tick wind-down.
+- **Snapshot system**: `_liveGuardSnapshot()` called BEFORE each tick captures xon positions and calls each entry's `snapshot()`. `_liveGuardCheck()` called AFTER iterates registry and calls each entry's `check(tick, g, ctx)`.
+- **Movement guards**: Each `check()` function decides internally whether to skip window boundaries or require `ctx.prev` — no hardcoded categories in the dispatcher.
+- **Convergence guards**: Entries with `convergence: true` stay null during grace promotion. Their `check()` handles timing internally.
 
 ### T26 Detail (most common failure)
 Checks every xon movement `fromNode → toNode`:
@@ -350,12 +385,23 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 
 ---
 
-## 10. Known Issues & Active Work
+## 10. Traversal Lock & SC Promotion
 
-### T26 (Unactivated SC Traversal)
-- Occurs when `excitationSeverForRoom` severs an SC that an idle_tet xon is currently traversing
-- Also occurs when PHASE 4 scatter advances xons without vacuum negotiation
-- Fix direction: protect idle_tet face SCs from severance; add vacuum checks to PHASE 4
+### Traversal Lock (`_traversalLockedSCs()`)
+Returns the set of SC IDs that MUST NOT be removed from any set because a xon is currently using them:
+- The SC connecting `prevNode → node` for every alive xon
+- ALL face SCs for every alive tet/idle_tet xon's assigned face
+- Used by `_relinquishFaceSCs`, window transition relinquishment, `_startIdleTetLoop` rollbacks, and `excitationSeverForRoom`
+
+### SC Promotion (`_promoteFaceSCs(face)`)
+When a xon is assigned to a tet face, any face SCs that are only in `impliedSet` (ephemeral, rebuilt each solver tick) get promoted into `electronImpliedSet` (persistent). This prevents the SC from vanishing on the next solver rebuild while the xon is mid-loop.
+- Called by `_assignXonToTet` and `_startIdleTetLoop` at both assignment paths
+
+### PHASE 4 Pauli Annihilation
+PHASE 4 enforces Pauli exclusion absolutely:
+1. Try scatter for ANY mode xon (not just oct)
+2. If scatter fails, annihilate pairs unconditionally — no collision survives PHASE 4
+3. Pauli exclusion trumps weak force confinement (T38 accepts Pauli annihilation)
 
 ### Vacuum Deadlock
 - When too many SCs active, `canMaterialiseQuick` rejects all new SCs
@@ -365,7 +411,7 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 ### Tet Void Manifestation
 - When oct cage is congested, `_startIdleTetLoop` proactively materializes missing SCs for non-actualized faces
 - Sets `_idleTetManifested` flag → triggers solver rerun
-- Rollback if any SC fails to materialize
+- Rollback if any SC fails to materialize (respects traversal lock)
 
 ---
 

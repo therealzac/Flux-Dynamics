@@ -185,6 +185,12 @@ function excitationSeverForRoom(targetScId){
     // Protect oct SCs (bosonic cage must never be severed)
     for(const id of _octSCIds) protectedSCs.add(id);
 
+    // Protect SCs currently being traversed by xons (traversal lock).
+    // If a xon is on an SC or needs it for its face loop, it cannot be severed.
+    if (typeof _traversalLockedSCs === 'function') {
+        for (const id of _traversalLockedSCs()) protectedSCs.add(id);
+    }
+
     // Collect severable candidates, scored by fewest excitation references
     // (prefer severing orphan shortcuts that no excitation currently owns)
     const ranked = [];
