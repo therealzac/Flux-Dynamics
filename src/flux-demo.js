@@ -267,20 +267,24 @@ const _scAttribution = new Map();
 // ══════════════════════════════════════════════════════════════════════════
 let _rewindRequested = false;        // set by guard check when T19/T20 fails
 let _rewindViolation = null;         // description of the violation that triggered rewind
-const _BT_MAX_DEPTH = Infinity;     // unlimited backtrack depth
 const _BT_MAX_SNAPSHOTS = 50;       // cap snapshot stack to prevent unbounded memory
-const _BT_MAX_RETRIES = 32;         // max retries per tick before escalating depth (must be enough to exhaust candidate rotations)
+const _BT_MAX_RETRIES = 32;         // max retries per tick before escalating depth
 let _btSnapshots = [];               // stack of state snapshots (one per tick)
-let _btRetryCount = 0;               // retries at current depth
-let _btDepth = 0;                    // current backtrack depth (0 = normal forward)
+let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
 let _btActive = false;               // true while inside a backtrack retry loop
 
+// ── BFS backtracker state (persists across demoTick() calls) ──
+// When a tick fails, we exhaust all options at that tick (layer 0),
+// then go one tick back (layer 1), try all rotations there, replay forward,
+// then two ticks back (layer 2), etc. This is BFS over tick layers.
+let _bfsFailTick = -1;               // the tick that originally failed (-1 = no active BFS)
+let _bfsLayer = 0;                   // how many ticks back from _bfsFailTick we're exploring
+let _bfsLayerRetries = 0;            // retries at the current BFS layer's anchor tick
+const _BFS_MAX_LAYERS = 50;         // max BFS depth (how far back we'll go)
+
 // ── Persistent bad-move ledger ──
-// Hierarchized record of moves that led to failures.
 // Key: tick number → Set of "xonIdx:destNode" strings.
-// Persists across retries at the same tick. When depth escalates (backing up
-// to an earlier tick), entries for LOWER levels (more recent ticks) are discarded
-// because those ticks will replay in a completely different state.
+// Accumulates across retries so the search space shrinks monotonically.
 let _btBadMoveLedger = new Map();
 
 // Save a full snapshot of choreography state before a tick executes.
@@ -466,16 +470,22 @@ function _btIsMoveExcluded(xonIdx, destNode) {
     return tickLedger.has(`${xonIdx}:${destNode}`);
 }
 
-// Reset backtracking state (called when starting fresh or after successful commit).
+// Reset per-tick backtracking state (called after a clean tick).
+// BFS state (_bfsFailTick, _bfsLayer, _bfsLayerRetries) is NOT reset here —
+// it persists across demoTick() calls until the failure tick passes.
 function _btReset() {
-    _btDepth = 0;
     _btRetryCount = 0;
     _btActive = false;
     _rewindRequested = false;
     _rewindViolation = null;
-    // Don't clear snapshots — keep them for future backtracks
-    // Don't clear _btBadMoveLedger — it persists across ticks.
-    // Ledger entries are cleaned up on depth escalation (lower levels discarded).
+}
+
+// Clear all BFS state (called when the failure tick finally passes or on demo restart).
+function _bfsReset() {
+    _bfsFailTick = -1;
+    _bfsLayer = 0;
+    _bfsLayerRetries = 0;
+    _btBadMoveLedger.clear();
 }
 
 // ── Tunable choreography parameters (genome for GA tournament) ──
@@ -2384,7 +2394,7 @@ function startDemoLoop() {
         _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
     }
     _demoTick = 0;
-    _btBadMoveLedger.clear(); // fresh demo = clean ledger
+    _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
     _demoTetAssignments = 0;
     _demoPauliViolations = 0;
@@ -2813,6 +2823,12 @@ async function demoTick() {
     _btSaveSnapshot();
     _rewindRequested = false;
     _rewindViolation = null;
+
+    // If we're in an active BFS and this tick is at or near the failure tick,
+    // activate backtracking so exclusions and rotations apply during forward replay.
+    if (_bfsFailTick >= 0) {
+        _btActive = true;
+    }
 
     const _BT_TOTAL_CAP = 500; // absolute cap on retries per demoTick() call
     for (let _btAttempt = 0; _btAttempt < _BT_TOTAL_CAP; _btAttempt++) {
@@ -3415,14 +3431,13 @@ async function demoTick() {
         }
     }
 
-    // ── DFS BACKTRACK: systematic candidate rotation ──
+    // ── BFS BACKTRACK: systematic candidate rotation ──
     // During retries, rotate each xon's candidate list so Kuhn's algorithm
-    // produces genuinely different matchings on each attempt. This is the core
-    // DFS mechanic: "try option A, then B, then C, then exhaust and back up."
-    // The effective seed combines retryCount + depth*MAX_RETRIES so that depth
-    // escalation produces different rotations even when retryCount resets to 0.
+    // produces genuinely different matchings on each attempt.
+    // The effective seed combines retryCount + BFS layer * MAX_RETRIES so that
+    // layer escalation produces different rotations even when retryCount resets to 0.
     if (_btActive) {
-        const effectiveSeed = _btRetryCount + _btDepth * _BT_MAX_RETRIES;
+        const effectiveSeed = _btRetryCount + _bfsLayer * _BT_MAX_RETRIES + _bfsLayerRetries;
         if (effectiveSeed > 0) {
             for (let i = 0; i < octPlans.length; i++) {
                 const cands = octPlans[i].candidates;
@@ -4506,59 +4521,122 @@ async function demoTick() {
     if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
     const _gT1 = performance.now();
 
-    // ── BACKTRACK CHECK: did guards request a rewind? ──
+    // ── BACKTRACK CHECK (BFS): did guards request a rewind? ──
     if (_rewindRequested) {
         _rewindRequested = false;
-        _btRetryCount++;
-        // Extract which moves caused the violation and record in persistent ledger
+        _btActive = true;
+
+        // Extract exclusions and accumulate in persistent ledger
         const newExclusions = _btExtractExclusions();
         const currentTick = _demoTick - 1; // tick was already incremented
         if (!_btBadMoveLedger.has(currentTick)) _btBadMoveLedger.set(currentTick, new Set());
         const ledger = _btBadMoveLedger.get(currentTick);
         for (const ex of newExclusions) ledger.add(ex);
-        _btActive = true;
 
-        // Check if we've exhausted retries at this depth
-        if (_btRetryCount >= _BT_MAX_RETRIES) {
-            _btDepth++;
-            _btRetryCount = 0;
-            if (_btDepth >= _BT_MAX_DEPTH || _btSnapshots.length < 2) {
-                // Exhausted all backtrack depth — halt for real
-                console.error(`[BACKTRACK] Exhausted depth ${_btDepth}, halting: ${_rewindViolation}`);
+        // ── BFS LAYER TRACKING ──
+        // Is this the known failure tick returning after a deeper-layer replay?
+        if (_bfsFailTick >= 0 && currentTick === _bfsFailTick) {
+            // We replayed forward from a deeper layer and the failure tick
+            // STILL fails. Count this as one consumed attempt at the current layer.
+            _bfsLayerRetries++;
+            _logChoreo(`BFS: failure tick ${currentTick} still failing after layer ${_bfsLayer} attempt ${_bfsLayerRetries}/${_BT_MAX_RETRIES}`);
+
+            if (_bfsLayerRetries >= _BT_MAX_RETRIES) {
+                // Exhausted this layer — go one tick further back
+                _bfsLayer++;
+                _bfsLayerRetries = 0;
+
+                if (_bfsLayer >= _BFS_MAX_LAYERS) {
+                    console.error(`[BFS] Exhausted ${_bfsLayer} layers, halting: ${_rewindViolation}`);
+                    simHalted = true;
+                    _btReset();
+                    _bfsReset();
+                    break;
+                }
+            }
+
+            // Rewind to anchor tick = _bfsFailTick - _bfsLayer
+            const targetTick = _bfsFailTick - _bfsLayer;
+            // Find the snapshot for the anchor tick
+            const anchorSnap = _btSnapshots.find(s => s.tick === targetTick);
+            if (!anchorSnap) {
+                console.error(`[BFS] No snapshot for anchor tick ${targetTick}, halting`);
                 simHalted = true;
                 _btReset();
-                break; // exit retry loop
+                _bfsReset();
+                break;
             }
-            // Pop to an earlier snapshot (go back one more tick)
-            _btSnapshots.pop(); // discard current tick's snapshot
-            const olderSnap = _btSnapshots[_btSnapshots.length - 1];
-
-            // HIERARCHICAL CLEANUP: discard bad-move entries for ticks
-            // deeper than where we're rewinding to (the "lower levels").
-            // Those ticks will replay in a completely different state.
-            const rewindToTick = olderSnap.tick;
+            // Clear ledger entries for ticks after anchor (state will be different)
             for (const [t] of _btBadMoveLedger) {
-                if (t > rewindToTick) _btBadMoveLedger.delete(t);
+                if (t > targetTick) _btBadMoveLedger.delete(t);
+            }
+            _btRestoreSnapshot(anchorSnap);
+            _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}, layerRetry ${_bfsLayerRetries}`);
+            continue;
+        }
+
+        // ── NORMAL SAME-TICK RETRY (layer 0 or retrying a non-failure tick) ──
+        _btRetryCount++;
+
+        if (_btRetryCount >= _BT_MAX_RETRIES) {
+            // Exhausted all rotations at this tick.
+            if (_bfsFailTick < 0) {
+                // First time exhausting — this tick is now the BFS failure tick.
+                _bfsFailTick = currentTick;
+                _bfsLayer = 1;          // start exploring one tick back
+                _bfsLayerRetries = 0;
+                _logChoreo(`BFS: tick ${currentTick} exhausted at layer 0, starting BFS layer 1`);
+            } else {
+                // This is a non-failure tick that also failed during forward replay.
+                // Escalate the BFS layer.
+                _bfsLayer++;
+                _bfsLayerRetries = 0;
+                _logChoreo(`BFS: intermediate tick ${currentTick} also failed, escalating to layer ${_bfsLayer}`);
             }
 
-            _btRestoreSnapshot(olderSnap);
-            _logChoreo(`BACKTRACK depth ${_btDepth}: rewound to tick ${rewindToTick}, ledger has ${_btBadMoveLedger.size} tick entries`);
-        } else {
-            // Restore current tick's snapshot and retry with rotation.
-            // Clear this tick's ledger — rotation provides variation between
-            // same-tick retries. Ledger only carries across depth levels.
-            _btBadMoveLedger.delete(currentTick);
-            const snap = _btSnapshots[_btSnapshots.length - 1];
-            _btRestoreSnapshot(snap);
-            _logChoreo(`BACKTRACK retry ${_btRetryCount}/${_BT_MAX_RETRIES} (ledger cleared for tick ${currentTick})`);
+            if (_bfsLayer >= _BFS_MAX_LAYERS) {
+                console.error(`[BFS] Exhausted ${_bfsLayer} layers, halting: ${_rewindViolation}`);
+                simHalted = true;
+                _btReset();
+                _bfsReset();
+                break;
+            }
+
+            // Rewind to anchor tick
+            const targetTick = _bfsFailTick - _bfsLayer;
+            const anchorSnap = _btSnapshots.find(s => s.tick === targetTick);
+            if (!anchorSnap) {
+                console.error(`[BFS] No snapshot for anchor tick ${targetTick}, halting`);
+                simHalted = true;
+                _btReset();
+                _bfsReset();
+                break;
+            }
+            for (const [t] of _btBadMoveLedger) {
+                if (t > targetTick) _btBadMoveLedger.delete(t);
+            }
+            _btRetryCount = 0;
+            _btRestoreSnapshot(anchorSnap);
+            _logChoreo(`BFS: rewound to anchor tick ${targetTick} (layer ${_bfsLayer})`);
+            continue;
         }
-        continue; // retry the tick
+
+        // Same-tick retry — restore snapshot, exclusions already accumulated in ledger
+        const snap = _btSnapshots[_btSnapshots.length - 1];
+        _btRestoreSnapshot(snap);
+        _logChoreo(`BACKTRACK retry ${_btRetryCount}/${_BT_MAX_RETRIES} at tick ${currentTick} (ledger: ${ledger.size} exclusions)`);
+        continue;
     }
 
-    // ── Clean tick — commit and reset backtrack state ──
+    // ── Clean tick — commit and reset per-tick backtrack state ──
+    const cleanTick = _demoTick - 1; // the tick that just succeeded
+    // If we just passed the BFS failure tick, the BFS succeeded!
+    if (_bfsFailTick >= 0 && cleanTick >= _bfsFailTick) {
+        _logChoreo(`BFS: failure tick ${_bfsFailTick} PASSED at layer ${_bfsLayer}! Clearing BFS state.`);
+        _bfsReset();
+    }
     _btReset();
-    // DON'T clear _btBadMoveLedger — it persists across ticks
-    _profPhases.guards += _gT1 - _gT0; // accumulate guard profiling before leaving scope
+    _profPhases.guards += _gT1 - _gT0;
     break; // exit retry loop
 
     } // end backtracking retry loop
