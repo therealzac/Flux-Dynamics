@@ -367,6 +367,7 @@ const NucleusSimulator = (function(){
             { label: 'neutron up',  color: 0x4488ff },
             { label: 'neutron down', color: 0xff4444 },
             { label: 'bosonic',     color: 0xffffff },
+            { label: 'gluon (cage)',color: 0xff8800 },
             { label: 'weak',        color: 0xcc44ff },
         ];
         let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;

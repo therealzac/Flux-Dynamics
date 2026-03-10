@@ -6,6 +6,7 @@ let excitations=[], electronNextId=0, placingExcitation=false;
 let _deferUIUpdates = false, _uiDirty = false; // batch UI updates during tick
 const ELECTRON_ALPHA=3.0, TRAIL_LENGTH=24;
 let ELECTRON_STEP_MS=30;  // fastest default — tournament needs throughput
+let _severanceCount = 0;
 
 // scPairToId hoisted to early block (line ~315) to avoid TDZ in computeVoidNeighbors
 function rebuildScPairLookup(){ scPairToId = new Map(); ALL_SC.forEach(s=>{ scPairToId.set(pairId(s.a, s.b), s.id); }); }
@@ -245,6 +246,7 @@ function excitationSeverForRoom(targetScId){
                     ex.voidScIds = null; ex.voidNodes = null;
                 }
             }
+            _severanceCount++;
             bumpState();
             return true;
         }
@@ -253,6 +255,43 @@ function excitationSeverForRoom(targetScId){
         xonImpliedSet.add(victimId);
         impliedSet.add(victimId);
         stateVersion++; // invalidate cache after undo
+    }
+
+    // PHASE 2: BFS 2-severance combos (try all pairs)
+    for (let i = 0; i < ranked.length; i++) {
+        for (let j = i + 1; j < ranked.length; j++) {
+            const v1 = ranked[i].scId, v2 = ranked[j].scId;
+            xonImpliedSet.delete(v1);
+            xonImpliedSet.delete(v2);
+            impliedSet.delete(v1);
+            impliedSet.delete(v2);
+            stateVersion++;
+
+            if (canMaterialiseQuick(targetScId)) {
+                // Success — finalize both severs
+                impliedBy.delete(v1);
+                impliedBy.delete(v2);
+                for (const ex of excitations) {
+                    for (const vid of [v1, v2]) {
+                        if (ex.ownShortcut === vid) ex.ownShortcut = null;
+                        if (ex.voidScIds && ex.voidScIds.includes(vid)) {
+                            ex.zeroPoint = null; ex.voidType = null;
+                            ex.voidScIds = null; ex.voidNodes = null;
+                        }
+                    }
+                }
+                _severanceCount += 2;
+                bumpState();
+                return true;
+            }
+
+            // Undo both
+            xonImpliedSet.add(v1);
+            xonImpliedSet.add(v2);
+            impliedSet.add(v1);
+            impliedSet.add(v2);
+            stateVersion++;
+        }
     }
     return false;
 }

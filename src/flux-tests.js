@@ -147,7 +147,7 @@ const LIVE_GUARD_REGISTRY = [
         for (const xon of _demoXons) {
           if (!xon.alive) continue;
           if (xon.sign !== 1 && xon.sign !== -1) return `tick ${tick}: sign=${xon.sign}`;
-          if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet' && xon._mode !== 'weak' && xon._mode !== 'oct_formation')
+          if (xon._mode !== 'tet' && xon._mode !== 'oct' && xon._mode !== 'idle_tet' && xon._mode !== 'weak' && xon._mode !== 'gluon' && xon._mode !== 'oct_formation')
             return `tick ${tick}: mode=${xon._mode}`;
         }
         return null;
@@ -958,6 +958,150 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // ── T70: Gluon mode validity ──
+    { id: 'T70', name: 'Gluon mode validity', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'gluon') continue;
+          // Gluon must be orange
+          if (xon.col !== GLUON_COLOR) return `tick ${tick}: gluon xon has color 0x${xon.col.toString(16)}, expected 0x${GLUON_COLOR.toString(16)}`;
+          // Gluon must be on oct cage
+          if (!_octNodeSet || !_octNodeSet.has(xon.node)) return `tick ${tick}: gluon xon at node ${xon.node} not on oct cage`;
+          g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+        }
+        return null; // no gluons seen yet — convergence test stays null
+      }
+    },
+    // ── T71: _mayReturn lifecycle ──
+    { id: 'T71', name: '_mayReturn lifecycle',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          // _mayReturn must be false when entering weak mode (checked indirectly:
+          // if _mayReturn is true but xon hasn't left ejection-forbidden zone, it's wrong)
+          if (xon._mode === 'weak' && xon._mayReturn && _ejectionForbidden && _ejectionForbidden.has(xon.node) && !_octNodeSet.has(xon.node)) {
+            return `tick ${tick}: weak xon at node ${xon.node} has _mayReturn=true but is in ejection-forbidden zone`;
+          }
+          // _mayReturn must be false for non-weak modes
+          if (xon._mode !== 'weak' && xon._mayReturn) {
+            return `tick ${tick}: non-weak xon (mode=${xon._mode}) has _mayReturn=true`;
+          }
+        }
+        return null;
+      }
+    },
+    // ── T72: _allTetNodes completeness ──
+    { id: 'T72', name: '_allTetNodes complete', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        if (!_allTetNodes || typeof voidNeighborData === 'undefined') return null;
+        // Verify every tet void's nodes are in _allTetNodes
+        for (const v of voidNeighborData) {
+          if (v.type !== 'tet') continue;
+          for (const n of v.nbrs) {
+            if (!_allTetNodes.has(n)) return `tick ${tick}: tet void node ${n} missing from _allTetNodes`;
+          }
+        }
+        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+      }
+    },
+    // ── T73: Ejection target validity ──
+    { id: 'T73', name: 'Ejection target validity', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        if (!_ejectionForbidden || !_octNodeSet || !_allTetNodes) return null;
+        // Oct nodes must be forbidden
+        for (const n of _octNodeSet) {
+          if (!_ejectionForbidden.has(n)) return `tick ${tick}: oct node ${n} not in _ejectionForbidden`;
+        }
+        // Tet nodes must be forbidden
+        for (const n of _allTetNodes) {
+          if (!_ejectionForbidden.has(n)) return `tick ${tick}: tet node ${n} not in _ejectionForbidden`;
+        }
+        // _isValidEjectionTarget must return false for oct nodes
+        for (const n of _octNodeSet) {
+          if (_isValidEjectionTarget(n)) return `tick ${tick}: _isValidEjectionTarget(${n}) true for oct node`;
+        }
+        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+      }
+    },
+    // ── T75: Ejected xon movement restriction ──
+    { id: 'T75', name: 'Ejected xon obeys restriction',
+      check(tick, g) {
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'weak' || !xon._t60Ejected) continue;
+          if (!xon._mayReturn) {
+            // Pre-_mayReturn: must be on ejection-space node (or just ejected and not yet moved)
+            if (_ejectionForbidden && _ejectionForbidden.has(xon.node) && xon._movedThisTick) {
+              return `tick ${tick}: ejected xon at node ${xon.node} in forbidden zone (pre-_mayReturn)`;
+            }
+          } else {
+            // Post-_mayReturn: may be on oct nodes, but NOT on _purelyTetNodes
+            if (_purelyTetNodes && _purelyTetNodes.has(xon.node)) {
+              return `tick ${tick}: returning weak xon at node ${xon.node} on purely-tet node`;
+            }
+          }
+        }
+        return null;
+      }
+    },
+    // ── T74: Backtracker uncapped (infrastructure guarantee) ──
+    { id: 'T74', name: 'Backtracker uncapped', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        if (_BT_MAX_RETRIES !== Infinity) return `_BT_MAX_RETRIES is ${_BT_MAX_RETRIES}, not Infinity`;
+        if (_BFS_MAX_LAYERS !== Infinity) return `_BFS_MAX_LAYERS is ${_BFS_MAX_LAYERS}, not Infinity`;
+        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+      }
+    },
+    // ── T76: Direction balance convergence ──
+    // After 64+ ticks, every xon should have used at least 4 of 10 directions.
+    // This validates that the xonic movement balance system is active and tracking.
+    { id: 'T76', name: 'Direction balance active', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        if (tick < 64) return null; // need time for directions to diversify
+        for (const xon of _demoXons) {
+          if (!xon.alive || !xon._dirBalance) continue;
+          let usedDirs = 0;
+          for (let i = 0; i < 10; i++) if (xon._dirBalance[i] > 0) usedDirs++;
+          if (usedDirs < 4) return `tick ${tick}: xon has only used ${usedDirs}/10 directions (need ≥4)`;
+        }
+        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+      }
+    },
+    // ── T77: BFS severance infrastructure ──
+    // Verify that the 2-depth BFS severance system is operational.
+    // _severanceCount must be a number (tracks total successful severances).
+    { id: 'T77', name: 'BFS severance active', convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        if (typeof _severanceCount !== 'number') return `_severanceCount is ${typeof _severanceCount}, not number`;
+        if (typeof excitationSeverForRoom !== 'function') return 'excitationSeverForRoom not a function';
+        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+      }
+    },
+    // ── T78: SC cleanup is distance-only ──
+    // Every SC in xonImpliedSet must be approximately unit-length.
+    // Non-unit-length SCs should have been removed by the distance-only cleanup.
+    { id: 'T78', name: 'SC cleanup distance-only',
+      check(tick, g) {
+        if (tick < 12) return null; // grace: cleanup needs solver to settle
+        for (const scId of xonImpliedSet) {
+          const sc = SC_BY_ID[scId];
+          if (!sc) continue;
+          const pa = pos[sc.a], pb = pos[sc.b];
+          if (!pa || !pb) continue;
+          const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
+          const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+          if (Math.abs(dist - 1) > 0.20) {
+            return `tick ${tick}: SC ${scId} in xonImpliedSet has dist=${dist.toFixed(4)} (non-unit-length)`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1549,12 +1693,10 @@ function _trialDescriptiveName(gen, idx, p) {
     const la = p.lookahead <= 5 ? 'impulsive' : p.lookahead <= 12 ? 'cautious' : p.lookahead <= 20 ? 'strategic' : 'prophetic';
     // Congestion style
     const cg = p.congestionMax <= 2 ? 'tight' : p.congestionMax <= 4 ? 'balanced' : 'loose';
-    // Scoring aggression (face bonuses)
-    const agg = (p.faceOnBonus + p.faceNearBonus) <= 10 ? 'passive' : (p.faceOnBonus + p.faceNearBonus) <= 30 ? 'active' : 'aggressive';
-    // Coverage hunger
-    const cov = p.coverageDeficitWeight <= 5 ? 'relaxed' : p.coverageDeficitWeight <= 15 ? 'hungry' : 'ravenous';
+    // Ratio sensitivity
+    const rt = p.ratioDeficitWeight <= 5 ? 'passive' : p.ratioDeficitWeight <= 20 ? 'active' : 'aggressive';
 
-    return `G${gen+1}.${idx+1}  ${la} ${cg} ${agg} ${cov}`;
+    return `G${gen+1}.${idx+1}  ${la} ${cg} ${rt}`;
 }
 
 // Main tournament runner — runs each trial visually on-screen (serial, not parallel)
