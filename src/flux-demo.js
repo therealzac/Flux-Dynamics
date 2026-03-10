@@ -3908,6 +3908,7 @@ async function demoTick() {
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = nb.node;
+                xon._movedThisTick = true; // prevent double-move
                 _occAdd(occupied, nb.node);
                 _moveRecord.set(nb.node, fromWe); // T41: record
                 _traceMove(xon, fromWe, nb.node, 'weakEsc');
@@ -4074,6 +4075,7 @@ async function demoTick() {
                     _occDel(occupied, xon.node);
                     xon.prevNode = xon.node;
                     xon.node = nb.node;
+                    xon._movedThisTick = true; // prevent double-move
                     _occAdd(occupied, nb.node);
                     _moveRecord.set(nb.node, from3bw); // T41: record
                     _traceMove(xon, from3bw, nb.node, 'p3bWeak');
@@ -4306,6 +4308,7 @@ async function demoTick() {
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = nb.node;
+                xon._movedThisTick = true; // prevent double-move
                 _occAdd(occupied, nb.node);
                 _moveRecord.set(nb.node, fromSN); // T41: record
                 _traceMove(xon, fromSN, nb.node, 'stuckNudge');
@@ -4482,19 +4485,22 @@ async function demoTick() {
     // Demand-driven: derive active faces from xon state, not schedule.
     if (_nucleusTetFaceData) {
         // Build active face map from xon assignments
-        const activeFaces = new Map(); // face → {quarkType, loopStep}
+        const activeFaces = new Map(); // face → {quarkType, loopStep, actualized}
         for (const xon of _demoXons) {
             if (!xon.alive || xon._assignedFace == null) continue;
             if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                activeFaces.set(xon._assignedFace, { quarkType: xon._quarkType, loopStep: xon._loopStep });
+                activeFaces.set(xon._assignedFace, {
+                    quarkType: xon._quarkType, loopStep: xon._loopStep,
+                    actualized: !!xon._tetActualized
+                });
             }
         }
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
             const fId = parseInt(fIdStr);
             const active = activeFaces.get(fId);
-            const actualized = active && fd.scIds.every(scId =>
-                activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-            if (actualized) {
+            // T58: only color tet faces that count toward hadronic averaging
+            // (xon's _tetActualized flag must be true — same gate as _demoVisits)
+            if (active && active.actualized) {
                 _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[active.quarkType]);
                 const opacity = 0.3 + (active.loopStep / 4) * 0.55;
                 _ruleAnnotations.tetOpacity.set(fd.voidIdx, opacity);

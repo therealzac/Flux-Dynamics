@@ -807,6 +807,36 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // T58: Tet coloring matches actualization — shapes layer only colors tets
+    // that count toward hadronic averaging (_tetActualized = true on the assigned xon).
+    { id: 'T58', name: 'Tet color only when actualized',
+      check(tick, g) {
+        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
+        if (!_nucleusTetFaceData || !_ruleAnnotations) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const opacity = _ruleAnnotations.tetOpacity.get(fd.voidIdx);
+          if (!opacity || opacity <= 0) continue; // not colored — fine
+          // This face IS colored. Find the xon assigned to it.
+          let assignedXon = null;
+          for (const xon of _demoXons) {
+            if (!xon.alive) continue;
+            if (xon._assignedFace === fId && (xon._mode === 'tet' || xon._mode === 'idle_tet')) {
+              assignedXon = xon;
+              break;
+            }
+          }
+          if (!assignedXon) {
+            return `tick ${tick}: face ${fId} colored (opacity ${opacity.toFixed(2)}) but no xon assigned`;
+          }
+          if (!assignedXon._tetActualized) {
+            return `tick ${tick}: face ${fId} colored but xon not actualized (mode=${assignedXon._mode}, step=${assignedXon._loopStep})`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
