@@ -323,9 +323,10 @@ function updateVoidSpheres(){
         }
         return true;
     }
-    // An O_h void requires ALL cycles at its centroid to be geometric squares simultaneously.
-    // Physically: one octahedron = 3 mutually perpendicular squares sharing a center.
-    // Boundary voids (fewer than 3 cycles) never actualize — not a full octahedron.
+    // An O_h void is actualized when ALL of its square cycles are geometric
+    // squares (SCs active + 90° angles). The solver deforms base edges to 90°
+    // when shortcuts activate — this is the geometric sanity check for proper
+    // sphere packing. Boundary voids (fewer than 3 cycles) never actualize.
     function _isSquare(cycles){
         if(cycles.length < 3) return false; // boundary: not a full octahedron
         return cycles.every(({verts, scIds}) => _isCycleSquare(verts, scIds));
@@ -413,20 +414,9 @@ function updateVoidSpheres(){
         // Only re-evaluate actualization if the open-SC set changed
         let actualized = entry.wasActualized; // default: keep previous state
         if(scSetChanged){
-            actualized = _forceActualizedVoids.has(vi)
-                ? scIds.every(id => allActive.has(id))  // force: skip geometric check
-                : type==='tet'
+            actualized = type==='tet'
                     ? scIds.every(id => allActive.has(id))
                     : _isSquare(cycles||[]);
-            // Oct rendering gate: only hadronic center octs render.
-            // An oct qualifies as hadronic center only if it has had a tet
-            // actualized on each of its 8 faces since birth. Currently only
-            // the nucleus oct (_octVoidIdx) qualifies. This is ALWAYS enforced,
-            // not just in demo mode — spurious octs from solver implication
-            // are suppressed everywhere.
-            if (type === 'oct' && actualized && _octVoidIdx >= 0 && vi !== _octVoidIdx) {
-                actualized = false;
-            }
             voidNeighborData[vi].actualized = actualized;
             // Store per-cycle actualization for oct voids — excitations can
             // survive on a single square cycle, not just the full octahedron.
@@ -683,8 +673,8 @@ document.getElementById('excitation-speed-slider').addEventListener('input', ()=
     }
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
-    // Also restart demo interval if demo is running
-    if(_demoActive) {
+    // Also restart demo interval if demo is running (but NOT if paused)
+    if(_demoActive && typeof isDemoPaused === 'function' && !isDemoPaused()) {
         if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
         if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
         const intervalMs = _getDemoIntervalMs();

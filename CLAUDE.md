@@ -12,6 +12,8 @@ IF THIS PROCESS IS AT ALL UNCLEAR, I WILL ASK FOR GUIDANCE
 
 UNIT TESTS MAY NOT BE UPDATED EXCEPT WITHOUT EXPRESS USER CONSENT
 
+EVERY NEW TEST MUST HAVE EXPLICIT AUTHORIZATION FROM THE USER BEFORE BEING CREATED. DO NOT CREATE TESTS WITHOUT ASKING FIRST.
+
 ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND ALL UNIT TESTS ARE DIRECTLY WIRED UP TO DO SO
 
 ---
@@ -26,6 +28,9 @@ If a change causes the Planck-second counter to run ~25x faster than normal, **y
 
 ### NEVER gut the framework to bypass tests
 **We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
+
+### NEVER soften constraints to fix failures
+**When something goes wrong, the answer is NEVER to relax, soften, or make constraints optional.** 99% of the time, the fix is to figure out why the choreographer made the wrong decision. If a guard fires and the backtracker loops, the problem is in the choreography logic or the backtracker's memory — not in the guard being "too strict." Constraints are physics. Softening them means the simulation is lying. Fix the decision-making, not the rules.
 
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.

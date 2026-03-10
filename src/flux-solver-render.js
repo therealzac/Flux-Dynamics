@@ -103,9 +103,14 @@ let _syncStatus = 'ok';              // 'ok' | 'warn' | 'error'
 let _faceCoverageTotal = {};         // key → cumulative tick count (type_face, e.g. pu_1, nd_5)
 let _nucleusTick = 0;               // global tick counter for nucleus mode
 let _octEdgeLastTraced = new Map();  // pairId(a,b) → tick number when last traced by a quark
-let _octNodeSet = null;              // Set of oct-void node indices (set in simulateNucleus)
-let _octSCIds = [];                  // Oct void SC ids (quarks materialise these naturally)
+let _octNodeSet = null;              // Set of oct-void node indices (set by simulateNucleus)
+let _octSCIds = [];                  // Oct void SC ids (4 equatorial cage SCs)
 let _octVoidIdx = -1;               // Void index of the nucleus oct (hadronic center)
+let _octSeedCenter = -1;            // Center node (all xons start here)
+let _openingPhase = false;           // true during 2-tick opening choreography (ticks 0-1)
+let _octEquatorCycle = [];           // 4 equatorial nodes in cycle order (for merry-go-round)
+let _octCageSCCycle = [];            // 4 cage SC IDs in matching cycle order
+let _octAntipodal = new Map();       // node → antipodal oct node (diagonal pairs)
 let voidNeighborData = [];
 let _nodeTetVoids = new Map(); // node → tet voids containing that node
 let _nodeOctVoids = new Map(); // node → oct voids containing that node
@@ -719,7 +724,7 @@ function pairId(a, b){ return a < b ? a * 20000 + b : b * 20000 + a; }
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setClearColor(0x000000,1); // solid black background
+renderer.setClearColor(0x333333,1); // dark gray background
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45,1,0.01,100);
 function resize(){ renderer.setSize(innerWidth,innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); }

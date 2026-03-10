@@ -176,16 +176,41 @@ window.computeActivationPatterns = computeActivationPatterns;
 
 let _demoActive = false;
 let _demoInterval = null;
-// T45 bounce guard — set to true to prevent A→B→A oscillation. Disabled because
-// tet topology naturally bounces (fork: a→b→a→c→a) and it can cause T20 (stuck).
-// To re-enable: set _T45_BOUNCE_GUARD = true and uncomment T45 in flux-tests.js.
-const _T45_BOUNCE_GUARD = false;
+let _demoPaused = false;  // true when user has paused via pause button
+// T45 bounce guard — prevents A→B→A oscillation for oct/weak xons.
+// Tet/idle_tet xons are exempt because their fixed loop sequences may require
+// bounces (fork: a→b→a→c→a). All existing checks are gated to oct/weak only.
+const _T45_BOUNCE_GUARD = true;
 let _demoTick = 0;
-let _demoSchedule = null;     // 8-window physical schedule (32 ticks/cycle)
 let _demoVisits = null;       // {face: {pu:0, pd:0, nu:0, nd:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
-let _demoFaceDecks = null;    // {face: shuffled array} — stochastic type assignment
-let _demoWindowTypes = null;  // current window's face→type map (persists 4 ticks)
+
+// ── Rolling Ratio Tracker — demand-driven quark type selection ──
+// Syncs from _demoVisits each tick. Computes deficit for any quark type.
+// Target fractions: pu=2/3 of proton total, pd=1/3; nd=2/3 of neutron total, nu=1/3.
+const _ratioTracker = {
+    pu: 0, pd: 0, nu: 0, nd: 0,
+    sync() {
+        this.pu = 0; this.pd = 0; this.nu = 0; this.nd = 0;
+        for (let f = 1; f <= 8; f++) {
+            if (!_demoVisits || !_demoVisits[f]) continue;
+            this.pu += _demoVisits[f].pu || 0;
+            this.pd += _demoVisits[f].pd || 0;
+            this.nu += _demoVisits[f].nu || 0;
+            this.nd += _demoVisits[f].nd || 0;
+        }
+    },
+    // Returns positive value when type is underrepresented vs target ratio
+    deficit(type) {
+        const protonTotal = this.pu + this.pd;
+        const neutronTotal = this.nu + this.nd;
+        if (type === 'pu') return protonTotal === 0 ? 1.0 : (2/3) - this.pu / protonTotal;
+        if (type === 'pd') return protonTotal === 0 ? 1.0 : (1/3) - this.pd / protonTotal;
+        if (type === 'nu') return neutronTotal === 0 ? 1.0 : (1/3) - this.nu / neutronTotal;
+        if (type === 'nd') return neutronTotal === 0 ? 1.0 : (2/3) - this.nd / neutronTotal;
+        return 0;
+    }
+};
 let _demoPauliViolations = 0;
 let _demoSpreadViolations = 0;
 let _demoTypeBalanceHistory = [];  // type balance % at each cycle boundary
@@ -210,6 +235,11 @@ function _swapBlocked(fromNode, toNode) {
 // When off, PHASE 4 uses scatter-only; unresolvable Pauli collisions
 // fall through to weak force escape instead of gluon storage.
 let _annihilationEnabled = false;
+// Choreographer debug log — ring buffer of last N entries
+let _choreoLog = [];
+const _CHOREO_LOG_MAX = 20;
+// Xon panel highlight state
+let _xonHighlightTimers = new Map(); // xon index → timeout id
 // Flash toggle — set false to disable mode-transition flash effects.
 // Re-enable by setting to true. Flash = sparkle scale/brightness pulse on mode change.
 let _flashEnabled = false;
@@ -232,36 +262,259 @@ function _traceMove(xon, from, to, path) {
 // Lookahead can query _scAttribution to make informed SC decisions.
 const _scAttribution = new Map();
 
+// ══════════════════════════════════════════════════════════════════════════
+// BACKTRACKING CHOREOGRAPHER — rewind on violation, try different choices
+// ══════════════════════════════════════════════════════════════════════════
+let _rewindRequested = false;        // set by guard check when T19/T20 fails
+let _rewindViolation = null;         // description of the violation that triggered rewind
+const _BT_MAX_DEPTH = Infinity;     // unlimited backtrack depth
+const _BT_MAX_SNAPSHOTS = 50;       // cap snapshot stack to prevent unbounded memory
+const _BT_MAX_RETRIES = 32;         // max retries per tick before escalating depth (must be enough to exhaust candidate rotations)
+let _btSnapshots = [];               // stack of state snapshots (one per tick)
+let _btRetryCount = 0;               // retries at current depth
+let _btDepth = 0;                    // current backtrack depth (0 = normal forward)
+let _btActive = false;               // true while inside a backtrack retry loop
+
+// ── Persistent bad-move ledger ──
+// Hierarchized record of moves that led to failures.
+// Key: tick number → Set of "xonIdx:destNode" strings.
+// Persists across retries at the same tick. When depth escalates (backing up
+// to an earlier tick), entries for LOWER levels (more recent ticks) are discarded
+// because those ticks will replay in a completely different state.
+let _btBadMoveLedger = new Map();
+
+// Save a full snapshot of choreography state before a tick executes.
+function _btSaveSnapshot() {
+    const snap = {
+        tick: _demoTick,
+        // Per-xon state (deep copy of mutable fields)
+        xons: _demoXons.map(x => ({
+            node: x.node, prevNode: x.prevNode, _mode: x._mode,
+            _assignedFace: x._assignedFace, _quarkType: x._quarkType,
+            _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
+            _loopStep: x._loopStep, col: x.col,
+            _movedThisTick: x._movedThisTick, _evictedThisTick: x._evictedThisTick,
+            _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
+            trail: x.trail.slice(),
+            trailColHistory: x.trailColHistory.slice(),
+            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
+        })),
+        // Global SC sets (shallow copy — Set of primitive IDs)
+        activeSet: new Set(activeSet),
+        xonImpliedSet: new Set(xonImpliedSet),
+        impliedSet: new Set(impliedSet),
+        scAttribution: new Map(_scAttribution),
+        // Solver vertex positions (deep copy)
+        pos: pos.map(p => [p[0], p[1], p[2]]),
+    };
+    _btSnapshots.push(snap);
+    // Keep stack bounded (cap at _BT_MAX_SNAPSHOTS)
+    if (_btSnapshots.length > _BT_MAX_SNAPSHOTS) _btSnapshots.shift();
+}
+
+// Restore choreography state from a snapshot.
+function _btRestoreSnapshot(snap) {
+    _demoTick = snap.tick;
+    // Restore per-xon state
+    for (let i = 0; i < _demoXons.length && i < snap.xons.length; i++) {
+        const x = _demoXons[i], s = snap.xons[i];
+        // Use internal _nodeVal bypass: set prevNode first, then node
+        x.prevNode = s.prevNode;
+        x._movedThisTick = false; // clear so .node setter doesn't block
+        x.node = s.node;
+        x._mode = s._mode;
+        x._assignedFace = s._assignedFace;
+        x._quarkType = s._quarkType;
+        x._loopSeq = s._loopSeq ? s._loopSeq.slice() : null;
+        x._loopStep = s._loopStep;
+        x.col = s.col;
+        x._movedThisTick = s._movedThisTick;
+        x._evictedThisTick = s._evictedThisTick;
+        x._lastDir = s._lastDir;
+        x.alive = s.alive;
+        x._highlightT = s._highlightT;
+        x.trail = s.trail.slice();
+        x.trailColHistory = s.trailColHistory.slice();
+        x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
+        // Update visuals
+        if (x.sparkMat) x.sparkMat.color.setHex(x.col);
+        if (x.group && pos[x.node]) {
+            x.group.position.set(pos[x.node][0], pos[x.node][1], pos[x.node][2]);
+        }
+        x.tweenT = 1; // snap to position (no interpolation)
+    }
+    // Restore SC sets
+    activeSet.clear(); for (const id of snap.activeSet) activeSet.add(id);
+    xonImpliedSet.clear(); for (const id of snap.xonImpliedSet) xonImpliedSet.add(id);
+    impliedSet.clear(); for (const id of snap.impliedSet) impliedSet.add(id);
+    _scAttribution.clear(); for (const [k, v] of snap.scAttribution) _scAttribution.set(k, v);
+    // Restore solver positions
+    for (let i = 0; i < pos.length && i < snap.pos.length; i++) {
+        pos[i][0] = snap.pos[i][0];
+        pos[i][1] = snap.pos[i][1];
+        pos[i][2] = snap.pos[i][2];
+    }
+    // Clear tick-level state
+    _moveRecord.clear();
+    _moveTrace.length = 0;
+}
+
+// Extract which moves to exclude from a violation.
+// Returns array of "xonIdx:destNode" strings.
+function _btExtractExclusions() {
+    // Use _moveTrace to find the moves that led to the violation
+    const exclusions = [];
+    if (!_rewindViolation) return exclusions;
+    // T19: "node X has 2+ xons" — find all xons that moved TO that node
+    const nodeMatch = _rewindViolation.match(/node (\d+)/);
+    if (nodeMatch) {
+        const collisionNode = parseInt(nodeMatch[1], 10);
+        for (const trace of _moveTrace) {
+            if (trace.to === collisionNode) {
+                exclusions.push(`${trace.xonIdx}:${collisionNode}`);
+            }
+        }
+        // If no trace found (xon didn't move = was already there), exclude
+        // the OTHER xon that moved to it
+        if (exclusions.length === 0) {
+            for (let i = 0; i < _demoXons.length; i++) {
+                if (_demoXons[i].node === collisionNode) {
+                    exclusions.push(`${i}:${collisionNode}`);
+                }
+            }
+        }
+    }
+    // T20: "stuck at node X" — the xon couldn't move because all exits were
+    // blocked. Exclude the BLOCKER xons' moves that occupied those exits,
+    // forcing them to choose different destinations on retry.
+    const stuckMatch = _rewindViolation.match(/stuck at node (\d+)/);
+    if (stuckMatch) {
+        const stuckNode = parseInt(stuckMatch[1], 10);
+        // Find oct-cage neighbors of stuckNode (the exits that were blocked)
+        const exitNodes = new Set();
+        for (const nb of (baseNeighbors[stuckNode] || [])) {
+            if (!_octNodeSet || _octNodeSet.has(nb.node)) exitNodes.add(nb.node);
+        }
+        for (const sc of (scByVert[stuckNode] || [])) {
+            const other = sc.a === stuckNode ? sc.b : sc.a;
+            if (!_octNodeSet || _octNodeSet.has(other)) exitNodes.add(other);
+        }
+        // Exclude antipodal (it's already filtered from candidates)
+        const stuckAntipodal = _octAntipodal.get(stuckNode);
+        if (stuckAntipodal !== undefined) exitNodes.delete(stuckAntipodal);
+
+        // For each blocked exit, exclude the move that put a xon there
+        for (const exitNode of exitNodes) {
+            for (const trace of _moveTrace) {
+                if (trace.to === exitNode) {
+                    exclusions.push(`${trace.xonIdx}:${exitNode}`);
+                }
+            }
+            // If no xon moved there this tick (blocker was already there),
+            // exclude the blocker staying at that position
+            if (!_moveTrace.some(t => t.to === exitNode)) {
+                for (let i = 0; i < _demoXons.length; i++) {
+                    if (_demoXons[i].alive && _demoXons[i].node === exitNode) {
+                        exclusions.push(`${i}:${exitNode}`);
+                    }
+                }
+            }
+        }
+        // Also exclude the stuck xon staying at its own node
+        for (let i = 0; i < _demoXons.length; i++) {
+            if (_demoXons[i].node === stuckNode) {
+                exclusions.push(`${i}:${stuckNode}`);
+            }
+        }
+    }
+
+    // T55: "N oct xons > capacity C" — too many xons in oct mode.
+    // Exclude excess oct xons' moves to oct-cage nodes, forcing them
+    // into idle_tet or tet paths instead.
+    const capMatch = _rewindViolation.match(/(\d+) oct xons > capacity (\d+)/);
+    if (capMatch && _octNodeSet) {
+        const octCount = parseInt(capMatch[1], 10);
+        const capacity = parseInt(capMatch[2], 10);
+        const excess = octCount - capacity;
+        // Find all oct-mode xons, sorted by most recently moved (from moveTrace)
+        const octXons = [];
+        for (let i = 0; i < _demoXons.length; i++) {
+            if (_demoXons[i].alive && _demoXons[i]._mode === 'oct') {
+                octXons.push(i);
+            }
+        }
+        // Pick the last `excess` oct xons to exclude from oct nodes
+        // (prefer to eject the ones that moved most recently)
+        const toEject = octXons.slice(-excess);
+        for (const xi of toEject) {
+            // Exclude this xon from going to ANY oct cage node
+            for (const octNode of _octNodeSet) {
+                exclusions.push(`${xi}:${octNode}`);
+            }
+        }
+    }
+
+    return exclusions;
+}
+
+// Check if a candidate move is excluded by the persistent bad-move ledger.
+// Consulted during ALL movement decisions, not just PHASE 2.
+function _btIsMoveExcluded(xonIdx, destNode) {
+    if (!_btActive) return false;
+    const tickLedger = _btBadMoveLedger.get(_demoTick);
+    if (!tickLedger) return false;
+    return tickLedger.has(`${xonIdx}:${destNode}`);
+}
+
+// Reset backtracking state (called when starting fresh or after successful commit).
+function _btReset() {
+    _btDepth = 0;
+    _btRetryCount = 0;
+    _btActive = false;
+    _rewindRequested = false;
+    _rewindViolation = null;
+    // Don't clear snapshots — keep them for future backtracks
+    // Don't clear _btBadMoveLedger — it persists across ticks.
+    // Ledger entries are cleaned up on depth escalation (lower levels discarded).
+}
+
 // ── Tunable choreography parameters (genome for GA tournament) ──
 // All hardcoded magic numbers extracted here for parameterized optimization.
 const _choreoParams = {
-    // Choreography genes (movement & scoring)
-    lookahead: 12,           // PHASE 0 eviction foresight depth
-    congestionMax: 4,        // oct cage xon count triggering idle_tet demotion
-    faceOnBonus: 10,         // WB: prefer xon already on face's oct node
-    faceNearBonus: 5,        // WB: prefer xon neighbor of face
-    octDeadEndPenalty: 10,   // PHASE 2: penalize 1-move dead ends
-    octContentionWeight: 2,  // PHASE 2: per-window contention penalty multiplier
-    octCageBonus: 20,        // PHASE 2: bonus for materializing oct cage SCs
-    contentionPeek: 3,       // windows ahead to check schedule contention
-    // Pattern machine genes (schedule structure)
-    windowLen: 4,            // ticks per actualization window
-    singlesPerInner: 2,      // single-tet catch-up windows per inner face
-    singlesDeckMajority: 2,  // majority quark cards in 3-card singles deck
+    // Movement genes (kept from v1)
+    lookahead: 12,              // PHASE 0 eviction foresight depth
+    congestionMax: 4,           // oct cage xon count triggering idle_tet demotion
+    octDeadEndPenalty: 10,      // PHASE 2: penalize 1-move dead ends
+    octCageBonus: 20,           // PHASE 2: bonus for materializing oct cage SCs
+    // Face scoring genes (unified demand-driven system)
+    faceOnBonus: 15,            // xon already on face's oct node
+    faceNearBonus: 8,           // xon neighbor of face (1 hop)
+    faceOccupiedPenalty: 30,    // another xon already looping this face
+    coverageDeficitWeight: 5,   // per-visit gap bonus for undervisited faces
+    vacuumRejectPenalty: 25,    // face SCs can't be materialized
+    ratioDeficitWeight: 10,     // quark type ratio deficit bonus
+    ratioThreshold: 0.05,       // min deficit gap to prefer secondary quark type
+    antiDogpileDecay: 0.7,      // exponential decay for multi-xon same-face targeting
+    assignmentThreshold: 5,     // minimum face score to attempt tet assignment
+    antiPhaseWeight: 3,         // penalty for targeting overrepresented bipartite group
 };
 // Ranges for GA mutation (used by tournament engine in flux-tests.js)
+// Float genes use [min, max, 'float'] to signal continuous mutation.
 const _choreoParamRanges = {
-    lookahead:            [2, 30],
-    congestionMax:        [1, 8],
-    faceOnBonus:          [0, 50],
-    faceNearBonus:        [0, 50],
-    octDeadEndPenalty:    [0, 50],
-    octContentionWeight:  [0, 20],
-    octCageBonus:         [0, 100],
-    contentionPeek:       [0, 10],
-    windowLen:            [1, 12],
-    singlesPerInner:      [0, 6],
-    singlesDeckMajority:  [1, 3],
+    lookahead:              [2, 30],
+    congestionMax:          [1, 8],
+    octDeadEndPenalty:      [0, 50],
+    octCageBonus:           [0, 100],
+    faceOnBonus:            [0, 50],
+    faceNearBonus:          [0, 50],
+    faceOccupiedPenalty:    [0, 100],
+    coverageDeficitWeight:  [0, 30],
+    vacuumRejectPenalty:    [0, 100],
+    ratioDeficitWeight:     [0, 50],
+    ratioThreshold:         [0.0, 0.3, 'float'],
+    antiDogpileDecay:       [0.1, 1.0, 'float'],
+    assignmentThreshold:    [0, 30],
+    antiPhaseWeight:        [0, 20],
 };
 
 // Loop topology → concrete node sequence, given tet cycle [a, b, c, d]
@@ -322,6 +575,26 @@ function _weakLifecycleExit(xon, reason) {
     }
 }
 
+// ── Trail helper: freeze 3D positions at record time so trails don't deform with solver ──
+function _trailPush(xon, node, color) {
+    xon.trail.push(node);
+    xon.trailColHistory.push(color);
+    const p = pos[node];
+    xon._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
+    if (xon.trail.length > XON_TRAIL_LENGTH) {
+        xon.trail.shift();
+        xon.trailColHistory.shift();
+        xon._trailFrozenPos.shift();
+    }
+}
+// Initialize frozen pos array from current trail (for init/reset)
+function _trailInitFrozen(xon) {
+    xon._trailFrozenPos = xon.trail.map(n => {
+        const p = pos[n];
+        return p ? [p[0], p[1], p[2]] : [0, 0, 0];
+    });
+}
+
 // Spawn a xon at a node with spark, trail, and tween — mirrors excitation visuals.
 // Color by quark function: pu=yellow, pd=green, nu=blue, nd=red.
 function _spawnXon(face, quarkType, sign) {
@@ -367,9 +640,11 @@ function _spawnXon(face, quarkType, sign) {
         _dirHistory: [],        // direction vector history for T16 test
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
-        trail: [seq[0]], trailColHistory: [col], tweenT: 1, flashT: 1.0,
+        trail: [seq[0]], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+        _highlightT: 0,
         alive: true,
     };
+    _trailInitFrozen(xon);
     _demoXons.push(xon);
     return xon;
 }
@@ -442,7 +717,7 @@ function _decayDyingXons() {
 // Check if the next hop in a xon's loop crosses an SC-only edge that is still activated.
 // Returns true if traversal is safe (base edge or SC is active), false if SC was deactivated.
 function _canAdvanceSafely(xon) {
-    if (!xon.alive) return false;
+    if (!xon.alive || !xon._loopSeq) return false;
     const effectiveStep = xon._loopStep >= 4 ? 0 : xon._loopStep;
     const fromNode = xon._loopSeq[effectiveStep];
     const toNode = xon._loopSeq[effectiveStep + 1];
@@ -489,9 +764,7 @@ function _advanceXon(xon) {
     }
 
     // Push trail history + per-segment color, start tween
-    xon.trail.push(toNode);
-    xon.trailColHistory.push(xon.col);
-    if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+    _trailPush(xon, toNode, xon.col);
     xon.tweenT = 0;
     if (_flashEnabled) xon.flashT = 1.0;
     return true;
@@ -501,18 +774,19 @@ function _advanceXon(xon) {
 // ║  PERSISTENT 6-XON MODEL — Demo 3.1                                  ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 
+// (_completeOctDiscovery removed — oct is now formed deterministically in simulateNucleus)
+
 // Spawn exactly 6 persistent xons on oct nodes. Called once from startDemoLoop.
 // 3 sign=+1, 3 sign=-1. All start in oct mode (white, cruising cage).
 function _initPersistentXons() {
     _demoXons = [];
-    if (!_octNodeSet || _octNodeSet.size < 6) {
-        console.error('[demo] Cannot init persistent xons: need 6 oct nodes, have', _octNodeSet?.size);
+    if (_octSeedCenter < 0) {
+        console.error('[demo] Cannot init persistent xons: no center node');
         return;
     }
-    const octNodes = [..._octNodeSet];
-    const birthNode = octNodes[0]; // all xons born at same node (genesis co-location)
+    // All 6 xons start at center (opening choreography spreads them out in 2 ticks)
+    const startNode = _octSeedCenter;
     for (let i = 0; i < 6; i++) {
-        const startNode = birthNode;
         const sign = i < 3 ? +1 : -1;
 
         // Create spark + trail visuals (white for oct mode)
@@ -542,24 +816,23 @@ function _initPersistentXons() {
         trailLine.renderOrder = 20;
         scene.add(trailLine);
 
-        // Pick initial direction: random valid oct neighbor
-        const octNeighbors = baseNeighbors[startNode].filter(nb => _octNodeSet.has(nb.node));
-        const initNb = octNeighbors.length > 0 ? octNeighbors[Math.floor(Math.random() * octNeighbors.length)] : null;
-        const initDir = initNb ? initNb.dirIdx : 0;
+        const initDir = 0; // direction doesn't matter at center (opening choreography assigns)
 
         const xon = {
             prevNode: startNode, sign,
             _loopType: null,
             _loopSeq: null, _loopStep: 0,
             _assignedFace: null, _quarkType: null,
-            _mode: 'oct',
+            _mode: 'oct_formation',
             _lastDir: initDir,
             _dirHistory: [],
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
-            trail: [startNode], trailColHistory: [col], tweenT: 1, flashT: 1.0,
+            trail: [startNode], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+            _highlightT: 0,
             alive: true,
         };
+        _trailInitFrozen(xon);
         // Interceptor: enforce single-hop-per-tick + validate each individual movement
         let _nodeVal = startNode;
         xon._movedThisTick = false;
@@ -600,7 +873,7 @@ function _initPersistentXons() {
         });
         _demoXons.push(xon);
     }
-    console.log(`[demo] Initialized 6 persistent xons on oct nodes: [${_demoXons.map(x => x.node).join(',')}]`);
+    console.log(`[demo] Initialized 6 persistent xons at center node ${startNode}`);
 }
 
 // ╔══════════════════════════════════════════════════════════════════════╗
@@ -650,6 +923,7 @@ function _manifestXonPair() {
     if (dead.length < 2) return false;
 
     // Find two free adjacent oct nodes
+    if (!_octNodeSet) return false;
     const occupied = _occupiedNodes();
     let nodeA = null, nodeB = null;
     for (const n of _octNodeSet) {
@@ -687,6 +961,7 @@ function _manifestXonPair() {
     xonA._movedThisTick = false;
     xonA.trail = [nodeA];
     xonA.trailColHistory = [0xffffff];
+    _trailInitFrozen(xonA);
     xonA.tweenT = 1;
     if (_flashEnabled) xonA.flashT = 1.0;
     if (xonA.sparkMat) xonA.sparkMat.color.setHex(0xffffff);
@@ -706,6 +981,7 @@ function _manifestXonPair() {
     xonB._movedThisTick = false;
     xonB.trail = [nodeB];
     xonB.trailColHistory = [0xffffff];
+    _trailInitFrozen(xonB);
     xonB.tweenT = 1;
     if (_flashEnabled) xonB.flashT = 1.0;
     if (xonB.sparkMat) xonB.sparkMat.color.setHex(0xffffff);
@@ -795,16 +1071,12 @@ function _maxBipartiteAssignment(plans, blocked) {
 //    This simulates the xon stepping through its ACTUAL sequence, tracking
 //    self-occupation to handle revisited nodes (fork: a→b→a→c→a).
 //
-// Pattern machine awareness: the schedule (_demoSchedule) tells us which
-// faces/quark types are assigned in upcoming windows. _peekSchedule()
-// returns the next N window assignments so lookahead can anticipate
-// which tet paths will be active and which nodes will be contested.
-// Lookahead depth now reads from _choreoParams.lookahead (GA-tunable)
+// Lookahead depth reads from _choreoParams.lookahead (GA-tunable)
 
 // Generic graph lookahead for oct xons (flexible movement).
 // Validates against: T19 (Pauli), T26 (SC activation), T27 (connectivity),
 // T29 (white trails only on oct nodes).
-function _lookahead(node, occupied, depth, _visited) {
+function _lookahead(node, occupied, depth, _visited, _selfXon) {
     if (depth <= 0) return true;
     if (!_visited) _visited = new Set();
     _visited.add(node);
@@ -819,7 +1091,7 @@ function _lookahead(node, occupied, depth, _visited) {
             // Occupied node = ANNIHILATION OPPORTUNITY (valid terminal move).
             return true;
         }
-        if (_lookahead(nb.node, occupied, depth - 1, new Set(_visited))) return true;
+        if (_lookahead(nb.node, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
     }
     // Active SC neighbors — T26: only traverse activated SCs
     const scs = scByVert[node] || [];
@@ -831,13 +1103,17 @@ function _lookahead(node, occupied, depth, _visited) {
         if (_annihilationEnabled && (occupied.get(other) || 0)) return true; // annihilation opportunity
         // T26: SC must be activated
         if (!(activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))) continue;
-        if (_lookahead(other, occupied, depth - 1, new Set(_visited))) return true;
+        if (_lookahead(other, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
     }
     // WEAK FORCE FALLBACK: if all oct-restricted paths fail, any free base neighbor
-    // is a valid escape via the weak force. This prevents false "no valid move" results.
+    // is a valid escape via the weak force. Check ALL projected guards before accepting.
     for (const nb of nbs) {
         if (_visited.has(nb.node)) continue;
-        if (!(occupied.get(nb.node) || 0)) return true; // free non-oct neighbor = weak force available
+        if (!(occupied.get(nb.node) || 0)) {
+            // Structural guard check: reject if move would violate ANY active test
+            if (_selfXon && _moveViolatesGuards(_selfXon, node, nb.node)) continue;
+            return true;
+        }
     }
     return false;
 }
@@ -940,45 +1216,6 @@ function _lookaheadForXon(xon, node, occupied, depth) {
     return _lookahead(node, occupied, depth);
 }
 
-// ── Pattern Machine Awareness ──
-// Peek at the schedule to see which faces/quark types are active in upcoming windows.
-// Returns an array of { faces, ticksUntil } for the next `count` windows.
-function _peekSchedule(count) {
-    if (!_demoSchedule) return [];
-    const WINDOW_LEN = _choreoParams.windowLen;
-    const CYCLE_LEN = _demoSchedule.length * WINDOW_LEN;
-    const tickInCycle = _demoTick % CYCLE_LEN;
-    const currentWindow = Math.floor(tickInCycle / WINDOW_LEN);
-    const tickInWindow = tickInCycle % WINDOW_LEN;
-    const ticksLeftInWindow = WINDOW_LEN - tickInWindow;
-
-    const result = [];
-    for (let i = 0; i < count; i++) {
-        const wIdx = (currentWindow + 1 + i) % _demoSchedule.length;
-        const ticksUntil = ticksLeftInWindow + i * WINDOW_LEN;
-        const win = _demoSchedule[wIdx];
-        if (win) result.push({ faces: win.faces, ticksUntil, windowIdx: wIdx });
-    }
-    return result;
-}
-
-// Check if a node will be contested by upcoming pattern machine assignments.
-// Returns a "contention score" — higher means more upcoming windows will use
-// tet faces that include this node. Used to penalize moves toward congested areas.
-function _nodeScheduleContention(node) {
-    const upcoming = _peekSchedule(_choreoParams.contentionPeek); // look N windows ahead
-    let contention = 0;
-    for (const { faces } of upcoming) {
-        for (const f of faces) {
-            const fd = _nucleusTetFaceData[f];
-            if (!fd) continue;
-            // Check if this node is part of the tet face
-            if (fd.allNodes.includes(node)) contention++;
-        }
-    }
-    return contention;
-}
-
 // Compute the projected occupation map after all planned moves execute.
 // Returns a Map<node, count> of where xons will be.
 function _projectOccupation(tetPlans, octPlans) {
@@ -1055,6 +1292,31 @@ function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
     return has2nd;
 }
 
+// ── Single-Move Guard Check ──
+// Validates a proposed move for one xon against ALL projected guards.
+// STRUCTURAL GUARANTEE: any guard with projected() in LIVE_GUARD_REGISTRY
+// is automatically checked here. Add projected() to your test = covered everywhere.
+// Used by: _lookahead weak-force fallback, PHASE 0.5 weak BFS, PHASE 3/5 escape hatches.
+function _moveViolatesGuards(xon, fromNode, toNode) {
+    // Check persistent bad-move ledger (during backtrack retries)
+    if (_btActive) {
+        const xonIdx = _demoXons.indexOf(xon);
+        if (_btIsMoveExcluded(xonIdx, toNode)) return true;
+    }
+    if (typeof PROJECTED_GUARD_CHECKS === 'undefined' || !PROJECTED_GUARD_CHECKS.length) return false;
+    // Build futures: this xon at toNode, all others at current positions
+    const futures = [];
+    for (const x of _demoXons) {
+        if (!x.alive) continue;
+        if (x === xon) {
+            futures.push({ xon: x, futureNode: toNode, fromNode, futureMode: x._mode, futureColor: x.col });
+        } else {
+            futures.push({ xon: x, futureNode: x.node, fromNode: x.node, futureMode: x._mode, futureColor: x.col });
+        }
+    }
+    return _validateProjectedGuards(futures).length > 0;
+}
+
 // ── Projected Guard Validator ──
 // Iterates the PROJECTED_GUARD_CHECKS array (defined in flux-tests.js).
 // Each check function receives the projected xon states and returns violations.
@@ -1114,22 +1376,121 @@ function _verifyPlan(tetPlans, octPlans) {
     return stuck;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Demand-driven face scoring — nucleus-as-one-system approach
+// Scores a (xon, face) pair. Returns {face, quarkType, score} or null.
+// Pure function, no side effects. Used as edge weight in global bipartite matching.
+// ═══════════════════════════════════════════════════════════════════════
+function _scoreFaceOpportunity(xon, face, occupied) {
+    if (!_nucleusTetFaceData || !_nucleusTetFaceData[face]) return null;
+    const fd = _nucleusTetFaceData[face];
+
+    let score = 0;
+
+    // 1. REACHABILITY: Is xon on a face oct node or 1 hop away?
+    const faceOctNodes = [];
+    for (const n of fd.cycle) {
+        if (_octNodeSet && _octNodeSet.has(n)) faceOctNodes.push(n);
+    }
+    const onFace = faceOctNodes.includes(xon.node);
+    let nearFace = false;
+    if (!onFace) {
+        for (const nb of (baseNeighbors[xon.node] || [])) {
+            if (faceOctNodes.includes(nb.node)) { nearFace = true; break; }
+        }
+    }
+    if (!onFace && !nearFace) return null; // unreachable this tick
+
+    score += onFace ? _choreoParams.faceOnBonus : _choreoParams.faceNearBonus;
+
+    // 2. VACANCY: Is another xon already executing a loop on this face?
+    for (const x of _demoXons) {
+        if (!x.alive || x === xon) continue;
+        if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._assignedFace === face) {
+            score -= _choreoParams.faceOccupiedPenalty;
+            break;
+        }
+    }
+
+    // 3. COVERAGE DEFICIT: Has this face been undervisited?
+    if (_demoVisits) {
+        const faceVisits = _demoVisits[face] ? _demoVisits[face].total : 0;
+        let totalVisits = 0;
+        for (let f = 1; f <= 8; f++) totalVisits += _demoVisits[f] ? _demoVisits[f].total : 0;
+        const meanVisits = totalVisits / 8;
+        const coverageDeficit = Math.max(0, meanVisits - faceVisits);
+        score += coverageDeficit * _choreoParams.coverageDeficitWeight;
+    }
+
+    // 4. BIPARTITE GROUP → hadron type
+    const isProtonFace = A_SET.has(face);
+    const primaryType = isProtonFace ? 'pu' : 'nd';
+    const secondaryType = isProtonFace ? 'pd' : 'nu';
+
+    // 5. RATIO DEFICIT → pick quark type
+    const primaryDeficit = _ratioTracker.deficit(primaryType);
+    const secondaryDeficit = _ratioTracker.deficit(secondaryType);
+    let quarkType;
+    if (secondaryDeficit > primaryDeficit + _choreoParams.ratioThreshold) {
+        quarkType = secondaryType;
+        score += secondaryDeficit * _choreoParams.ratioDeficitWeight;
+    } else {
+        quarkType = primaryType;
+        score += Math.max(0, primaryDeficit) * _choreoParams.ratioDeficitWeight;
+    }
+
+    // 6. ANTI-PHASE: prefer faces from underrepresented bipartite group
+    let activeA = 0, activeB = 0;
+    for (const x of _demoXons) {
+        if (!x.alive || x === xon) continue;
+        if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._assignedFace != null) {
+            if (A_SET.has(x._assignedFace)) activeA++; else activeB++;
+        }
+    }
+    const groupImbalance = isProtonFace ? (activeA - activeB) : (activeB - activeA);
+    score -= groupImbalance * _choreoParams.antiPhaseWeight;
+
+    return { face, quarkType, score, onFace };
+}
+
 // Get scored oct-mode candidates for a xon. Returns array sorted by momentum score (desc).
 // `blocked` is an optional Set of additional nodes to treat as occupied (for coordinated planning).
 function _getOctCandidates(xon, occupied, blocked) {
-    if (!xon.alive || xon._mode !== 'oct') return [];
+    if (!xon.alive) return [];
+    if (xon._mode !== 'oct' && xon._mode !== 'weak') return [];
 
-    // Get ALL oct neighbors: base edges + SC edges
+    // Weak xons move freely via base neighbors (not constrained to oct cage)
+    if (xon._mode === 'weak') {
+        const candidates = [];
+        for (const nb of baseNeighbors[xon.node]) {
+            if ((occupied.get(nb.node) || 0) > 0) continue;
+            if (blocked && blocked.has(nb.node)) continue;
+            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: undefined, _needsMaterialise: false });
+        }
+        return candidates;
+    }
+
+    // Constrain oct movement to cage nodes only.
+    if (!_octNodeSet) return [];
+
+    // Constrain oct movement to cage nodes only.
+    // Off-cage xons get no candidates here; the fallback _startIdleTetLoop handles them.
+    const onCage = _octNodeSet.has(xon.node);
+    if (!onCage) return [];
+
+    // Get neighbors: base edges + SC edges (filtered to oct cage, excluding antipodal)
+    const antipodal = _octAntipodal.get(xon.node);
     const allOctNeighbors = [];
     for (const nb of baseNeighbors[xon.node]) {
-        if (_octNodeSet.has(nb.node)) {
+        if (_octNodeSet.has(nb.node) && nb.node !== antipodal) {
             allOctNeighbors.push({ node: nb.node, dirIdx: nb.dirIdx });
         }
     }
     const scs = scByVert[xon.node] || [];
     for (const sc of scs) {
         const other = sc.a === xon.node ? sc.b : sc.a;
-        if (_octNodeSet.has(other) && !allOctNeighbors.find(n => n.node === other)) {
+        if (_octNodeSet.has(other) && other !== antipodal && !allOctNeighbors.find(n => n.node === other)) {
             const scId = sc.id;
             const alreadyActive = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
             const dx = pos[other][0] - pos[xon.node][0];
@@ -1191,18 +1552,13 @@ function _getOctCandidates(xon, occupied, blocked) {
         }
         _occDel(tmpOcc, c.node);
 
-        // Pattern machine awareness: penalize destinations on tet faces that
-        // upcoming windows will activate. These nodes will become contested
-        // by tet xon assignments, making them poor oct parking spots.
-        const contention = _nodeScheduleContention(c.node);
-        c.score -= contention * _choreoParams.octContentionWeight; // penalize per upcoming window that uses this node's face
-
         // Oct cage priority: strongly prefer traversals that would materialize
         // unmaterialized oct cage SCs (helps T25 — cage must complete by tick 36)
         if (c._scId !== undefined && c._needsMaterialise && _octSCIds &&
             _octSCIds.includes(c._scId)) {
             c.score += _choreoParams.octCageBonus; // highest priority — materializing oct cage SCs
         }
+
     }
 
     // Sort by score descending (prefer forward momentum + 2-step awareness + low contention)
@@ -1262,9 +1618,7 @@ function _executeOctMove(xon, target) {
     xon._lastDir = target.dirIdx;
 
     // Push trail history + per-segment color, start tween
-    xon.trail.push(target.node);
-    xon.trailColHistory.push(xon.col);
-    if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+    _trailPush(xon, target.node, xon.col);
     xon.tweenT = 0;
     if (_flashEnabled) xon.flashT = 1.0;
     return true;
@@ -1402,6 +1756,7 @@ function _walkToFace(xon, targetNodes) {
     }
 
     // BFS from xon.node to nearest target, only via base edges + active SCs
+    // Exclude antipodal oct node hops (diagonal traversal)
     const visited = new Set([xon.node]);
     const parent = new Map();
     const queue = [xon.node];
@@ -1409,10 +1764,12 @@ function _walkToFace(xon, targetNodes) {
 
     while (queue.length > 0 && !found) {
         const curr = queue.shift();
+        const currAntipodal = _octAntipodal.get(curr);
         const nbs = baseNeighbors[curr] || [];
         for (const nb of nbs) {
             if (visited.has(nb.node)) continue;
             if (!_octNodeSet.has(nb.node)) continue;
+            if (nb.node === currAntipodal) continue; // no diagonal hops
             visited.add(nb.node);
             parent.set(nb.node, curr);
             // Pauli: only accept unoccupied target nodes (T19)
@@ -1427,6 +1784,7 @@ function _walkToFace(xon, targetNodes) {
             const neighbor = sc.a === curr ? sc.b : sc.a;
             if (visited.has(neighbor)) continue;
             if (!_octNodeSet.has(neighbor)) continue;
+            if (neighbor === currAntipodal) continue; // no diagonal hops
             visited.add(neighbor);
             parent.set(neighbor, curr);
             // Pauli: only accept unoccupied target nodes (T19)
@@ -1454,9 +1812,7 @@ function _walkToFace(xon, targetNodes) {
     _moveRecord.set(step, fromWF);
     _traceMove(xon, fromWF, step, 'walkToFace');
 
-    xon.trail.push(step);
-    xon.trailColHistory.push(0xffffff);
-    if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+    _trailPush(xon, step, 0xffffff);
     xon.tweenT = 0;
 
     // Return the target if we reached it in one hop, otherwise null (still walking)
@@ -1519,9 +1875,7 @@ function _returnXonToOct(xon, occupied) {
         _moveRecord.set(target.node, fromRTO);
         _traceMove(xon, fromRTO, target.node, 'returnToOct');
         if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, target.node); }
-        xon.trail.push(target.node);
-        xon.trailColHistory.push(xon.col);
-        if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+        _trailPush(xon, target.node, xon.col);
     } else {
         // Already at an oct node — just switch mode
         _relinquishFaceSCs(xon);
@@ -1772,9 +2126,12 @@ function _tickDemoXons(dt) {
         // Sparkle flash + flicker
         xon.flashT = Math.max(0, xon.flashT - dt * 6.0);
         const flicker = 0.85 + Math.random() * 0.3;
-        const pulse = (0.22 + xon.flashT * 0.26) * flicker;
+        const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
+        const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost;
         xon.spark.scale.set(pulse, pulse, 1);
-        xon.sparkMat.opacity = (0.6 + xon.flashT * 0.4) * flicker * sparkOp;
+        xon.sparkMat.opacity = Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost);
+        // Decay highlight timer
+        if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
 
         // Trail: fading vertex-colored path
@@ -1789,7 +2146,8 @@ function _tickDemoXons(dt) {
         xon._lastTrailFlashBoost = 0; // reset per frame for T37 measurement
         for (let vi = 0; vi < visLen; vi++) {
             const i = startIdx + vi;
-            const np = pos[xon.trail[i]];
+            // Use frozen positions (recorded at trail push time) so trails don't deform with solver
+            const np = (xon._trailFrozenPos && xon._trailFrozenPos[i]) || pos[xon.trail[i]];
             if (!np) continue;
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
@@ -1919,22 +2277,28 @@ function _cleanupDemo3() {
     _demoPrevFaces = new Set();
 }
 
-// Map speed slider (1-100) to demo interval: 1→1000ms (1s cycle), 50→~45ms, 100→2ms (turbo)
+// Map speed slider (1-100) to demo interval: 1→2000ms (2s cycle), 50→~60ms, 100→uncapped
 function _getDemoIntervalMs() {
     const slider = document.getElementById('excitation-speed-slider');
-    if (!slider) return 1000; // default = slowest
+    if (!slider) return 2000; // default = slowest
     const t = +slider.value / 100;
     if (t >= 1.0) return 0; // 100% = uncapped, as fast as possible
-    return Math.max(4, Math.round(Math.exp(Math.log(1000) * (1 - t) + Math.log(4) * t)));
+    return Math.max(4, Math.round(Math.exp(Math.log(2000) * (1 - t) + Math.log(4) * t)));
 }
 let _demoUncappedId = null;  // setTimeout chain for uncapped mode
 function _demoUncappedLoop() {
-    if (!_demoActive || _demoInterval) { _demoUncappedId = null; return; }
+    if (!_demoActive || _demoInterval || _demoPaused) { _demoUncappedId = null; return; }
     demoTick().then(() => {
-        if (_demoActive && !_demoInterval) {
+        if (_demoActive && !_demoInterval && !_demoPaused) {
             _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
         } else {
             _demoUncappedId = null;
+        }
+    }).catch(err => {
+        console.error('[uncapped loop] demoTick error:', err);
+        // Don't kill the loop — schedule next tick anyway
+        if (_demoActive && !_demoInterval && !_demoPaused) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
         }
     });
 }
@@ -1991,29 +2355,6 @@ const L1_VALID_TRIPLES = [
     [3, 5, 6], [1, 6, 7], [3, 5, 8], [1, 7, 8],  // 2A+1B
     [4, 5, 6], [4, 6, 7], [2, 5, 8], [2, 7, 8],  // 1A+2B
 ];
-const L1_INNER_FACES = [1, 2, 3, 4];
-
-// Build a singles deck for a given face, parameterized by singlesDeckMajority.
-// A-faces get neutron types (opposite of proton triples), B-faces get proton types.
-// singlesDeckMajority=2 → [maj,maj,min] (2:1 ratio, the default)
-// singlesDeckMajority=1 → [maj,min,min] (1:2 ratio)
-// singlesDeckMajority=3 → [maj,maj,maj] (all majority, no minority)
-function _buildSinglesDeck(face) {
-    const isA = A_SET.has(face);
-    const maj = isA ? 'nd' : 'pu'; // majority quark type
-    const min = isA ? 'nu' : 'pd'; // minority quark type
-    const n = _choreoParams.singlesDeckMajority;
-    const deck = [];
-    for (let i = 0; i < n; i++) deck.push(maj);
-    for (let i = n; i < 3; i++) deck.push(min);
-    // Fisher-Yates shuffle
-    for (let i = deck.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-    return deck;
-}
-
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  NON-DELETABLE: MINIMAL ACTION PRINCIPLE                           ║
 // ║                                                                    ║
@@ -2032,55 +2373,23 @@ function _buildSinglesDeck(face) {
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 /**
- * Build a physically valid 16-window schedule (64 ticks per cycle).
- * 8 triple windows (all L1-valid triples) + 8 single-tet windows
- * (2 per inner face for coverage equalization).
- * Each face gets exactly 4 activations per cycle.
- * Fisher-Yates shuffled for stochastic ordering.
- * Returns array of 16 entries: {faces: [f1, f2?, f3?]}
- */
-function buildPhysicalSchedule() {
-    const windows = [];
-    // 8 triple windows — hadron activations
-    for (const triple of L1_VALID_TRIPLES) {
-        windows.push({ faces: [...triple] });
-    }
-    // Single-tet windows — inner face coverage equalization
-    // Each inner face gets singlesPerInner windows to balance outer faces' triple exposure
-    for (const f of L1_INNER_FACES) {
-        for (let s = 0; s < _choreoParams.singlesPerInner; s++) {
-            windows.push({ faces: [f] });
-        }
-    }
-    // Fisher-Yates shuffle
-    for (let i = windows.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [windows[i], windows[j]] = [windows[j], windows[i]];
-    }
-    return windows;
-}
-
-/**
- * Start the pattern demo: sets up lattice, computes schedule, runs high-speed loop.
+ * Start the demand-driven demo: sets up lattice, runs high-speed loop.
  * Called AFTER simulateNucleus() has built the octahedron.
+ * No schedule or windows — xons self-assign via _scoreFaceOpportunity.
  */
 function startDemoLoop() {
-    // Build L1-valid physical schedule (8 windows = 32 ticks, reshuffled each cycle)
-    _demoSchedule = buildPhysicalSchedule();
-
-    // Init visit counters + per-face shuffled decks for stochastic type assignment
+    // Init visit counters (demand-driven — no schedule needed)
     _demoVisits = {};
-    _demoFaceDecks = {};
     for (let f = 1; f <= 8; f++) {
         _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
-        _demoFaceDecks[f] = [];  // empty → will reshuffle on first draw
     }
     _demoTick = 0;
+    _btBadMoveLedger.clear(); // fresh demo = clean ledger
+    _btSnapshots.length = 0;
     _demoTetAssignments = 0;
     _demoPauliViolations = 0;
     _demoSpreadViolations = 0;
     _demoTypeBalanceHistory = [];
-    _demoWindowTypes = null;  // current window's face→type assignments
     _demoVisitedFaces = new Set();  // track which faces have been activated
     _demoOctRevealed = false;       // oct only renders once all 8 faces visited
     // Clean up any existing xon visuals before reinit
@@ -2094,6 +2403,7 @@ function startDemoLoop() {
     _demoGluons = [];               // Demo 3.1: clear gluon pool
     _demoPrevFaces = new Set();     // Demo 3.1: no previous window faces
     _demoActive = true;
+    _demoPaused = false;
 
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();
@@ -2139,7 +2449,7 @@ function startDemoLoop() {
     const dpTitle = document.getElementById('dp-title');
     if (dpTitle) dpTitle.textContent = '0 Planck seconds';
 
-    // Demo 3.0 visual setup: opacity defaults per T39 spec
+    // Demo 3.0 visual setup: opacity defaults
     const spheresSlider = document.getElementById('sphere-opacity-slider');
     if (spheresSlider) { spheresSlider.value = 3; spheresSlider.dispatchEvent(new Event('input')); }
     const shapesSlider = document.getElementById('void-opacity-slider');
@@ -2165,30 +2475,22 @@ function startDemoLoop() {
     sph.phi = Math.PI / 2; // eye level — look at cage horizontally
     applyCamera();
 
-    // Default to maximum speed for fast iteration
+    // Default to maximum speed (uncapped)
     const speedSlider = document.getElementById('excitation-speed-slider');
     if (speedSlider) { speedSlider.value = 100; speedSlider.dispatchEvent(new Event('input')); }
     // Default lifespan: visible trail length (how many of 50 stored ticks to show)
     const lifespanSlider = document.getElementById('tracer-lifespan-slider');
     if (lifespanSlider) { lifespanSlider.value = 13; lifespanSlider.dispatchEvent(new Event('input')); }
-    // Demo 3.1: Spawn 6 persistent xons on oct cage nodes
+    // Spawn 6 persistent xons at center node
     _initPersistentXons();
+    _openingPhase = true; // 2-tick opening choreography (ticks 0-1)
 
-    // Seed oct cage SCs: the cage defines the nucleus structure and should be
-    // active from the start. Try to materialize all 4 via the solver.
-    if (_octSCIds && _octSCIds.length > 0) {
-        let seeded = 0;
-        for (const scId of _octSCIds) {
-            if (!activeSet.has(scId) && canMaterialiseQuick(scId)) {
-                activeSet.add(scId);
-                stateVersion++;
-                seeded++;
-            }
-        }
-        if (seeded > 0) {
-            console.log(`[demo] Seeded ${seeded}/${_octSCIds.length} oct cage SCs into activeSet`);
-        }
-    }
+    // Clear any orphaned timers that the speed slider dispatch (above) may have
+    // started — the slider handler sees _demoActive=true and starts a loop, but
+    // startDemo() needs exactly ONE loop. Without this, pause can never clear the
+    // orphaned timer and the demo appears to ignore the pause button.
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+    if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
 
     const intervalMs = _getDemoIntervalMs();
     if (intervalMs === 0) {
@@ -2200,17 +2502,15 @@ function startDemoLoop() {
         console.log(`[demo] Pattern demo started at ${intervalMs}ms interval`);
     }
 
-    // Auto-run unit tests — HALT DEMO if any test fails (skip during tournament)
-    if (!_tournamentRunning) {
-        try {
-            const testResult = runDemo3Tests();
-            if (testResult.failed.length > 0) {
-                console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
-                stopDemo();
-                return;
-            }
-        } catch (e) { console.warn('[demo] Test suite error:', e); }
-    }
+    // Auto-run unit tests — HALT DEMO if any test fails (tournament: run but don't halt)
+    try {
+        const testResult = runDemo3Tests();
+        if (!_tournamentRunning && testResult.failed.length > 0) {
+            console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
+            stopDemo();
+            return;
+        }
+    } catch (e) { console.warn('[demo] Test suite error:', e); }
 
     // Activate live guards (T19, T21, T26, T27) — start with null during grace
     if (typeof _liveGuards !== 'undefined') {
@@ -2257,12 +2557,250 @@ function _setDemoLattice(level) {
 const QUARK_COLORS = { pu: 0xffdd44, pd: 0x44cc66, nu: 0x4488ff, nd: 0xff4444 };
 const A_SET = new Set([1, 3, 6, 8]);
 
+// ─── 2-Tick Opening Choreography ─────────────────────────────────────────
+// Tick 0: 4 xons move center → equatorial nodes (base edges).
+//         2 free xons move to other base neighbors (base-only, no SCs).
+// Tick 1: 4 xons merry-go-round one position around equatorial square (cage SCs).
+//         2 free xons stay within 1-step of center (base-only).
+function _executeOpeningTick(occupied) {
+    const center = _octSeedCenter;
+
+    if (_demoTick === 0) {
+        // ── Tick 0: 4 xons → down equatorial nodes, 2 xons → random others ──
+        // The 4 base neighbors of center below it in Y (visual vertical, camera.up=Y)
+        // form a valid equatorial square (connected by 4 cage SCs), guaranteeing the
+        // merry-go-round at tick 1 will always succeed. Center is the top of the oct.
+        const cy = pos[center][1];
+        const allNbs = baseNeighbors[center].slice();
+        const downY = allNbs.filter(nb => pos[nb.node][1] < cy);
+        const upY   = allNbs.filter(nb => pos[nb.node][1] >= cy);
+        // Shuffle within each group for variety
+        for (let i = downY.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [downY[i], downY[j]] = [downY[j], downY[i]];
+        }
+        for (let i = upY.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [upY[i], upY[j]] = [upY[j], upY[i]];
+        }
+        // First 4 xons → equatorial (below center), remaining 2 → random above
+        for (let i = 0; i < 4; i++) {
+            const xon = _demoXons[i];
+            const pick = downY[i];
+            _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
+        }
+        for (let i = 0; i < 2 && i < upY.length; i++) {
+            const xon = _demoXons[4 + i];
+            const pick = upY[i];
+            _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
+        }
+
+    } else if (_demoTick === 1) {
+        // ── Tick 1: Discover oct from the 6 positions, then merry-go-round ──
+        const xonNodes = _demoXons.map(x => x.node);
+        const xonNodeSet = new Set(xonNodes);
+        const centerBaseNbSet = new Set(baseNeighbors[center].map(nb => nb.node));
+
+        // Find oct candidates whose equator is a subset of our 6 xon positions
+        const validOcts = [];
+        for (const sc of scByVert[center]) {
+            const pole = sc.a === center ? sc.b : sc.a;
+            const equator = baseNeighbors[pole].map(nb => nb.node).filter(n => centerBaseNbSet.has(n));
+            if (equator.length !== 4) continue;
+            if (!equator.every(n => xonNodeSet.has(n))) continue;
+            const cageSCIds = [];
+            for (let i = 0; i < equator.length; i++)
+                for (let j = i + 1; j < equator.length; j++) {
+                    const scId = scPairToId.get(pairId(equator[i], equator[j]));
+                    if (scId !== undefined && !(baseNeighbors[equator[i]] || []).some(nb => nb.node === equator[j]))
+                        cageSCIds.push(scId);
+                }
+            if (cageSCIds.length !== 4) continue;
+            validOcts.push({ pole, equator, cageSCIds, octNodes: new Set([center, pole, ...equator]) });
+        }
+
+        if (validOcts.length === 0) {
+            console.error('[opening] No valid oct among 6 xon positions!');
+            return;
+        }
+
+        const chosen = validOcts[Math.floor(Math.random() * validOcts.length)];
+        const equatorSet = new Set(chosen.equator);
+
+        // ── Set up all oct data structures (deferred from simulateNucleus) ──
+        _octNodeSet = chosen.octNodes;
+        _octSCIds = chosen.cageSCIds;
+
+        // Chain-walk equator into cycle order
+        const eq = chosen.equator.slice();
+        const ordered = [eq[0]], used = new Set([0]), scCycle = [];
+        for (let step = 0; step < 3; step++) {
+            const cur = ordered[ordered.length - 1];
+            for (let j = 0; j < eq.length; j++) {
+                if (used.has(j)) continue;
+                const scId = scPairToId.get(pairId(cur, eq[j]));
+                if (scId !== undefined && chosen.cageSCIds.includes(scId)) {
+                    ordered.push(eq[j]); scCycle.push(scId); used.add(j); break;
+                }
+            }
+        }
+        const closeScId = scPairToId.get(pairId(ordered[3], ordered[0]));
+        if (closeScId !== undefined) scCycle.push(closeScId);
+        _octEquatorCycle = ordered;
+        _octCageSCCycle = scCycle;
+
+        // Build antipodal map: eq[0]↔eq[2], eq[1]↔eq[3], pole↔pole
+        _octAntipodal = new Map();
+        _octAntipodal.set(ordered[0], ordered[2]);
+        _octAntipodal.set(ordered[2], ordered[0]);
+        _octAntipodal.set(ordered[1], ordered[3]);
+        _octAntipodal.set(ordered[3], ordered[1]);
+        const poles = [];
+        for (const n of _octNodeSet) {
+            if (!ordered.includes(n)) poles.push(n);
+        }
+        if (poles.length === 2) {
+            _octAntipodal.set(poles[0], poles[1]);
+            _octAntipodal.set(poles[1], poles[0]);
+        }
+
+        // Find oct void
+        _octVoidIdx = -1;
+        for (let vi = 0; vi < voidNeighborData.length; vi++) {
+            const v = voidNeighborData[vi];
+            if (v.type === 'oct' && v.nbrs.every(n => _octNodeSet.has(n))) { _octVoidIdx = vi; break; }
+        }
+
+        // Discover adjacent tet voids → face IDs
+        _nucleusTetFaceData = {};
+        const adjTets = [];
+        for (let vi = 0; vi < voidNeighborData.length; vi++) {
+            const v = voidNeighborData[vi];
+            if (v.type !== 'tet') continue;
+            const inOct = v.nbrs.filter(n => _octNodeSet.has(n));
+            if (inOct.length !== 3) continue;
+            adjTets.push({ voidIdx: vi, octNodes: inOct, extNode: v.nbrs.find(n => !_octNodeSet.has(n)),
+                allNodes: [...v.nbrs], scIds: [...v.scIds] });
+        }
+        const tetGroup = new Map();
+        if (adjTets.length > 0) {
+            tetGroup.set(adjTets[0].voidIdx, 'A');
+            const queue = [adjTets[0]];
+            while (queue.length > 0) {
+                const cur = queue.shift();
+                const otherG = tetGroup.get(cur.voidIdx) === 'A' ? 'B' : 'A';
+                for (const other of adjTets) {
+                    if (tetGroup.has(other.voidIdx)) continue;
+                    if (cur.octNodes.filter(n => other.octNodes.includes(n)).length === 2) {
+                        tetGroup.set(other.voidIdx, otherG); queue.push(other);
+                    }
+                }
+            }
+            for (const t of adjTets) if (!tetGroup.has(t.voidIdx)) tetGroup.set(t.voidIdx, 'A');
+        }
+        const gA = [1,3,6,8], gB = [2,4,5,7];
+        const tA = adjTets.filter(t => tetGroup.get(t.voidIdx) === 'A');
+        const tB = adjTets.filter(t => tetGroup.get(t.voidIdx) === 'B');
+        for (let i = 0; i < tA.length && i < gA.length; i++) {
+            const t = tA[i];
+            _nucleusTetFaceData[gA[i]] = { voidIdx: t.voidIdx, allNodes: t.allNodes, extNode: t.extNode,
+                scIds: t.scIds, cycle: [t.octNodes[0], t.extNode, t.octNodes[1], t.octNodes[2]], group: 'A' };
+        }
+        for (let i = 0; i < tB.length && i < gB.length; i++) {
+            const t = tB[i];
+            _nucleusTetFaceData[gB[i]] = { voidIdx: t.voidIdx, allNodes: t.allNodes, extNode: t.extNode,
+                scIds: t.scIds, cycle: [t.octNodes[0], t.extNode, t.octNodes[1], t.octNodes[2]], group: 'B' };
+        }
+
+        console.log(`[opening] Oct discovered: equator=[${ordered}], pole=${chosen.pole}, ${adjTets.length} tets`);
+
+        // ── Merry-go-round: equatorial xons rotate one position via cage SCs ──
+        const eqXonMap = new Map();
+        for (let i = 0; i < 6; i++) if (equatorSet.has(xonNodes[i])) eqXonMap.set(xonNodes[i], i);
+
+        const choreoMoves = [];
+        for (let i = 0; i < 4; i++) {
+            const src = _octEquatorCycle[i], dst = _octEquatorCycle[(i+1)%4];
+            const scId = _octCageSCCycle[i];
+            const xon = _demoXons[eqXonMap.get(src)];
+            const isActive = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
+            let dirIdx = 0;
+            const nb = baseNeighbors[xon.node]?.find(nb => nb.node === dst);
+            if (nb) dirIdx = nb.dirIdx;
+            choreoMoves.push({ xon, target: { node: dst, dirIdx, _needsMaterialise: !isActive, _scId: scId } });
+        }
+        for (const { xon, target } of choreoMoves) _executeOctMove(xon, target);
+
+        // ── Free xons: must remain within 1 step of center ──
+        // Include both base neighbors AND SC neighbors (virtual shortcuts)
+        const center1hop = new Set([center]);
+        for (const nb of baseNeighbors[center]) center1hop.add(nb.node);
+        for (const sc of scByVert[center]) center1hop.add(sc.a === center ? sc.b : sc.a);
+        // Collect free xon indices and their candidate lists
+        const freeXonData = [];
+        const takenNodes = new Set(_octEquatorCycle);
+        for (let i = 0; i < 6; i++) {
+            if (equatorSet.has(xonNodes[i])) continue;
+            const xon = _demoXons[i];
+            const candidates = baseNeighbors[xon.node].filter(nb =>
+                center1hop.has(nb.node) && !takenNodes.has(nb.node) &&
+                nb.node !== xon.prevNode // respect bounce guard
+            );
+            freeXonData.push({ xon, candidates });
+        }
+        // Pick destinations that maximize separation between the two free xons
+        if (freeXonData.length === 2 && freeXonData[0].candidates.length > 0 && freeXonData[1].candidates.length > 0) {
+            let bestPair = null, bestDist = -Infinity;
+            for (const c0 of freeXonData[0].candidates) {
+                for (const c1 of freeXonData[1].candidates) {
+                    if (c0.node === c1.node) continue; // can't share a node
+                    const d = Math.hypot(
+                        pos[c0.node][0] - pos[c1.node][0],
+                        pos[c0.node][1] - pos[c1.node][1],
+                        pos[c0.node][2] - pos[c1.node][2]
+                    );
+                    if (d > bestDist) { bestDist = d; bestPair = [c0, c1]; }
+                }
+            }
+            if (bestPair) {
+                _executeOctMove(freeXonData[0].xon, { node: bestPair[0].node, dirIdx: bestPair[0].dirIdx, _needsMaterialise: false, _scId: undefined });
+                _executeOctMove(freeXonData[1].xon, { node: bestPair[1].node, dirIdx: bestPair[1].dirIdx, _needsMaterialise: false, _scId: undefined });
+            }
+        } else {
+            // Fallback: move each individually
+            for (const { xon, candidates } of freeXonData) {
+                if (candidates.length > 0) {
+                    const pick = candidates.reduce((best, nb) => {
+                        const d1 = Math.hypot(pos[nb.node][0]-pos[center][0], pos[nb.node][1]-pos[center][1], pos[nb.node][2]-pos[center][2]);
+                        const d2 = Math.hypot(pos[best.node][0]-pos[center][0], pos[best.node][1]-pos[center][1], pos[best.node][2]-pos[center][2]);
+                        return d1 < d2 ? nb : best;
+                    });
+                    _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
+                }
+            }
+        }
+
+        // ── Transition all xons out of oct_formation mode ──
+        // Equatorial xons → oct (cage formed), free xons → weak
+        for (const xon of _demoXons) {
+            if (xon._mode !== 'oct_formation') continue;
+            if (equatorSet.has(xon.node)) {
+                xon._mode = 'oct'; // cage member
+            } else {
+                xon._mode = 'weak';
+                xon.col = WEAK_FORCE_COLOR;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+            }
+        }
+    }
+}
+
 let _tickInProgress = false; // guard against overlapping async ticks
 // ─── Profiling ───
 let _tickTotalMs = 0, _tickCount = 0, _tickMaxMs = 0;
 let _profPhases = { wb: 0, p0: 0, p05: 0, p1: 0, p2: 0, p3: 0, p3b: 0, p4: 0, p5: 0, solver: 0, cleanup: 0, render: 0, guards: 0 };
 async function demoTick() {
-    if (!_demoActive || !_demoSchedule) return;
+    if (!_demoActive || _demoPaused) return;
     if (simHalted) {
         // Tournament: fire callback on halt so GA can score the failed trial
         if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
@@ -2272,6 +2810,18 @@ async function demoTick() {
     _tickInProgress = true;
     const _tickT0 = performance.now();
     try {
+
+    // ── BACKTRACKING RETRY LOOP ──
+    // Save state before tick, run choreography, check guards.
+    // If T19/T20 violation → rewind, exclude offending moves, retry.
+    _btSaveSnapshot();
+    _rewindRequested = false;
+    _rewindViolation = null;
+
+    const _BT_TOTAL_CAP = 500; // absolute cap on retries per demoTick() call
+    for (let _btAttempt = 0; _btAttempt < _BT_TOTAL_CAP; _btAttempt++) {
+    // Yield to event loop every 8 retries to prevent browser freeze
+    if (_btAttempt > 0 && _btAttempt % 8 === 0) await new Promise(r => setTimeout(r, 0));
 
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
@@ -2284,188 +2834,17 @@ async function demoTick() {
 
     let _solverNeeded = false;
 
-    const WINDOW_LEN = _choreoParams.windowLen;
-    const WINDOWS_PER_CYCLE = 8 + _choreoParams.singlesPerInner * 4;
-    const CYCLE_LEN = WINDOWS_PER_CYCLE * WINDOW_LEN;
-
-    const tickInCycle = _demoTick % CYCLE_LEN;
-    const windowIdx = Math.floor(tickInCycle / WINDOW_LEN);
-    const tickInWindow = tickInCycle % WINDOW_LEN;
-
-    // ── On window boundary: assign new config + spawn xons ──
-    if (tickInWindow === 0) {
-        // Reshuffle schedule at start of each cycle
-        if (windowIdx === 0) {
-            _demoSchedule = buildPhysicalSchedule();
-        }
-
-        const window = _demoSchedule[windowIdx];
-        const faces = window.faces;
-
-        // Determine hadron type from group composition
-        // 2A+1B = proton; 1A+2B = neutron
-        const aCount = faces.filter(f => A_SET.has(f)).length;
-        const isProton = aCount >= faces.length / 2;
-
-        // Stochastic type assignment
-        _demoWindowTypes = {};
-        if (faces.length === 3) {
-            // Triple: minority quark on random face
-            // Proton (uud): 2 pu + 1 pd; Neutron (udd): 1 nu + 2 nd
-            const minorityIdx = Math.floor(Math.random() * 3);
-            if (isProton) {
-                for (let i = 0; i < 3; i++) {
-                    _demoWindowTypes[faces[i]] = (i === minorityIdx) ? 'pd' : 'pu';
-                }
-            } else {
-                for (let i = 0; i < 3; i++) {
-                    _demoWindowTypes[faces[i]] = (i === minorityIdx) ? 'nu' : 'nd';
-                }
-            }
-        } else {
-            // Single-tet (inner face catch-up): OPPOSITE hadron deck for uniform coverage.
-            // Inner A-faces only see proton types from triples → singles compensate
-            // with neutron types. Inner B-faces only see neutron → compensate with proton.
-            // Result: every face converges to identical distribution:
-            //   33.3% pu, 16.7% pd, 16.7% nu, 33.3% nd
-            // Global 2:1 ratio maintained: pu:pd = nd:nu = 2:1
-            const f = faces[0];
-            if (!_demoFaceDecks[f] || _demoFaceDecks[f].length === 0) {
-                _demoFaceDecks[f] = _buildSinglesDeck(f);
-            }
-            _demoWindowTypes[f] = _demoFaceDecks[f].pop();
-        }
-
-        // Visit counts now tracked in _advanceXon when loops complete on actualized tets
-
-        // ── Track visited faces ──
-        for (const f of faces) _demoVisitedFaces.add(f);
-        // Oct cage is EMERGENT — xons in oct mode materialize oct SCs
-        // through traversal. No free activeSet.add here.
-
-        // ╔══════════════════════════════════════════════════════════════════╗
-        // ║  NON-DELETABLE: UNIFIED ARCHITECTURE — SHAPES DRIVE SPHERES     ║
-        // ║                                                                  ║
-        // ║  The demo MUST manage tet SCs in xonImpliedSet and          ║
-        // ║  re-solve the lattice so spheres physically respond.             ║
-        // ║  Without this, the demo is visually detached from physics —      ║
-        // ║  a CARDINAL SIN. NEVER remove the solver coupling.              ║
-        // ║                                                                  ║
-        // ║  MINIMAL ACTION PRINCIPLE: relinquish only what is necessary     ║
-        // ║  for the desired transformation. Do not clear-and-rebuild.       ║
-        // ║  Diff-based: remove old tet SCs, add new ones, keep rest.       ║
-        // ║  No cascade detection (detectImplied) during demo — tet SCs     ║
-        // ║  are nearest-neighbor (distance 1 in REST) so they don't        ║
-        // ║  deform FCC geometry. Cascade implies extra shortcuts that       ║
-        // ║  CAN deform geometry and violate Kepler. Minimal action.        ║
-        // ║                                                                  ║
-        // ║  NEVER remove, bypass, or skip the solver coupling below.        ║
-        // ╚══════════════════════════════════════════════════════════════════╝
-
-        // ── Demo 3.1: Persistent xons — return tet-mode xons to oct, assign new ones ──
-        const newFaceSet = new Set(faces);
-
-        // 1. Return all tet & idle_tet xons to oct (their loops are done)
-        //    Pass occupied map so returns don't pile up on the same oct node (Pauli).
-        const returningXons = [];
-        const returnOcc = _occupiedNodes();
-        for (const xon of _demoXons) {
-            if (xon.alive && (xon._mode === 'tet' || xon._mode === 'idle_tet')) {
-                _returnXonToOct(xon, returnOcc);
-                returningXons.push(xon);
-            }
-        }
-        // Scatter: if multiple xons landed on the same node, move extras
-        // 2-step aware: prefer destinations where xon has a valid follow-up move
-        {
-            const taken = new Map(); // node → count
-            for (const xon of _demoXons) {
-                if (!xon.alive) continue;
-                if (!(taken.get(xon.node) || 0)) {
-                    _occAdd(taken, xon.node);
-                } else {
-                    // Collision — move to a 2-step-aware free oct neighbor
-                    const allNb = baseNeighbors[xon.node].filter(nb => _octNodeSet.has(nb.node));
-                    const scNb = (scByVert[xon.node] || [])
-                        .filter(sc => activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))
-                        .map(sc => sc.a === xon.node ? sc.b : sc.a)
-                        .filter(n => _octNodeSet.has(n));
-                    const combined = [...new Set([...allNb.map(nb => nb.node), ...scNb])];
-                    // Filter by 2-step awareness
-                    const viable2step = combined.filter(n => {
-                        if (taken.get(n) || 0) return false;
-                        const tmp = new Map(taken); _occAdd(tmp, n);
-                        return _lookahead(n, tmp, 1);
-                    });
-                    // If no 2-step option, fall back to any free node (window boundary is grace)
-                    const targets = viable2step.length > 0 ? viable2step : combined.filter(n => !(taken.get(n) || 0));
-                    let moved = false;
-                    for (const n of targets) {
-                        if (_swapBlocked(xon.node, n)) continue; // T41: no swap
-                        const fromW = xon.node;
-                        xon.prevNode = xon.node;
-                        xon.node = n;
-                        xon._movedThisTick = true; // one hop per tick — prevent double-move
-                        _occAdd(taken, n);
-                        _moveRecord.set(n, fromW); // T41: record
-                        _traceMove(xon, fromW, n, 'wbScatter');
-
-                        moved = true;
-                        break;
-                    }
-                    if (!moved) _occAdd(taken, xon.node);
-                }
-            }
-        }
-
-        // 2. Relinquish SCs for faces LEAVING active set (respects traversal lock)
-        const _wndLocked = _traversalLockedSCs();
-        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
-            const fId = parseInt(fIdStr);
-            if (!newFaceSet.has(fId)) {
-                for (const scId of fd.scIds) {
-                    if (_wndLocked.has(scId)) continue; // xon is traversing this SC
-                    if (xonImpliedSet.delete(scId)) {
-                        _scAttribution.delete(scId);
-                        _solverNeeded = true;
-                        stateVersion++; // invalidate _getBasePairs cache
-                    }
-                }
-            }
-        }
-
-        // 3. Assign oct-mode xons to new tet faces (Pauli-aware)
-        for (const f of faces) {
-            const qType = _demoWindowTypes[f];
-            if (!qType) continue;
-
-            const fd = _nucleusTetFaceData[f];
-            if (!fd) continue;
-
-            // Find best idle xon: prefer one already on an oct node of this face
-            const faceOctNodes = new Set(fd.cycle.filter(n => _octNodeSet.has(n)));
-            let bestXon = null;
-            let bestScore = -Infinity;
-            for (const xon of _demoXons) {
-                if (!xon.alive || xon._mode !== 'oct') continue;
-                let score = 0;
-                if (faceOctNodes.has(xon.node)) score = _choreoParams.faceOnBonus;
-                else {
-                    const nbs = baseNeighbors[xon.node];
-                    for (const nb of nbs) {
-                        if (faceOctNodes.has(nb.node)) { score = _choreoParams.faceNearBonus; break; }
-                    }
-                }
-                if (score > bestScore) { bestScore = score; bestXon = xon; }
-            }
-
-            if (bestXon) {
-                _assignXonToTet(bestXon, f, qType);
-            }
-        }
-
-        _demoPrevFaces = newFaceSet;
-    }
+    // ╔══════════════════════════════════════════════════════════════════╗
+    // ║  UNIFIED DEMAND-DRIVEN CHOREOGRAPHY (no windows)                ║
+    // ║                                                                  ║
+    // ║  Window boundary block REMOVED. Face assignment is now           ║
+    // ║  demand-driven via PHASE 1.5 (natural completion) + PHASE 2a    ║
+    // ║  (decentralized face scoring). Loops complete organically.       ║
+    // ║                                                                  ║
+    // ║  The demo MUST manage tet SCs in xonImpliedSet and              ║
+    // ║  re-solve the lattice so spheres physically respond.             ║
+    // ║  Shapes drive spheres (unified architecture).                    ║
+    // ╚══════════════════════════════════════════════════════════════════╝
 
     // ╔══════════════════════════════════════════════════════════════════╗
     // ║  XON-VACUUM NEGOTIATION (every tick)                            ║
@@ -2498,6 +2877,20 @@ async function demoTick() {
 
     let occupied = _occupiedNodes();
 
+    // ── Opening phase: scripted 2-tick formation choreography ──
+    let _skipNormalPhases = false;
+    let _pT5 = performance.now(); // profiling anchor (updated by PHASE 5 if normal phases run)
+    if (_openingPhase) {
+        if (_demoTick < 2) {
+            _executeOpeningTick(occupied);
+            _skipNormalPhases = true;
+            _solverNeeded = true;
+        } else {
+            _openingPhase = false;
+        }
+    }
+
+    if (!_skipNormalPhases) {
     // ══════════════════════════════════════════════════════════════════
     //  COORDINATED MOVE PLANNER
     //  All moves are planned before execution to prevent Pauli violations.
@@ -2571,29 +2964,50 @@ async function demoTick() {
             if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             continue;
         }
-        // BFS toward nearest oct node
+        // BFS toward nearest oct node — collect ALL first-steps at optimal depth
+        // Avoid recent trail nodes to prevent cycling outside oct cage
+        const recentTrail = new Set(xon.trail ? xon.trail.slice(-6) : []);
         const visited = new Set([xon.node]);
-        const queue = [[xon.node, null]]; // [node, firstStep]
-        let bestStep = null;
+        const queue = [[xon.node, null, 0]]; // [node, firstStep, depth]
+        const bestSteps = []; // all first-steps reaching oct at same depth
+        let bestDepth = Infinity;
         while (queue.length > 0) {
-            const [cur, step] = queue.shift();
+            const [cur, step, depth] = queue.shift();
+            if (depth > bestDepth) break; // past optimal depth
             const nbs = baseNeighbors[cur] || [];
             for (const nb of nbs) {
                 if (visited.has(nb.node)) continue;
                 visited.add(nb.node);
                 const nextStep = step || nb.node;
                 if (_octNodeSet.has(nb.node)) {
-                    bestStep = nextStep; // found closest oct node
-                    queue.length = 0; // break BFS
-                    break;
+                    if (depth + 1 <= bestDepth) {
+                        bestDepth = depth + 1;
+                        if (!bestSteps.includes(nextStep)) bestSteps.push(nextStep);
+                    }
+                } else if (depth + 1 < bestDepth) {
+                    queue.push([nb.node, nextStep, depth + 1]);
                 }
-                queue.push([nb.node, nextStep]);
             }
         }
-        // T45: anti-bounce — don't go back to prevNode (gated by flag)
-        if (_T45_BOUNCE_GUARD && bestStep === xon.prevNode && xon.prevNode !== xon.node) bestStep = null;
-        if (bestStep !== null && !(occupied.get(bestStep) || 0) &&
-            !_swapBlocked(xon.node, bestStep)) { // T41: no swap
+        // Sort: prefer (1) non-trail nodes, (2) non-prevNode, (3) anything
+        bestSteps.sort((a, b) => {
+            const aInTrail = recentTrail.has(a) ? 1 : 0;
+            const bInTrail = recentTrail.has(b) ? 1 : 0;
+            if (aInTrail !== bInTrail) return aInTrail - bInTrail;
+            const aIsPrev = a === xon.prevNode ? 1 : 0;
+            const bIsPrev = b === xon.prevNode ? 1 : 0;
+            return aIsPrev - bIsPrev;
+        });
+        // Try each first-step: first that passes guards + occupancy + swap wins
+        let bestStep = null;
+        for (const step of bestSteps) {
+            if (occupied.get(step) || 0) continue;
+            if (_swapBlocked(xon.node, step)) continue;
+            if (_moveViolatesGuards(xon, xon.node, step)) continue;
+            bestStep = step;
+            break;
+        }
+        if (bestStep !== null) { // T41: no swap already checked above
             const fromWk = xon.node;
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
@@ -2601,9 +3015,7 @@ async function demoTick() {
             _occAdd(occupied, bestStep);
             _moveRecord.set(bestStep, fromWk); // T41: record
             _traceMove(xon, fromWk, bestStep, 'weakBFS');
-            xon.trail.push(bestStep);
-            xon.trailColHistory.push(WEAK_FORCE_COLOR);
-            if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+            _trailPush(xon, bestStep, WEAK_FORCE_COLOR);
             xon.tweenT = 0;
             anyMoved = true;
             _weakLifecycleStep(xon);
@@ -2615,17 +3027,28 @@ async function demoTick() {
                 xon.col = 0xffffff;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             }
-        } else if (bestStep !== null) {
-            // Target occupied — try any free neighbor instead
+        } else {
+            // All BFS steps blocked — try any free neighbor instead
             const allNbs = baseNeighbors[xon.node] || [];
-            // T45: prefer non-bounce, but allow bounce as last resort (T20: never stand still)
+            // Tier 1: guard-safe, not in recent trail, not prevNode (best: explore new territory)
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node) && // T41: no swap
-                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+                !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
+                !_swapBlocked(xon.node, nb.node) &&
+                !_moveViolatesGuards(xon, xon.node, nb.node));
+            // Tier 2: guard-safe, not prevNode (allow trail revisit)
             if (!freeNb) {
                 freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    !_swapBlocked(xon.node, nb.node)); // allow bounce as last resort
+                    nb.node !== xon.prevNode &&
+                    !_swapBlocked(xon.node, nb.node) &&
+                    !_moveViolatesGuards(xon, xon.node, nb.node));
             }
+            // Tier 3: guard-safe, allow prevNode (suboptimal but legal)
+            if (!freeNb) {
+                freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                    !_swapBlocked(xon.node, nb.node) &&
+                    !_moveViolatesGuards(xon, xon.node, nb.node));
+            }
+            // No guard bypass — if no guard-safe move exists, xon stays put
             if (freeNb) {
                 const fromWk2 = xon.node;
                 _occDel(occupied, xon.node);
@@ -2634,9 +3057,7 @@ async function demoTick() {
                 _occAdd(occupied, freeNb.node);
                 _moveRecord.set(freeNb.node, fromWk2); // T41: record
                 _traceMove(xon, fromWk2, freeNb.node, 'weakDetour');
-                xon.trail.push(freeNb.node);
-                xon.trailColHistory.push(WEAK_FORCE_COLOR);
-                if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                _trailPush(xon, freeNb.node, WEAK_FORCE_COLOR);
                 xon.tweenT = 0;
                 anyMoved = true;
                 _weakLifecycleStep(xon);
@@ -2744,13 +3165,112 @@ async function demoTick() {
 
     const _pT1 = performance.now(); _profPhases.p1 += _pT1 - _pT05;
 
+    // ── PHASE 1.5: Natural loop completion — return xons that finished their loops ──
+    // Replaces forced window-boundary returns. Loops complete organically at step >= 4.
+    {
+        const locked15 = _traversalLockedSCs();
+        for (const xon of _demoXons) {
+            if (!xon.alive) continue;
+            if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
+            if (xon._loopStep < 4) continue; // still mid-loop — let it finish
+            // Loop complete — return to oct
+            _returnXonToOct(xon, occupied);
+            // Relinquish face SCs that are no longer needed (respects traversal lock)
+            if (xon._assignedFace != null) {
+                const fd = _nucleusTetFaceData[xon._assignedFace];
+                if (fd) {
+                    for (const scId of fd.scIds) {
+                        if (locked15.has(scId)) continue;
+                        if (xonImpliedSet.delete(scId)) {
+                            _scAttribution.delete(scId);
+                            _solverNeeded = true;
+                            stateVersion++;
+                        }
+                    }
+                }
+            }
+        }
+        occupied = _occupiedNodes(); // refresh after returns
+    }
+
+    // ── PHASE 2a: Demand-driven face selection (decentralized, no order precedence) ──
+    // Each oct xon scores ALL reachable faces independently. Conflicts resolved by
+    // random shuffling — no xon gets order-precedence over another.
+    {
+        _ratioTracker.sync();
+        const octIdle = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
+
+        if (octIdle.length > 0 && _nucleusTetFaceData) {
+            // Each xon independently scores all faces
+            const proposals = []; // {xon, face, quarkType, score, onFace}
+            for (const xon of octIdle) {
+                let bestOpp = null;
+                for (let f = 1; f <= 8; f++) {
+                    const opp = _scoreFaceOpportunity(xon, f, occupied);
+                    if (opp && opp.score >= _choreoParams.assignmentThreshold) {
+                        if (!bestOpp || opp.score > bestOpp.score) bestOpp = { xon, ...opp };
+                    }
+                }
+                if (bestOpp) proposals.push(bestOpp);
+            }
+
+            // Shuffle proposals — no xon gets priority by index order
+            for (let i = proposals.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+            }
+
+            // Resolve conflicts: one xon per face, first-after-shuffle wins
+            const assignedXons = new Set();
+            const assignedFaces = new Set();
+            for (const prop of proposals) {
+                if (assignedXons.has(prop.xon)) continue;
+                if (assignedFaces.has(prop.face)) continue;
+
+                // Anti-dogpile: skip if face is getting crowded
+                const faceTargets = proposals.filter(p => p.face === prop.face).length;
+                const adjustedScore = prop.score * Math.pow(_choreoParams.antiDogpileDecay, faceTargets - 1);
+                if (adjustedScore < _choreoParams.assignmentThreshold) continue;
+
+                // Vacuum feasibility: can we materialize the face SCs?
+                const fd = _nucleusTetFaceData[prop.face];
+                let canMaterialize = true;
+                for (const scId of fd.scIds) {
+                    if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
+                    if (!canMaterialiseQuick(scId)) {
+                        if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
+                            canMaterialize = false;
+                            break;
+                        }
+                    }
+                }
+                if (!canMaterialize) continue;
+
+                // Lookahead viability: can the loop complete?
+                const seq = LOOP_SEQUENCES[prop.quarkType](fd.cycle);
+                const tmpOcc = new Map(occupied);
+                if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
+
+                // ASSIGN — decentralized decision accepted by the system
+                _assignXonToTet(prop.xon, prop.face, prop.quarkType);
+                _demoTetAssignments++;
+                assignedXons.add(prop.xon);
+                assignedFaces.add(prop.face);
+                _demoVisitedFaces.add(prop.face);
+                _solverNeeded = true;
+            }
+        }
+        occupied = _occupiedNodes(); // refresh after assignments
+    }
+
     // ── PHASE 2: Coordinated oct movement planning ──
-    // Remove all oct xons from occupied so they can see each other's positions as available
-    // (enables position swaps and chain moves)
-    const octXons = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick);
+    let octXons = [];
+    let octPlans = [];
+    {
+    octXons = _demoXons.filter(x => x.alive && (x._mode === 'oct' || x._mode === 'weak') && !x._movedThisTick);
     for (const xon of octXons) _occDel(occupied, xon.node);
 
-    const octPlans = octXons.map(xon => ({
+    octPlans = octXons.map(xon => ({
         xon,
         candidates: _getOctCandidates(xon, occupied, planned),
         assigned: null,
@@ -2822,6 +3342,100 @@ async function demoTick() {
         });
     }
 
+    // ── BACKTRACK EXCLUSION FILTER: remove moves that caused violations on previous attempts ──
+    if (_btActive) {
+        for (const plan of octPlans) {
+            const xonIdx = _demoXons.indexOf(plan.xon);
+            plan.candidates = plan.candidates.filter(c => !_btIsMoveExcluded(xonIdx, c.node));
+        }
+    }
+
+    // ── T55 CAPACITY ENFORCEMENT: eject excess oct xons before matching ──
+    // When oct count > capacity (from hadronic ratio), forcibly route excess xons
+    // into idle_tet BEFORE bipartite matching. Lowest-scored xons ejected first.
+    // Fallback: eject as weak particle if no tet face available.
+    // Note: _demoTick hasn't been incremented yet (happens after PHASE 5).
+    // T55 check fires at tick >= 16 (post-increment), so we activate at >= 15 (pre-increment).
+    if (_demoTick >= 15 && typeof _computeOctCapacity === 'function') {
+        const cap = _computeOctCapacity();
+        const octOnlyPlans = octPlans.filter(p => p.xon._mode === 'oct');
+        const excess = octOnlyPlans.length - cap;
+        if (excess > 0) {
+            // Sort by score ascending — lowest score = best eject candidate
+            const ranked = octOnlyPlans.slice().sort((a, b) => {
+                const aScore = a.candidates.length > 0 ? Math.max(...a.candidates.map(c => c.score)) : -Infinity;
+                const bScore = b.candidates.length > 0 ? Math.max(...b.candidates.map(c => c.score)) : -Infinity;
+                return aScore - bScore;
+            });
+            // Build blocked set for idle_tet planning
+            const ejectBlocked = new Map(occupied);
+            for (const n of planned) _occAdd(ejectBlocked, n);
+            let ejected = 0;
+            for (const plan of ranked) {
+                if (ejected >= excess) break;
+                if (plan.xon._evictedThisTick) continue;
+                let ejectedThis = false;
+                // Strategy 1: idle_tet (productive — manifests a hadron)
+                if (_startIdleTetLoop(plan.xon, ejectBlocked)) {
+                    const dest = plan.xon._loopSeq ? plan.xon._loopSeq[plan.xon._loopStep + 1] : null;
+                    if (dest !== undefined && !(ejectBlocked.get(dest) || 0)) {
+                        plan.idleTet = true;
+                        plan.assigned = null;
+                        plan.candidates = []; // remove from bipartite matching
+                        _occAdd(ejectBlocked, dest);
+                        ejectedThis = true;
+                        _logChoreo(`T55 eject x${_demoXons.indexOf(plan.xon)} → idle_tet (cap=${cap})`);
+                    } else {
+                        // Rollback — couldn't advance
+                        _relinquishFaceSCs(plan.xon);
+                        plan.xon._mode = 'oct';
+                        plan.xon._loopSeq = null;
+                        plan.xon._loopStep = 0;
+                        plan.xon._assignedFace = null;
+                        plan.xon.col = 0xffffff;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(0xffffff);
+                    }
+                }
+                // Strategy 2: eject as weak particle (safety valve)
+                if (!ejectedThis) {
+                    const nbs = baseNeighbors[plan.xon.node] || [];
+                    const freeNb = nbs.find(nb =>
+                        !(ejectBlocked.get(nb.node) || 0) &&
+                        nb.node !== plan.xon.prevNode
+                    );
+                    if (freeNb) {
+                        plan.xon._mode = 'weak';
+                        plan.xon.col = typeof WEAK_FORCE_COLOR !== 'undefined' ? WEAK_FORCE_COLOR : 0x8844ff;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(plan.xon.col);
+                        plan.assigned = { node: freeNb.node, dirIdx: freeNb.dirIdx, _needsMaterialise: false, _scId: undefined };
+                        plan.candidates = [];
+                        _occAdd(ejectBlocked, freeNb.node);
+                        ejectedThis = true;
+                        _logChoreo(`T55 eject x${_demoXons.indexOf(plan.xon)} → weak (cap=${cap})`);
+                    }
+                }
+                if (ejectedThis) ejected++;
+            }
+        }
+    }
+
+    // ── DFS BACKTRACK: systematic candidate rotation ──
+    // During retries, rotate each xon's candidate list so Kuhn's algorithm
+    // produces genuinely different matchings on each attempt. This is the core
+    // DFS mechanic: "try option A, then B, then C, then exhaust and back up."
+    if (_btActive && _btRetryCount > 0) {
+        for (let i = 0; i < octPlans.length; i++) {
+            const cands = octPlans[i].candidates;
+            if (cands.length <= 1) continue;
+            // Each xon gets a different rotation based on retry count.
+            // Stagger per xon so we explore the Cartesian product.
+            const shift = Math.floor(_btRetryCount / Math.max(1, i + 1)) % cands.length;
+            if (shift > 0) {
+                octPlans[i].candidates = [...cands.slice(shift), ...cands.slice(0, shift)];
+            }
+        }
+    }
+
     // Maximum bipartite matching with arbitrary-depth backtracking (Kuhn's algorithm).
     // Finds augmenting paths so the maximum number of oct xons get a valid destination.
     _maxBipartiteAssignment(octPlans, planned);
@@ -2857,68 +3471,108 @@ async function demoTick() {
         if (plan.assigned) _occDel(allBlocked, plan.fromNode);
     }
 
-    // Proactive congestion relief: if the oct cage is crowded,
-    // send some assigned oct xons into idle_tet to reduce density.
-    // With 12 oct nodes and 6 xons, >congestionMax xons on oct is congested.
-    const octOnCage = octPlans.filter(p => p.assigned || (!p.assigned && !p.idleTet)).length;
-    if (octOnCage > _choreoParams.congestionMax) {
-        // Demote the lowest-scored assigned oct xons to idle_tet
-        const demotable = octPlans
-            .filter(p => p.assigned && p.assigned.score !== undefined)
-            .sort((a, b) => (a.assigned.score || 0) - (b.assigned.score || 0));
-        for (const plan of demotable) {
-            if (octOnCage - (demotable.indexOf(plan) < demotable.length ? 1 : 0) <= _choreoParams.congestionMax) break;
-            // Try idle_tet for this xon instead of its oct move
-            if (plan.xon._evictedThisTick) continue; // evicted this tick — don't re-assign
-            if (_startIdleTetLoop(plan.xon, allBlocked)) {
-                const dest = plan.xon._loopSeq[plan.xon._loopStep + 1];
-                // Loop-shape-aware lookahead: verify this specific loop path is viable
-                const tmpCheck = new Map(allBlocked); _occAdd(tmpCheck, dest);
-                if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, _choreoParams.lookahead, plan.xon)) {
-                    octClaimed.delete(plan.assigned.node);
-                    plan.assigned = null;
-                    plan.idleTet = true;
-                    _occAdd(allBlocked, dest);
-                } else {
-                    _relinquishFaceSCs(plan.xon); // T42: cleanup before clearing face
-                    plan.xon._mode = 'oct';
-                    if (_flashEnabled) plan.xon.flashT = 1.0;
-                    plan.xon._loopSeq = null;
-                    plan.xon._loopStep = 0;
-                    plan.xon._assignedFace = null;
-                    plan.xon.col = 0xffffff;
-                    if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(0xffffff);
-                }
-            }
-        }
-    }
-
-    // Unassigned oct xons: try idle_tet with Pauli-aware face selection + lookahead
+    // ── COLLISION AVOIDANCE: hierarchical strategy for unassigned xons ──
+    // 1. Divert into unscheduled tet (productive work — manifest a hadron)
+    // 2. If no tet available, eject as weak particle (safety valve)
+    // This replaces the old congestion-relief / bounce-escape / idle_tet fallbacks
+    // with a single unified pass.
     for (const plan of octPlans) {
         if (plan.assigned || plan.idleTet) continue;
-        if (plan.xon._evictedThisTick) continue; // evicted from idle_tet this tick — don't re-assign
+        if (plan.xon._evictedThisTick) continue;
+
+        // ── Strategy 1: Divert into tet ──
+        // Try _startIdleTetLoop first (uses Pauli-aware face selection)
+        const _savedMode = plan.xon._mode;
+        const _savedCol = plan.xon.col;
+        let diverted = false;
         if (_startIdleTetLoop(plan.xon, allBlocked)) {
             const dest = plan.xon._loopSeq[plan.xon._loopStep + 1];
-            // Loop-shape-aware lookahead: verify this specific loop path is viable
             const tmpCheck = new Map(allBlocked); _occAdd(tmpCheck, dest);
             if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, _choreoParams.lookahead, plan.xon)) {
                 plan.idleTet = true;
                 _occAdd(allBlocked, dest);
+                diverted = true;
+                _logChoreo(`X${_demoXons.indexOf(plan.xon)} collision->tet f${plan.xon._assignedFace}`);
             } else {
-                _relinquishFaceSCs(plan.xon); // T42: cleanup before clearing face
-                plan.xon._mode = 'oct';
+                // Rollback tet attempt
+                _relinquishFaceSCs(plan.xon);
+                plan.xon._mode = _savedMode;
                 if (_flashEnabled) plan.xon.flashT = 1.0;
                 plan.xon._loopSeq = null;
                 plan.xon._loopStep = 0;
                 plan.xon._assignedFace = null;
-                plan.xon.col = 0xffffff;
-                if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(0xffffff);
+                plan.xon.col = _savedCol;
+                if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(_savedCol);
+            }
+        }
+
+        // ── Strategy 1b: Direct face assignment (broader search) ──
+        if (!diverted && _nucleusTetFaceData) {
+            const bestFaces = [];
+            for (let f = 1; f <= 8; f++) {
+                const opp = _scoreFaceOpportunity(plan.xon, f, occupied);
+                if (opp) bestFaces.push(opp);
+            }
+            bestFaces.sort((a, b) => b.score - a.score);
+            for (const opp of bestFaces) {
+                const fd = _nucleusTetFaceData[opp.face];
+                let canMaterialize = true;
+                for (const scId of fd.scIds) {
+                    if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
+                    if (!canMaterialiseQuick(scId)) {
+                        if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
+                            canMaterialize = false;
+                            break;
+                        }
+                    }
+                }
+                if (!canMaterialize) continue;
+                const seq = LOOP_SEQUENCES[opp.quarkType](fd.cycle);
+                const tmpOcc = new Map(allBlocked);
+                if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, plan.xon)) continue;
+                _assignXonToTet(plan.xon, opp.face, opp.quarkType);
+                _demoTetAssignments++;
+                _demoVisitedFaces.add(opp.face);
+                _solverNeeded = true;
+                plan.idleTet = true;
+                _occAdd(allBlocked, plan.xon.node);
+                diverted = true;
+                _logChoreo(`X${_demoXons.indexOf(plan.xon)} collision->tet f${opp.face} (direct)`);
+                break;
+            }
+        }
+
+        // ── Strategy 2: Eject as weak particle ──
+        if (!diverted) {
+            plan.xon._mode = 'weak';
+            plan.xon.col = WEAK_FORCE_COLOR;
+            if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+            // Weak xons can move to any base neighbor — find one that's free
+            const nbs = baseNeighbors[plan.xon.node] || [];
+            let escaped = false;
+            for (const nb of nbs) {
+                if (allBlocked.has(nb.node)) continue;
+                if (planned.has(nb.node)) continue;
+                if (octClaimed.has(nb.node)) continue;
+                plan.assigned = { node: nb.node, dirIdx: nb.dirIdx, score: -999, _needsMaterialise: false, _scId: undefined };
+                octClaimed.add(nb.node);
+                _occAdd(allBlocked, nb.node);
+                escaped = true;
+                _logChoreo(`X${_demoXons.indexOf(plan.xon)} collision->weak n${nb.node}`);
+                break;
+            }
+            if (!escaped) {
+                _logChoreo(`X${_demoXons.indexOf(plan.xon)} STUCK: no tet, no weak escape`);
             }
         }
     }
+    occupied = _occupiedNodes(); // refresh after diversions
 
     // If idle_tet manifestation added new SCs, flag solver
     if (_idleTetManifested) _solverNeeded = true;
+
+    // Log PHASE 2 decisions for debugging
+    _logPhase2Summary(octPlans);
 
     // ── COOPERATIVE 2-STEP AWARENESS VERIFICATION ──
     // Project where ALL xons will be after their 1st moves (neighbors' choices).
@@ -3019,6 +3673,7 @@ async function demoTick() {
         }
     }
 
+    } // end PHASE 2 block
     const _pT2 = performance.now(); _profPhases.p2 += _pT2 - _pT1;
 
     // ── PHASE 3: Execute all planned moves ──
@@ -3068,6 +3723,7 @@ async function demoTick() {
             // Verify SC is still active (may have been severed by oct move negotiation)
             if (!_canAdvanceSafely(plan.xon)) {
                 _returnXonToOct(plan.xon, occupied); // abort idle_tet — SC was deactivated
+                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
                 continue;
             }
             // Pauli check: destination may have become occupied since planning
@@ -3075,11 +3731,13 @@ async function demoTick() {
             const idleDest = plan.xon._loopSeq[effectiveStep + 1];
             if (idleDest !== undefined && (occupied.get(idleDest) || 0) > 0) {
                 _returnXonToOct(plan.xon, occupied); // destination occupied — return to oct
+                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
                 continue;
             }
             // T41 swap check: reject if another xon just moved FROM idleDest TO xon.node
             if (idleDest !== undefined && _swapBlocked(plan.xon.node, idleDest)) {
                 _returnXonToOct(plan.xon, occupied); // would swap — return to oct
+                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
                 continue;
             }
             const fromNode = plan.xon.node;
@@ -3153,12 +3811,11 @@ async function demoTick() {
             _moveRecord.set(nb.node, fromRet); // T41: record
             _traceMove(xon, fromRet, nb.node, 'escHatch');
 
-            xon.trail.push(nb.node);
-            xon.trailColHistory.push(0xffffff);
-            if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+            _trailPush(xon, nb.node, 0xffffff);
             xon.tweenT = 0;
             _relinquishFaceSCs(xon); // T42: cleanup before clearing face
             xon._mode = 'oct';
+            xon._evictedThisTick = true; // safety escape (T52 exempt)
             if (_flashEnabled) xon.flashT = 1.0;
             xon._assignedFace = null;
             xon._quarkType = null;
@@ -3178,6 +3835,7 @@ async function demoTick() {
         if (_octNodeSet.has(xon.node)) {
             _relinquishFaceSCs(xon); // T42: cleanup before clearing face
             xon._mode = 'oct';
+            xon._evictedThisTick = true; // safety escape (T52 exempt)
             if (_flashEnabled) xon.flashT = 1.0;
             xon._assignedFace = null;
             xon._quarkType = null;
@@ -3218,14 +3876,13 @@ async function demoTick() {
         // The xon enters 'weak' mode — a distinct state outside normal confinement.
         let weakEscaped = false;
         {
-            // T45: prefer non-bounce, but allow bounce as last resort (T20: never stand still)
+            // ALL projected guards — no bypass allowed
             let freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node) && // T41: no swap
-                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
-            if (freeNbs.length === 0) {
-                freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                    !_swapBlocked(xon.node, nb.node)); // allow bounce as last resort
-            }
+                !_swapBlocked(xon.node, nb.node) &&
+                !_moveViolatesGuards(xon, xon.node, nb.node));
+            // Prefer non-prevNode to avoid bounce
+            const nonBounce = freeNbs.filter(nb => nb.node !== xon.prevNode);
+            if (nonBounce.length > 0) freeNbs = nonBounce;
             if (freeNbs.length > 0) {
                 // Pick a random free neighbor (weak force is stochastic)
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
@@ -3236,9 +3893,7 @@ async function demoTick() {
                 _occAdd(occupied, nb.node);
                 _moveRecord.set(nb.node, fromWe); // T41: record
                 _traceMove(xon, fromWe, nb.node, 'weakEsc');
-                xon.trail.push(nb.node);
-                xon.trailColHistory.push(WEAK_FORCE_COLOR);
-                if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                _trailPush(xon, nb.node, WEAK_FORCE_COLOR);
                 xon.tweenT = 0;
                 _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'weak';
@@ -3273,13 +3928,12 @@ async function demoTick() {
                 xon.node = nb.node;
                 _moveRecord.set(nb.node, fromAn); // T41: record
                 _traceMove(xon, fromAn, nb.node, 'anniScatter');
-                xon.trail.push(nb.node);
-                xon.trailColHistory.push(prevCol); // quark color, NOT white
-                if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                _trailPush(xon, nb.node, prevCol); // quark color, NOT white
                 xon.tweenT = 0;
                 // Don't _occAdd — PHASE 4 will handle the collision
                 _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'oct'; // switch to oct so PHASE 4 scatter/annihilate catches it
+                xon._evictedThisTick = true; // safety eviction (T52 exempt)
                 if (_flashEnabled) xon.flashT = 1.0;
                 xon._assignedFace = null;
                 xon._quarkType = null;
@@ -3353,6 +4007,7 @@ async function demoTick() {
                     // Must reset color to avoid T23 (oct xon with quark sparkMat).
                     _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                     xon._mode = 'oct';
+                    xon._evictedThisTick = true; // safety eviction (T52 exempt)
                     if (_flashEnabled) xon.flashT = 1.0;
                     xon._loopSeq = null;
                     xon._loopStep = 0;
@@ -3364,10 +4019,13 @@ async function demoTick() {
         }
         // Last resort chain: try free oct, then WEAK FORCE, then annihilation.
         if (!moved && xon.alive) {
-            // Try any free oct neighbor (even without 2-step awareness)
-            for (const nb of allOctNbs) {
+            // Try any free oct neighbor (guard-checked, prefer non-bounce)
+            const sortedOctNbs = [...allOctNbs].sort((a, b) =>
+                (a.node === xon.prevNode ? 1 : 0) - (b.node === xon.prevNode ? 1 : 0));
+            for (const nb of sortedOctNbs) {
                 if (occupied.get(nb.node) || 0) continue;
                 if (_swapBlocked(xon.node, nb.node)) continue; // T41: no swap
+                if (_moveViolatesGuards(xon, xon.node, nb.node)) continue; // ALL guards
                 const fromLR = xon.node;
                 if (_executeOctMove(xon, { node: nb.node, dirIdx: 0, _scId: undefined, _needsMaterialise: false })) {
                     _occDel(occupied, plan.fromNode);
@@ -3385,9 +4043,13 @@ async function demoTick() {
             // Enters 'weak' mode with purple trail/sparkle.
             if (!moved) {
                 const allNbs = baseNeighbors[xon.node] || [];
-                const freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                    !_swapBlocked(xon.node, nb.node) && // T41: no swap
-                    !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+                // ALL projected guards — no bypass allowed
+                let freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                    !_swapBlocked(xon.node, nb.node) &&
+                    !_moveViolatesGuards(xon, xon.node, nb.node));
+                // Prefer non-prevNode to avoid bounce
+                const nonBounce3b = freeNbs.filter(nb => nb.node !== xon.prevNode);
+                if (nonBounce3b.length > 0) freeNbs = nonBounce3b;
                 if (freeNbs.length > 0) {
                     const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
                     const from3bw = xon.node;
@@ -3397,9 +4059,7 @@ async function demoTick() {
                     _occAdd(occupied, nb.node);
                     _moveRecord.set(nb.node, from3bw); // T41: record
                     _traceMove(xon, from3bw, nb.node, 'p3bWeak');
-                    xon.trail.push(nb.node);
-                    xon.trailColHistory.push(WEAK_FORCE_COLOR);
-                    if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                    _trailPush(xon, nb.node, WEAK_FORCE_COLOR);
                     xon.tweenT = 0;
                     xon._mode = 'weak';
                     if (_flashEnabled) xon.flashT = 1.0;
@@ -3428,9 +4088,7 @@ async function demoTick() {
                         xon.node = nb.node;
                         _moveRecord.set(nb.node, from3ba); // T41: record
                         _traceMove(xon, from3ba, nb.node, 'p3bAnni');
-                        xon.trail.push(nb.node);
-                        xon.trailColHistory.push(xon.col);
-                        if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                        _trailPush(xon, nb.node, xon.col);
                         xon.tweenT = 0;
                         anyMoved = true;
                         break;
@@ -3454,11 +4112,13 @@ async function demoTick() {
     // Helper: scatter-move a xon to a 2-step-aware free neighbor
     function _scatterMove(xon, occupied) {
         if (xon._movedThisTick) return false;
-        const allNb = (baseNeighbors[xon.node] || []).filter(nb => _octNodeSet.has(nb.node));
+        const scatterAntipodal = _octAntipodal.get(xon.node);
+        const allNb = (baseNeighbors[xon.node] || []).filter(nb =>
+            (!_octNodeSet || _octNodeSet.has(nb.node)) && nb.node !== scatterAntipodal);
         const scNb = (scByVert[xon.node] || [])
             .filter(sc => activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))
             .map(sc => sc.a === xon.node ? sc.b : sc.a)
-            .filter(n => _octNodeSet.has(n));
+            .filter(n => (!_octNodeSet || _octNodeSet.has(n)) && n !== scatterAntipodal);
         const candidates = [...allNb.map(nb => nb.node), ...scNb];
         // Sort by 2-step awareness: prefer destinations with valid 2nd moves
         // ONLY 2-step-aware destinations are valid
@@ -3468,6 +4128,8 @@ async function demoTick() {
             .filter(n => !(_T45_BOUNCE_GUARD && n === xon.prevNode && xon.prevNode !== xon.node))
             // T41: reject destinations that would create a swap
             .filter(n => !_swapBlocked(xon.node, n))
+            // ALL projected guards
+            .filter(n => !_moveViolatesGuards(xon, xon.node, n))
             .filter(n => {
                 const tmp = new Map(occupied); _occAdd(tmp, n);
                 return _lookahead(n, tmp, 1);
@@ -3481,9 +4143,7 @@ async function demoTick() {
             _moveRecord.set(n, fromNode); // T41: record scatter move
             _traceMove(xon, fromNode, n, 'p4scatter');
 
-            xon.trail.push(n);
-            xon.trailColHistory.push(xon.col);
-            if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+            _trailPush(xon, n, xon.col);
             xon.tweenT = 0;
             return true;
         }
@@ -3504,6 +4164,7 @@ async function demoTick() {
                 // Advance check failed — rollback idle_tet assignment (T42: no orphan SCs)
                 _relinquishFaceSCs(xon);
                 xon._mode = 'oct';
+                xon._evictedThisTick = true; // safety rollback (T52 exempt)
                 xon._loopSeq = null;
                 xon._loopStep = 0;
                 xon._assignedFace = null;
@@ -3544,9 +4205,16 @@ async function demoTick() {
             while (stillHere.length > 1) {
                 const xon = stillHere.pop();
                 const allNbs = baseNeighbors[xon.node] || [];
-                const freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                // ALL projected guards — no bypass allowed
+                let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                    nb.node !== xon.prevNode &&
                     !_swapBlocked(xon.node, nb.node) &&
-                    !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+                    !_moveViolatesGuards(xon, xon.node, nb.node));
+                if (!freeNb) {
+                    freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
+                        !_swapBlocked(xon.node, nb.node) &&
+                        !_moveViolatesGuards(xon, xon.node, nb.node));
+                }
                 if (freeNb) {
                     const fromP4w = xon.node;
                     console.error(`[P4W-DEBUG] tick=${_demoTick} x${_demoXons.indexOf(xon)}: ${fromP4w}→${freeNb.node} (cNode=${cNode}, stillHere=${stillHere.length})`);
@@ -3557,13 +4225,11 @@ async function demoTick() {
                     _occAdd(occupied, freeNb.node);
                     _moveRecord.set(freeNb.node, fromP4w);
                     _traceMove(xon, fromP4w, freeNb.node, 'p4weakEsc');
-                    xon.trail.push(freeNb.node);
-                    xon.trailColHistory.push(WEAK_FORCE_COLOR);
-                    if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                    _trailPush(xon, freeNb.node, WEAK_FORCE_COLOR);
                     xon.tweenT = 0;
                     xon._movedThisTick = true;
                     // Enter weak mode if leaving oct surface
-                    if (!_octNodeSet.has(freeNb.node)) {
+                    if (_octNodeSet && !_octNodeSet.has(freeNb.node)) {
                         _relinquishFaceSCs(xon);
                         xon._mode = 'weak';
                         xon._assignedFace = null;
@@ -3609,9 +4275,13 @@ async function demoTick() {
             if (xon.node !== prevNode || xon._mode !== prevMode) continue;
             // Xon is stuck — apply weak force escape
             const nbs = baseNeighbors[xon.node] || [];
-            const freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
-                !_swapBlocked(xon.node, nb.node) && // T41: no swap
-                !(_T45_BOUNCE_GUARD && nb.node === xon.prevNode && xon.prevNode !== xon.node)); // T45: no bounce (gated)
+            // ALL projected guards — no bypass allowed
+            let freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
+                !_swapBlocked(xon.node, nb.node) &&
+                !_moveViolatesGuards(xon, xon.node, nb.node));
+            // Prefer non-prevNode to avoid bounce
+            const nonBounceSN = freeNbs.filter(nb => nb.node !== xon.prevNode);
+            if (nonBounceSN.length > 0) freeNbs = nonBounceSN;
             if (freeNbs.length > 0) {
                 const nb = freeNbs[Math.floor(Math.random() * freeNbs.length)];
                 const fromSN = xon.node;
@@ -3621,9 +4291,7 @@ async function demoTick() {
                 _occAdd(occupied, nb.node);
                 _moveRecord.set(nb.node, fromSN); // T41: record
                 _traceMove(xon, fromSN, nb.node, 'stuckNudge');
-                xon.trail.push(nb.node);
-                xon.trailColHistory.push(WEAK_FORCE_COLOR);
-                if (xon.trail.length > XON_TRAIL_LENGTH) { xon.trail.shift(); xon.trailColHistory.shift(); }
+                _trailPush(xon, nb.node, WEAK_FORCE_COLOR);
                 xon.tweenT = 0;
                 _relinquishFaceSCs(xon); // T42: cleanup before clearing face
                 xon._mode = 'weak';
@@ -3641,7 +4309,7 @@ async function demoTick() {
                 // All neighbors occupied — at minimum change mode to satisfy T20
                 if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
                     _relinquishFaceSCs(xon); // T42: cleanup before clearing face
-                    const newMode = _octNodeSet.has(xon.node) ? 'oct' : 'weak';
+                    const newMode = (_octNodeSet && _octNodeSet.has(xon.node)) ? 'oct' : 'weak';
                     xon._mode = newMode;
                     xon._assignedFace = null;
                     xon._quarkType = null;
@@ -3669,7 +4337,8 @@ async function demoTick() {
         _globalStuckTicks = 0;
     }
 
-    const _pT5 = performance.now(); _profPhases.p5 += _pT5 - _pT4;
+    _pT5 = performance.now(); _profPhases.p5 += _pT5 - _pT4;
+    } // end !_skipNormalPhases
 
     // ── Advance gluons along oct edges (also negotiates with vacuum) ──
     if (_advanceGluons()) _solverNeeded = true;
@@ -3685,6 +4354,11 @@ async function demoTick() {
         xonImpliedSet.forEach(id => {
             if (!activeSet.has(id)) { impliedSet.add(id); impliedBy.set(id, new Set()); }
         });
+        // Bump state again AFTER solving so applyPositions → updateVoidSpheres
+        // re-evaluates geometric checks with the deformed (solved) positions.
+        // bumpState() above calls updateVoidSpheres() with pre-solver positions,
+        // caching stale actualization; this second bump invalidates that cache.
+        stateVersion++;
         applyPositions(pSolved);
         updateSpheres();
     }
@@ -3787,18 +4461,22 @@ async function demoTick() {
     _decayDyingXons();
 
     // ── Color tets with progressive opacity (ramps as xon loop completes) ──
-    // Void wireframes are the SOLE edge rendering system during demo.
-    if (_demoWindowTypes) {
+    // Demand-driven: derive active faces from xon state, not schedule.
+    if (_nucleusTetFaceData) {
+        // Build active face map from xon assignments
+        const activeFaces = new Map(); // face → {quarkType, loopStep}
+        for (const xon of _demoXons) {
+            if (!xon.alive || xon._assignedFace == null) continue;
+            if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+                activeFaces.set(xon._assignedFace, { quarkType: xon._quarkType, loopStep: xon._loopStep });
+            }
+        }
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
             const fId = parseInt(fIdStr);
-            const qType = _demoWindowTypes[fId];
-            if (qType) {
-                _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[qType]);
-                // Progressive opacity: ramps from 0.3 to 0.85 over 4 ticks
-                // Find the xon for this face to get its loop progress
-                const xon = _demoXons.find(x => x.alive && x._assignedFace === fId);
-                const step = xon ? xon._loopStep : 0;
-                const opacity = 0.3 + (step / 4) * 0.55; // 0.3 → 0.85
+            const active = activeFaces.get(fId);
+            if (active) {
+                _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[active.quarkType]);
+                const opacity = 0.3 + (active.loopStep / 4) * 0.55;
                 _ruleAnnotations.tetOpacity.set(fd.voidIdx, opacity);
             } else {
                 _ruleAnnotations.tetColors.set(fd.voidIdx, 0x1a1a2a);
@@ -3825,23 +4503,67 @@ async function demoTick() {
     if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
     const _gT1 = performance.now();
 
-    // Temporal K removed — was 141ms/tick (56% of tick time). LZ76 O(n³) on growing string.
-    const _gT2 = performance.now();
+    // ── BACKTRACK CHECK: did guards request a rewind? ──
+    if (_rewindRequested) {
+        _rewindRequested = false;
+        _btRetryCount++;
+        // Extract which moves caused the violation and record in persistent ledger
+        const newExclusions = _btExtractExclusions();
+        const currentTick = _demoTick - 1; // tick was already incremented
+        if (!_btBadMoveLedger.has(currentTick)) _btBadMoveLedger.set(currentTick, new Set());
+        const ledger = _btBadMoveLedger.get(currentTick);
+        for (const ex of newExclusions) ledger.add(ex);
+        _btActive = true;
 
-    // Update UI — demo panel every window boundary, full status every 4th window
-    // (updateStatus has invariant checks + K-complexity = ~192ms per call)
-    if (_demoTick % WINDOW_LEN === 0) {
-        updateDemoPanel();
-        if (_demoTick % (WINDOW_LEN * 4) === 0) updateStatus();
+        // Check if we've exhausted retries at this depth
+        if (_btRetryCount >= _BT_MAX_RETRIES) {
+            _btDepth++;
+            _btRetryCount = 0;
+            if (_btDepth >= _BT_MAX_DEPTH || _btSnapshots.length < 2) {
+                // Exhausted all backtrack depth — halt for real
+                console.error(`[BACKTRACK] Exhausted depth ${_btDepth}, halting: ${_rewindViolation}`);
+                simHalted = true;
+                _btReset();
+                break; // exit retry loop
+            }
+            // Pop to an earlier snapshot (go back one more tick)
+            _btSnapshots.pop(); // discard current tick's snapshot
+            const olderSnap = _btSnapshots[_btSnapshots.length - 1];
+
+            // HIERARCHICAL CLEANUP: discard bad-move entries for ticks
+            // deeper than where we're rewinding to (the "lower levels").
+            // Those ticks will replay in a completely different state.
+            const rewindToTick = olderSnap.tick;
+            for (const [t] of _btBadMoveLedger) {
+                if (t > rewindToTick) _btBadMoveLedger.delete(t);
+            }
+
+            _btRestoreSnapshot(olderSnap);
+            _logChoreo(`BACKTRACK depth ${_btDepth}: rewound to tick ${rewindToTick}, ledger has ${_btBadMoveLedger.size} tick entries`);
+        } else {
+            // Restore current tick's snapshot and retry with exclusions
+            const snap = _btSnapshots[_btSnapshots.length - 1];
+            _btRestoreSnapshot(snap);
+            _logChoreo(`BACKTRACK retry ${_btRetryCount}/${_BT_MAX_RETRIES}: ledger[${currentTick}] has ${ledger.size} exclusions`);
+        }
+        continue; // retry the tick
     }
+
+    // ── Clean tick — commit and reset backtrack state ──
+    _btReset();
+    // DON'T clear _btBadMoveLedger — it persists across ticks
+    _profPhases.guards += _gT1 - _gT0; // accumulate guard profiling before leaving scope
+    break; // exit retry loop
+
+    } // end backtracking retry loop
+
+    // Update UI — every tick (un-throttled)
+    updateDemoPanel();
+    updateStatus();
+    updateXonPanel();
 
     // Tournament hook: check if trial has reached its target tick
     if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();
-    const _gT3 = performance.now();
-
-    _profPhases.guards += _gT1 - _gT0;
-    _profPhases._temporalK = (_profPhases._temporalK || 0) + (_gT2 - _gT1);
-    _profPhases._uiUpdate = (_profPhases._uiUpdate || 0) + (_gT3 - _gT2);
 
     // ─── Profiling: record tick time ───
     const _tickDt = performance.now() - _tickT0;
@@ -3898,13 +4620,13 @@ function resetProfile() {
 }
 
 function updateDemoPanel() {
-    const CYCLE_LEN = (8 + _choreoParams.singlesPerInner * 4) * _choreoParams.windowLen;
-    const cycles = Math.floor(_demoTick / CYCLE_LEN);
+    // Demand-driven: use fixed 64-tick epoch for display purposes
+    const epoch = Math.floor(_demoTick / 64);
 
     // ── Update demo-status (right panel, below button) ──
     const ds = document.getElementById('demo-status');
     if (ds) {
-        ds.innerHTML = `<span style="color:#88bbdd;">cycle ${cycles}</span>`;
+        ds.innerHTML = `<span style="color:#88bbdd;">epoch ${epoch}</span>`;
     }
 
     // ── Update left panel coverage bars (skip during test execution) ──
@@ -3997,8 +4719,8 @@ function updateDemoPanel() {
         + `<span style="color:${Math.abs(ndNuRatio - 2) < 0.3 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${ndNuRatio.toFixed(2)} (\u21922.0)</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">cycles</span>`
-        + `<span style="color:#88aacc;">${cycles}</span>`
+        + `<span style="color:#6a8a9a;">epoch</span>`
+        + `<span style="color:#88aacc;">${epoch}</span>`
         + `</div>`;
 
     // ── Ratio accuracy history sparkline ──
@@ -4045,11 +4767,111 @@ function updateDemoPanel() {
     if (syncRow) syncRow.style.display = 'none';
 }
 
+// ── Choreographer logging helper ──
+function _logChoreo(msg) {
+    _choreoLog.push({ tick: _demoTick, msg });
+    if (_choreoLog.length > _CHOREO_LOG_MAX) _choreoLog.shift();
+}
+
+// ── Log PHASE 2 summary: called after bipartite matching + fallbacks ──
+function _logPhase2Summary(octPlans) {
+    const _QL = { pu: 'p_u', pd: 'p_d', nu: 'n_u', nd: 'n_d' };
+    const lines = [];
+    for (const plan of octPlans) {
+        const x = plan.xon;
+        const idx = _demoXons.indexOf(x);
+        const label = x._mode === 'oct' ? 'idle' : x._mode === 'weak' ? 'weak' :
+                      x._quarkType ? _QL[x._quarkType] || x._quarkType : x._mode;
+        const cands = plan.candidates.length;
+        if (plan.assigned) {
+            lines.push(`X${idx}(${label}) n${plan.fromNode}: ${cands}c->n${plan.assigned.node}`);
+        } else if (plan.idleTet) {
+            lines.push(`X${idx}(${label}) n${plan.fromNode}: ${cands}c->tet f${x._assignedFace}`);
+        } else {
+            const reasons = [];
+            if (cands === 0) reasons.push('0 cands');
+            else reasons.push(`${cands}c taken`);
+            if (x._evictedThisTick) reasons.push('evicted');
+            lines.push(`X${idx}(${label}) n${plan.fromNode}: STUCK(${reasons.join(',')})`);
+        }
+    }
+    _logChoreo('PH2: ' + lines.join(' | '));
+}
+
+// ── Xon panel update (sidebar) ──
+function updateXonPanel() {
+    if (_testRunning) return;
+    const panel = document.getElementById('xon-panel');
+    if (!panel) return;
+    panel.style.display = _demoActive ? 'block' : 'none';
+    if (!_demoActive) return;
+
+    const listEl = document.getElementById('xon-panel-list');
+    if (!listEl) return;
+
+    let html = '';
+    for (let i = 0; i < _demoXons.length; i++) {
+        const x = _demoXons[i];
+        if (!x.alive) continue;
+        const modeCol = x._mode === 'oct' ? '#ffffff' :
+                        x._mode === 'weak' ? '#cc44ff' :
+                        x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
+                        x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
+        // Display labels: oct=idle, tet/idle_tet=hadron type (p_u, p_d, n_u, n_d)
+        const QUARK_LABELS = { pu: 'p_u', pd: 'p_d', nu: 'n_u', nd: 'n_d' };
+        let modeLabel, faceStr;
+        if (x._mode === 'oct') {
+            modeLabel = 'idle';
+            faceStr = '';
+        } else if (x._mode === 'weak') {
+            modeLabel = 'weak';
+            faceStr = '';
+        } else {
+            // tet or idle_tet — show hadron type
+            modeLabel = x._quarkType ? QUARK_LABELS[x._quarkType] || x._quarkType : x._mode;
+            faceStr = x._assignedFace ? ` f${x._assignedFace}` : '';
+        }
+        const highlighted = _xonHighlightTimers.has(i);
+        const border = highlighted ? `2px solid ${modeCol}` : '1px solid #334455';
+        const bg = highlighted ? 'rgba(255,255,255,0.15)' : '#0d1520';
+        html += `<button class="xon-btn" data-xon-idx="${i}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:42px; height:36px; padding:2px; cursor:pointer; border-radius:4px; background:${bg}; border:${border}; font-family:monospace; outline:none;" title="X${i}: n${x.node} ${modeLabel}${faceStr}">`
+            + `<span style="color:${modeCol}; font-weight:bold; font-size:11px;">X${i}</span>`
+            + `<span style="color:#88aacc; font-size:8px;">n${x.node}</span>`
+            + `<span style="color:#667788; font-size:7px;">${modeLabel}${faceStr}</span>`
+            + `</button>`;
+    }
+    listEl.innerHTML = html;
+
+    // Attach click handlers
+    const btns = listEl.querySelectorAll('.xon-btn');
+    btns.forEach(btn => {
+        btn.onclick = () => {
+            const idx = parseInt(btn.dataset.xonIdx, 10);
+            _highlightXon(idx);
+        };
+    });
+}
+
+function _highlightXon(idx) {
+    if (idx < 0 || idx >= _demoXons.length) return;
+    const xon = _demoXons[idx];
+    if (!xon) return;
+
+    // Set highlight timer — decayed per-frame in _tickDemoXons
+    xon._highlightT = 2.0; // seconds
+
+    // Track which xons are highlighted for button border styling
+    if (_xonHighlightTimers.has(idx)) clearTimeout(_xonHighlightTimers.get(idx));
+    _xonHighlightTimers.set(idx, setTimeout(() => _xonHighlightTimers.delete(idx), 2000));
+}
+
 function pauseDemo() {
+    _demoPaused = true;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
 }
 function resumeDemo() {
+    _demoPaused = false;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
         const intervalMs = _getDemoIntervalMs();
         if (intervalMs === 0) {
@@ -4060,11 +4882,13 @@ function resumeDemo() {
     }
 }
 function isDemoPaused() {
-    return _demoActive && !_demoInterval && !_demoUncappedId;
+    return _demoPaused;
 }
 
 function stopDemo() {
     _demoActive = false;
+    _demoPaused = false;
+    _openingPhase = false;
     if (typeof _liveGuardsActive !== 'undefined') _liveGuardsActive = false;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }

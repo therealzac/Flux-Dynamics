@@ -320,7 +320,7 @@ function tournamentCheckTick(){
         if (tournamentTickCounter === 12 && !cageFull) {
             cageNotFormed = true; // failed to build cage in 12 steps
         }
-        if (tournamentTickCounter > 12 && octOpen < 4) {
+        if (tournamentTickCounter > 12 && octOpen < _octSCIds.length) {
             cageBroken = true; // cage lost after formation deadline
         }
     }
