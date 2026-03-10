@@ -32,6 +32,18 @@ function _distToNearestOct(node) {
     return best;
 }
 
+// ── Universal nucleus-local neighbor filter ──
+// Hard-filters a baseNeighbors array to ONLY nucleus nodes, then sorts by
+// oct proximity (closest first). Every movement path should use this instead
+// of raw baseNeighbors to guarantee no non-local moves escape.
+function _localBaseNeighbors(node) {
+    _ensureNucleusNodeSet();
+    const nbs = baseNeighbors[node] || [];
+    if (!_nucleusNodeSet) return nbs; // fallback pre-init
+    return nbs.filter(nb => _nucleusNodeSet.has(nb.node))
+              .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+}
+
 function computeActivationPatterns() {
     const A = [1, 3, 6, 8];
     const B = [2, 4, 5, 7];
@@ -1530,18 +1542,13 @@ function _getOctCandidates(xon, occupied, blocked) {
 
     // Weak xons move ONLY to nucleus nodes (oct cage + tet face vertices)
     if (xon._mode === 'weak') {
-        _ensureNucleusNodeSet();
         const candidates = [];
-        for (const nb of baseNeighbors[xon.node]) {
+        for (const nb of _localBaseNeighbors(xon.node)) {
             if ((occupied.get(nb.node) || 0) > 0) continue;
             if (blocked && blocked.has(nb.node)) continue;
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
-            // Hard filter: only nucleus nodes allowed
-            if (_nucleusNodeSet && !_nucleusNodeSet.has(nb.node)) continue;
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: undefined, _needsMaterialise: false });
         }
-        // Sort by oct proximity — closest to cage first
-        candidates.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
         return candidates;
     }
 
@@ -3105,8 +3112,7 @@ async function demoTick() {
             }
         } else {
             // All BFS steps blocked — try free neighbor closest to oct cage
-            const allNbs = (baseNeighbors[xon.node] || []).slice()
-                .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+            const allNbs = _localBaseNeighbors(xon.node);
             // Tier 1: guard-safe, not in recent trail, not prevNode, closest to oct
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                 !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
@@ -3492,10 +3498,7 @@ async function demoTick() {
                 }
                 // Strategy 2: eject as weak particle (safety valve)
                 if (!ejectedThis) {
-                    _ensureNucleusNodeSet();
-                    const nbs = (baseNeighbors[plan.xon.node] || []).slice()
-                        .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
-                        .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+                    const nbs = _localBaseNeighbors(plan.xon.node);
                     const freeNb = nbs.find(nb =>
                         !(ejectBlocked.get(nb.node) || 0) &&
                         nb.node !== plan.xon.prevNode
@@ -3649,10 +3652,7 @@ async function demoTick() {
             plan.xon.col = WEAK_FORCE_COLOR;
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             // Weak xons can only move to nucleus nodes
-            _ensureNucleusNodeSet();
-            const nbs = (baseNeighbors[plan.xon.node] || []).slice()
-                .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
-                .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+            const nbs = _localBaseNeighbors(plan.xon.node);
             let escaped = false;
             for (const nb of nbs) {
                 if (allBlocked.has(nb.node)) continue;
@@ -3890,7 +3890,7 @@ async function demoTick() {
         if (!xon.alive || xon._movedThisTick) continue;
         if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
 
-        const nbs = baseNeighbors[xon.node] || [];
+        const nbs = _localBaseNeighbors(xon.node);
 
         // Priority 1: move to a 2-step-aware free oct neighbor → return to oct mode
         // ONLY destinations with valid 2nd moves are considered.
@@ -3987,8 +3987,6 @@ async function demoTick() {
             // Prefer non-prevNode to avoid bounce
             const nonBounce = freeNbs.filter(nb => nb.node !== xon.prevNode);
             if (nonBounce.length > 0) freeNbs = nonBounce;
-            // Sort by proximity to oct cage (closest first) — prevents wandering
-            freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
             if (freeNbs.length > 0) {
                 const nb = freeNbs[0]; // closest to oct cage
                 const fromWe = xon.node;
@@ -4148,9 +4146,7 @@ async function demoTick() {
             // When all oct-constrained options fail, the xon breaks confinement.
             // Enters 'weak' mode with purple trail/sparkle.
             if (!moved) {
-                _ensureNucleusNodeSet();
-                const allNbs = (baseNeighbors[xon.node] || [])
-                    .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node));
+                const allNbs = _localBaseNeighbors(xon.node);
                 // ALL projected guards — no bypass allowed
                 let freeNbs = allNbs.filter(nb => !(occupied.get(nb.node) || 0) &&
                     !_swapBlocked(xon.node, nb.node) &&
@@ -4158,8 +4154,6 @@ async function demoTick() {
                 // Prefer non-prevNode to avoid bounce
                 const nonBounce3b = freeNbs.filter(nb => nb.node !== xon.prevNode);
                 if (nonBounce3b.length > 0) freeNbs = nonBounce3b;
-                // Sort by oct proximity — closest to cage first
-                freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
                 if (freeNbs.length > 0) {
                     const nb = freeNbs[0]; // closest to oct cage
                     const from3bw = xon.node;
@@ -4315,10 +4309,7 @@ async function demoTick() {
             const stillHere = _demoXons.filter(x => x.alive && x.node === cNode);
             while (stillHere.length > 1) {
                 const xon = stillHere.pop();
-                _ensureNucleusNodeSet();
-                const allNbs = (baseNeighbors[xon.node] || []).slice()
-                    .filter(nb => !_nucleusNodeSet || _nucleusNodeSet.has(nb.node))
-                    .sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
+                const allNbs = _localBaseNeighbors(xon.node);
                 // ALL projected guards — no bypass allowed
                 let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
                     nb.node !== xon.prevNode &&
@@ -4388,7 +4379,7 @@ async function demoTick() {
             // Check if xon is stuck: same node AND same mode as previous tick snapshot
             if (xon.node !== prevNode || xon._mode !== prevMode) continue;
             // Xon is stuck — apply weak force escape
-            const nbs = baseNeighbors[xon.node] || [];
+            const nbs = _localBaseNeighbors(xon.node);
             // ALL projected guards — no bypass allowed
             let freeNbs = nbs.filter(nb => !(occupied.get(nb.node) || 0) &&
                 !_swapBlocked(xon.node, nb.node) &&
@@ -4396,8 +4387,6 @@ async function demoTick() {
             // Prefer non-prevNode to avoid bounce
             const nonBounceSN = freeNbs.filter(nb => nb.node !== xon.prevNode);
             if (nonBounceSN.length > 0) freeNbs = nonBounceSN;
-            // Sort by proximity to oct cage — prevents wandering
-            freeNbs.sort((a, b) => _distToNearestOct(a.node) - _distToNearestOct(b.node));
             if (freeNbs.length > 0) {
                 const nb = freeNbs[0]; // closest to oct cage
                 const fromSN = xon.node;
