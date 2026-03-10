@@ -389,6 +389,7 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 - **NO MULTI-HOP PATHS.** A xon may move at most ONE hop per tick. Multiple hops in a single tick = FTL = teleportation. NEVER allow it.
 - If a xon has already moved this tick, it MUST NOT be moved again by scatter, return-to-oct, or any other code path.
 - If a Pauli collision arises from a moved xon, prefer moving the OTHER xon. If neither can move without multi-hop, revert the original move.
+- **T20 "NEVER STAND STILL" HAS NO EXEMPTIONS.** Every alive xon MUST move to a different node every tick, regardless of mode. There are zero exceptions — not for mode transitions, not for ejections, not for any reason. If a code path changes a xon's mode but doesn't move it, that xon MUST still be moved by a later phase in the same tick. Designing around T20 is non-negotiable.
 
 ### Minimal Action Principle
 - Relinquish ONLY what's necessary at window transitions

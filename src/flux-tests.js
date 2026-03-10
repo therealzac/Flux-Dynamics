@@ -583,14 +583,14 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    // T45: No bouncing for oct xons. Tet/idle_tet exempt (fork needs a→b→a→c→a).
-    // Weak xons exempt — their bouncing is BFS navigation, not oscillation. T54 catches cycling.
+    // T45: No bouncing for oct/weak xons. Only tet/idle_tet exempt (fork needs a→b→a→c→a).
+    // Bounces are only allowed in actualized hadronic patterns that require them.
     { id: 'T45', name: 'No xon bounce (A→B→A)',
       projected(states) {
         if (!_T45_BOUNCE_GUARD) return null;
         const violations = [];
         for (const s of states) {
-          if (s.xon._mode !== 'oct') continue; // only oct xons
+          if (s.xon._mode === 'tet' || s.xon._mode === 'idle_tet') continue; // hadronic patterns exempt
           if (s.futureNode === s.xon.prevNode && s.futureNode !== s.fromNode && s.xon.prevNode != null) {
             violations.push({ guard: 'T45', xon: s.xon, msg: `would bounce to prevNode ${s.xon.prevNode}` });
           }
@@ -608,10 +608,10 @@ const LIVE_GUARD_REGISTRY = [
         if (!ctx.prev || tick <= LIVE_GUARD_GRACE) return null;
         for (const xon of _demoXons) {
           if (!xon.alive) continue;
-          if (xon._mode !== 'oct') continue; // only oct xons (tet/idle_tet/weak exempt)
+          if (xon._mode === 'tet' || xon._mode === 'idle_tet') continue; // hadronic patterns exempt
           const prev = g._t45prev?.get(xon);
           if (!prev) continue;
-          if (prev.mode !== 'oct') continue; // was not oct before — skip
+          if (prev.mode === 'tet' || prev.mode === 'idle_tet') continue; // was in hadronic pattern — skip
           if (xon.node === prev.prevNode && xon.node !== prev.node && prev.prevNode != null) {
             return `tick ${tick}: ${xon._mode} xon ${_demoXons.indexOf(xon)} bounced ${prev.prevNode}→${prev.node}→${xon.node}`;
           }
@@ -872,6 +872,87 @@ const LIVE_GUARD_REGISTRY = [
           const lastTrail = xon.trail[xon.trail.length - 1];
           if (xon.node !== lastTrail) {
             return `tick ${tick}: X${xi} at node ${xon.node} but trail ends at ${lastTrail}`;
+          }
+        }
+        return null;
+      }
+    },
+    // T60: Non-actualized tet must eject as weak particle AWAY from oct.
+    // Guard enforces: no tet/idle_tet xon at step >= 4 with _tetActualized === false
+    // (it should have been converted to weak before the guard runs).
+    // Ejected xons must BFS to an ejection target node (1 hop from oct, not in
+    // any tet/oct void) before they can return — enforced by PHASE 0.5.
+    { id: 'T60', name: 'Non-actualized tet ejects weak',
+      check(tick, g) {
+        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
+        if (!_demoXons) return null;
+        for (let xi = 0; xi < _demoXons.length; xi++) {
+          const xon = _demoXons[xi];
+          if (!xon.alive) continue;
+          if ((xon._mode === 'tet' || xon._mode === 'idle_tet') &&
+              xon._loopStep >= 4 && xon._tetActualized === false) {
+            return `tick ${tick}: X${xi} completed non-actualized loop on face ${xon._assignedFace} but not ejected to weak`;
+          }
+        }
+        return null;
+      }
+    },
+    // T61: Weak xons must NOT be on oct nodes at end of tick.
+    // Purple tracers on the octa break the visual contract: weak particles
+    // must eject away from the oct cage, not linger on it.
+    // projected() also lets the backtracker steer away from weak-on-oct states.
+    { id: 'T61', name: 'No weak xon on oct node',
+      projected(states) {
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        // Don't reject during early ticks — choreographer needs setup time
+        if (typeof _demoTick !== 'undefined' && _demoTick < LIVE_GUARD_GRACE) return null;
+        const violations = [];
+        for (const s of states) {
+          if (s.xon._mode === 'weak' && _octNodeSet.has(s.futureNode)) {
+            violations.push({ guard: 'T61', xon: s.xon, msg: `weak on oct node ${s.futureNode}` });
+          }
+        }
+        return violations.length ? violations : null;
+      },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null; // grace period
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!_demoXons || !_octNodeSet || _octNodeSet.size === 0) return null;
+        for (let xi = 0; xi < _demoXons.length; xi++) {
+          const xon = _demoXons[xi];
+          if (!xon.alive) continue;
+          if (xon._mode === 'weak' && _octNodeSet.has(xon.node)) {
+            return `tick ${tick}: X${xi} weak on oct node ${xon.node}`;
+          }
+        }
+        return null;
+      }
+    },
+    // T62: Weak xons can only re-enter the system (transition from weak to any
+    // other mode) at an oct node. They must navigate back to the oct cage before
+    // being allowed to resume normal duties.
+    { id: 'T62', name: 'Weak re-entry at oct only',
+      snapshot(g) {
+        g._t62prev = new Map();
+        if (!_demoXons) return;
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          g._t62prev.set(xon, { mode: xon._mode, node: xon.node });
+        }
+      },
+      check(tick, g, ctx) {
+        if (tick < LIVE_GUARD_GRACE) return null; // grace period
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!ctx.prev || !_demoXons || !_octNodeSet || _octNodeSet.size === 0) return null;
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          const prev = g._t62prev?.get(xon);
+          if (!prev) continue;
+          // Was weak last tick, no longer weak this tick → re-entry
+          if (prev.mode === 'weak' && xon._mode !== 'weak') {
+            if (!_octNodeSet.has(xon.node)) {
+              return `tick ${tick}: X${_demoXons.indexOf(xon)} re-entered as ${xon._mode} at non-oct node ${xon.node}`;
+            }
           }
         }
         return null;
