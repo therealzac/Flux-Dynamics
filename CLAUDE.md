@@ -379,6 +379,12 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 - **SOLUTION IS NEVER TO RELAX TIGHT THRESHOLD OF 0.01%; YOU MUST FIX YOUR PHYSICS.**
 - **DO NOT DO THINGS LIKE `_demoActive` TO DISABLE CHECKS! Fix the root cause.**
 
+### Tournament Doctrine
+- **ALL live guards and the backtracker MUST be active during tournament trials.** No exceptions.
+- `_testRunning` may suppress UI updates but MUST NOT skip `_liveGuardCheck` or `_liveGuardSnapshot`.
+- Tournament trials must obey the same physics rules as the interactive demo — if a trial halts from a guard failure, that's a legitimate fitness=0 result, not something to paper over.
+- The tournament is the proving ground: if the choreography can't survive guards, it's not fit.
+
 ### Movement Doctrine
 - **NO MULTI-HOP PATHS.** A xon may move at most ONE hop per tick. Multiple hops in a single tick = FTL = teleportation. NEVER allow it.
 - If a xon has already moved this tick, it MUST NOT be moved again by scatter, return-to-oct, or any other code path.

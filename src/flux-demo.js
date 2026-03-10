@@ -3423,15 +3423,20 @@ async function demoTick() {
     // During retries, rotate each xon's candidate list so Kuhn's algorithm
     // produces genuinely different matchings on each attempt. This is the core
     // DFS mechanic: "try option A, then B, then C, then exhaust and back up."
-    if (_btActive && _btRetryCount > 0) {
-        for (let i = 0; i < octPlans.length; i++) {
-            const cands = octPlans[i].candidates;
-            if (cands.length <= 1) continue;
-            // Each xon gets a different rotation based on retry count.
-            // Stagger per xon so we explore the Cartesian product.
-            const shift = Math.floor(_btRetryCount / Math.max(1, i + 1)) % cands.length;
-            if (shift > 0) {
-                octPlans[i].candidates = [...cands.slice(shift), ...cands.slice(0, shift)];
+    // The effective seed combines retryCount + depth*MAX_RETRIES so that depth
+    // escalation produces different rotations even when retryCount resets to 0.
+    if (_btActive) {
+        const effectiveSeed = _btRetryCount + _btDepth * _BT_MAX_RETRIES;
+        if (effectiveSeed > 0) {
+            for (let i = 0; i < octPlans.length; i++) {
+                const cands = octPlans[i].candidates;
+                if (cands.length <= 1) continue;
+                // Each xon gets a different rotation based on seed.
+                // Stagger per xon so we explore the Cartesian product.
+                const shift = Math.floor(effectiveSeed / Math.max(1, i + 1)) % cands.length;
+                if (shift > 0) {
+                    octPlans[i].candidates = [...cands.slice(shift), ...cands.slice(0, shift)];
+                }
             }
         }
     }
