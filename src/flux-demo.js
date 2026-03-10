@@ -3025,6 +3025,7 @@ async function demoTick() {
             xon.prevNode = xon.node;
             xon.node = bestStep;
             _occAdd(occupied, bestStep);
+            xon._movedThisTick = true; // prevent double-move in PHASE 2
             _moveRecord.set(bestStep, fromWk); // T41: record
             _traceMove(xon, fromWk, bestStep, 'weakBFS');
             _trailPush(xon, bestStep, WEAK_FORCE_COLOR);
@@ -3067,6 +3068,7 @@ async function demoTick() {
                 xon.prevNode = xon.node;
                 xon.node = freeNb.node;
                 _occAdd(occupied, freeNb.node);
+                xon._movedThisTick = true; // prevent double-move in PHASE 2
                 _moveRecord.set(freeNb.node, fromWk2); // T41: record
                 _traceMove(xon, fromWk2, freeNb.node, 'weakDetour');
                 _trailPush(xon, freeNb.node, WEAK_FORCE_COLOR);
