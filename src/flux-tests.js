@@ -25,12 +25,10 @@ let _testRunning = false;  // suppress display updates during test execution
 // ═══════════════════════════════════════════════════════════════════════
 const LIVE_GUARD_GRACE = 0;
 
-// Oct capacity: 5 minus the number of weak particles.
-// Each weak xon takes a slot away from the oct cage.
+// Oct capacity: hard maximum of 4 oct-mode xons at any time.
+const OCT_CAPACITY_MAX = 4;
 function _computeOctCapacity() {
-    if (typeof _demoXons === 'undefined') return 5;
-    const weakCount = _demoXons.filter(x => x.alive && x._mode === 'weak').length;
-    return 5 - weakCount;
+    return OCT_CAPACITY_MAX;
 }
 
 // Helper: check if actual loop matches any valid cycle rotation for a given quark type.
@@ -753,10 +751,23 @@ const LIVE_GUARD_REGISTRY = [
     },
     // T53 REMOVED: per user request (covered by T22)
     // T56 REMOVED: diagonal traversal fixed at the source (movement filtering)
-    { id: 'T55', name: 'Oct capacity (hadronic pressure)',
-      init: { _octCapacity: 6 },
+    { id: 'T55', name: 'Oct capacity (hard max 4)',
+      init: { _octCapacity: OCT_CAPACITY_MAX },
+      projected(states) {
+        let octCount = 0;
+        for (const s of states) {
+          if (s.futureMode === 'oct') octCount++;
+        }
+        if (octCount > OCT_CAPACITY_MAX) {
+          // Blame the last oct xon
+          const octXons = states.filter(s => s.futureMode === 'oct');
+          return { guard: 'T55', xon: octXons[octXons.length - 1].xon,
+            msg: `projected ${octCount} oct xons > max ${OCT_CAPACITY_MAX}` };
+        }
+        return null;
+      },
       check(tick, g) {
-        const cap = _computeOctCapacity();
+        const cap = OCT_CAPACITY_MAX;
         g._octCapacity = cap;
         const octCount = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
         g.msg = `oct: ${octCount}/${cap}`;

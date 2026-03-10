@@ -1507,6 +1507,10 @@ function _getOctCandidates(xon, occupied, blocked) {
             const dy = pos[other][1] - pos[xon.node][1];
             const dz = pos[other][2] - pos[xon.node][2];
             const d = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+            // Pre-filter: skip grossly non-local SC edges — saves expensive solver calls.
+            // Already-active SCs exempt. Cage SCs exempt (critical for initialization).
+            // Tolerance 0.50: catches teleportation (d>1.5) but allows pre-solver SC edges (~1.15).
+            if (!alreadyActive && !((_octSCIds || []).includes(scId)) && Math.abs(d - 1) > 0.50) continue;
             let bestDir = 0, bestDot = -Infinity;
             for (let k = 0; k < 4; k++) {
                 const v = DIR_VEC[k];
@@ -3305,12 +3309,21 @@ async function demoTick() {
     let _batchResults = null; // Map<scId, {pass, worst, avg}>
     if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
         // Collect unique SC IDs needing materialisation check
+        // Pre-filter: skip grossly non-local SC edges (saves solver calls)
         const candidateScIds = new Set();
         for (const plan of octPlans) {
             for (const c of plan.candidates) {
                 if (!c._needsMaterialise) continue;
                 if (c._scId === undefined) continue;
                 if (_octSCIds && _octSCIds.includes(c._scId)) continue;
+                // Distance pre-filter: reject obviously non-local SC candidates (d > 1.5)
+                const sc = SC_BY_ID[c._scId];
+                if (sc) {
+                    const pa = pos[sc.a], pb = pos[sc.b];
+                    const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
+                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                    if (Math.abs(dist - 1) > 0.50) continue; // teleportation-range, skip solver
+                }
                 candidateScIds.add(c._scId);
             }
         }
@@ -3348,6 +3361,13 @@ async function demoTick() {
             if (c._scId === undefined) return true;
             // Oct cage SCs get full vacuum negotiation in _executeOctMove
             if (_octSCIds && _octSCIds.includes(c._scId)) return true;
+            // Distance pre-filter: reject grossly non-local before hitting solver
+            const sc = SC_BY_ID[c._scId];
+            if (sc) {
+                const pa = pos[sc.a], pb = pos[sc.b];
+                const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
+                if (Math.abs(Math.sqrt(dx*dx + dy*dy + dz*dz) - 1) > 0.50) return false;
+            }
             // Use batch results if available, otherwise fall back to sync
             if (_batchResults && _batchResults.has(c._scId)) {
                 return _batchResults.get(c._scId).pass;
