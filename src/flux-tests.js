@@ -1012,6 +1012,20 @@ function _liveGuardCheck() {
         if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
             _liveGuardFailTick = tick; // record first failure tick
         }
+        // ── TOURNAMENT MODE: don't backtrack or halt — just record failure ──
+        // The fitness evaluator checks _liveGuards.failed at trial end.
+        // Halting mid-trial would kill the demo loop and block the GA.
+        if (_tournamentRunning) {
+            // Reset failed state so the trial can keep running and accumulate
+            // more data for fitness scoring (coverage, ratios, etc.)
+            for (const entry of LIVE_GUARD_REGISTRY) {
+                const g = _liveGuards[entry.id];
+                if (g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
+            }
+            _liveGuardFailTick = null;
+            _liveGuardDumped = false;
+            return; // skip backtracker/halt entirely
+        }
         // ── BACKTRACKING: all failures trigger rewind instead of halt ──
         const canBacktrack = typeof _rewindRequested !== 'undefined'
             && typeof _btSnapshots !== 'undefined'
@@ -1524,7 +1538,9 @@ async function _runTournament() {
             }
 
             // Run this trial visually — demo renders on screen
+            console.log(`[TOURNAMENT] Gen ${gen+1} trial ${i+1}/${POP_SIZE} — launching...`);
             const result = await _startVisualTrial(params, maxTicks);
+            console.log(`[TOURNAMENT] Gen ${gen+1} trial ${i+1}/${POP_SIZE} — finished: fitness=${result.fitness.toFixed(3)}, ticks=${result.survivedTicks}, clean=${result.clean}`);
             results.push({ params, ...result });
 
             if (result.fitness > bestFitnessEver) {
