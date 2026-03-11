@@ -640,7 +640,7 @@ let _demoXons = [];               // active xon objects (dynamic count)
 let _demoGluons = [];             // active gluon objects (lightweight)
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
-const T79_MAX_FULL_TICKS = 6;     // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+const T79_MAX_FULL_TICKS = 1;     // T79: max consecutive ticks allowed with all 6 xons on oct nodes
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
 // Used to prevent adjacent xon swaps (A→B while B→A in the same tick).
@@ -729,6 +729,12 @@ function _ensureNucleusNodeSet() {
 // Called at tick start and after SC set changes.
 function _recomputeActualizedTetNodes() {
     _actualizedTetNodes = new Set();
+    // No actualized tets until oct is discovered — geometry isn't established yet
+    if (!_octNodeSet || _octNodeSet.size === 0) {
+        _ejectionForbidden = new Set();
+        _purelyTetNodes = new Set();
+        return;
+    }
     if (typeof voidNeighborData !== 'undefined') {
         for (const v of voidNeighborData) {
             if (v.type !== 'tet') continue;
@@ -3245,11 +3251,16 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons → above center
-        for (let i = 0; i < 2 && i < aboveY.length; i++) {
-            const xon = _demoXons[4 + i];
-            const pick = aboveY[i];
-            _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
+        // Remaining 2 xons: start as weak particles — must leave oct cage naturally
+        for (let i = 4; i < 6; i++) {
+            const xon = _demoXons[i];
+            if (xon._mode === 'oct_formation') {
+                xon._mode = 'weak';
+                xon._t60Ejected = true;
+                _logMayReturn(xon, false, 'opening_free_xon');
+                xon.col = WEAK_FORCE_COLOR;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+            }
         }
 
     } else if (_demoTick === 1) {
@@ -3394,49 +3405,7 @@ function _executeOpeningTick(occupied) {
         }
         for (const { xon, target } of choreoMoves) _executeOctMove(xon, target);
 
-        // ── Free xons: move AWAY from oct cage (T55: max 4 on oct nodes) ──
-        const center1hop = new Set([center]);
-        for (const nb of baseNeighbors[center]) center1hop.add(nb.node);
-        for (const sc of _localScNeighbors(center)) center1hop.add(sc.a === center ? sc.b : sc.a);
-        const freeXonData = [];
-        const takenNodes = new Set(_octEquatorCycle);
-        for (let i = 0; i < 6; i++) {
-            if (equatorSet.has(xonNodes[i])) continue;
-            const xon = _demoXons[i];
-            // Exclude oct nodes — non-equatorial xons must NOT land on the oct cage
-            const candidates = baseNeighbors[xon.node].filter(nb =>
-                center1hop.has(nb.node) && !takenNodes.has(nb.node) &&
-                !_octNodeSet.has(nb.node) && nb.node !== xon.prevNode
-            );
-            freeXonData.push({ xon, candidates });
-        }
-        if (freeXonData.length === 2 && freeXonData[0].candidates.length > 0 && freeXonData[1].candidates.length > 0) {
-            let bestPair = null, bestDist = -Infinity;
-            for (const c0 of freeXonData[0].candidates) {
-                for (const c1 of freeXonData[1].candidates) {
-                    if (c0.node === c1.node) continue;
-                    const d = Math.hypot(
-                        pos[c0.node][0] - pos[c1.node][0],
-                        pos[c0.node][1] - pos[c1.node][1],
-                        pos[c0.node][2] - pos[c1.node][2]
-                    );
-                    if (d > bestDist) { bestDist = d; bestPair = [c0, c1]; }
-                }
-            }
-            if (bestPair) {
-                _executeOctMove(freeXonData[0].xon, { node: bestPair[0].node, dirIdx: bestPair[0].dirIdx, _needsMaterialise: false, _scId: undefined });
-                takenNodes.add(bestPair[0].node);
-                _executeOctMove(freeXonData[1].xon, { node: bestPair[1].node, dirIdx: bestPair[1].dirIdx, _needsMaterialise: false, _scId: undefined });
-            }
-        } else {
-            for (const { xon, candidates } of freeXonData) {
-                if (candidates.length > 0) {
-                    const pick = candidates[0];
-                    _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
-                    takenNodes.add(pick.node);
-                }
-            }
-        }
+        // Free xons: handled by normal phases (free to choose any action)
 
         // ── Transition all xons out of oct_formation mode ──
         for (const xon of _demoXons) {
@@ -3570,8 +3539,9 @@ async function demoTick() {
     if (_openingPhase) {
         if (_demoTick < 2) {
             _executeOpeningTick(occupied);
-            _skipNormalPhases = true;
+            // Don't skip normal phases — free xons need coordinated movement
             _solverNeeded = true;
+            occupied = _occupiedNodes(); // refresh after opening moves
         } else {
             _openingPhase = false;
         }
@@ -3817,7 +3787,7 @@ async function demoTick() {
         // ── Post-_mayReturn (or non-ejected weak): return to oct cage ──
         // Weak xon with _mayReturn already at oct node → becomes oct immediately (no capacity gate).
         // The choreographer is responsible for not over-populating the oct cage.
-        if (xon._mayReturn && _octNodeSet.has(xon.node)) {
+        if (xon._mayReturn && _octNodeSet && _octNodeSet.has(xon.node)) {
             _weakLifecycleExit(xon, 'arrived_oct_immediate');
             _clearModeProps(xon);
             xon._mode = 'oct';
@@ -3850,7 +3820,7 @@ async function demoTick() {
                 if (_purelyTetNodes && _purelyTetNodes.has(nb.node)) continue;
                 visited.add(nb.node);
                 const nextStep = step || nb.node;
-                if (_octNodeSet.has(nb.node)) {
+                if (_octNodeSet && _octNodeSet.has(nb.node)) {
                     if (depth + 1 <= bestDepth) {
                         bestDepth = depth + 1;
                         if (!bestSteps.includes(nextStep)) bestSteps.push(nextStep);
@@ -3892,7 +3862,7 @@ async function demoTick() {
             anyMoved = true;
             _weakLifecycleStep(xon);
             // Check if arrived at oct node — transition if _mayReturn and capacity
-            if (_octNodeSet.has(bestStep) && xon._mayReturn) {
+            if (_octNodeSet && _octNodeSet.has(bestStep) && xon._mayReturn) {
                 const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
                 if (octCountNow < OCT_CAPACITY_MAX) {
                     _weakLifecycleExit(xon, 'arrived_oct_bfs');
@@ -3944,7 +3914,7 @@ async function demoTick() {
                 xon.tweenT = 0;
                 anyMoved = true;
                 _weakLifecycleStep(xon);
-                if (_octNodeSet.has(freeNb.node) && xon._mayReturn) {
+                if (_octNodeSet && _octNodeSet.has(freeNb.node) && xon._mayReturn) {
                     const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
                     if (octCountNow < OCT_CAPACITY_MAX) {
                         _weakLifecycleExit(xon, 'arrived_oct_detour');
@@ -4216,8 +4186,8 @@ async function demoTick() {
     // Tier 2: Eject as weak particle with _t60Ejected = true.
     {
         const octModeXons = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
-        // T79: STUBBED — no pressure applied (observe-only mode)
-        const t79Pressure = 0;
+        // T79: consecutive full-oct pressure — after T79_MAX_FULL_TICKS-1 consecutive full ticks, shed 1 extra
+        const t79Pressure = (_octFullConsecutive >= T79_MAX_FULL_TICKS - 1 && octModeXons.length >= OCT_CAPACITY_MAX) ? 1 : 0;
         let excess = octModeXons.length - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Shuffle to avoid order bias
