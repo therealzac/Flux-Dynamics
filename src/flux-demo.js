@@ -661,6 +661,12 @@ let _xonHighlightTimers = new Map(); // xon index → timeout id
 // Flash toggle — set false to disable mode-transition flash effects.
 // Re-enable by setting to true. Flash = sparkle scale/brightness pulse on mode change.
 let _flashEnabled = false;
+// Kuhn's bipartite matching toggle. When false, Phase 2 uses greedy
+// first-fit assignment instead of augmenting-path matching. Greedy is
+// simpler and avoids the swap-removal Pauli gap where unmatched xons
+// collide with matched ones. Re-enable for optimal throughput once the
+// collision bug is fixed.
+let _kuhnEnabled = false;
 // ── Seeded PRNG for deterministic backtracker replay ─────────────────
 // Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).
 // The backtracker requires deterministic forward replay from the same
@@ -677,6 +683,16 @@ function _sRng() {
 // Seed from tick number — call at the start of each tick so replays
 // from the same snapshot produce the same random sequence.
 function _sRngSeed(tick) { _sRngState = tick * 2654435761; }
+// Fisher-Yates shuffle using seeded PRNG. Consumes exactly arr.length-1
+// PRNG values — deterministic unlike .sort(() => _sRng() - 0.5) which
+// consumes a variable number depending on the sort algorithm internals.
+function _sRngShuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(_sRng() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
 
 // ── Diagnostic trace — permanent, extensible ─────────────────────────
 // Records every physical xon move with source code path label.
@@ -850,7 +866,7 @@ function _btSaveSnapshot() {
             _loopStep: x._loopStep, col: x.col,
             _movedThisTick: x._movedThisTick, _evictedThisTick: x._evictedThisTick,
             _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
-            _t60Ejected: !!x._t60Ejected, _mayReturn: !!x._mayReturn,
+            _t60Ejected: !!x._t60Ejected, _mayReturn: !!x._mayReturn, _pendingWeakEjection: !!x._pendingWeakEjection,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
@@ -893,6 +909,7 @@ function _btRestoreSnapshot(snap) {
         x._highlightT = s._highlightT;
         x._t60Ejected = !!s._t60Ejected;
         x._mayReturn = !!s._mayReturn;
+        x._pendingWeakEjection = !!s._pendingWeakEjection;
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
         x.trail = s.trail.slice();
         x.trailColHistory = s.trailColHistory.slice();
@@ -1158,6 +1175,7 @@ function _logMayReturn(xon, newVal, source) {
 // tet-class: _assignedFace, _quarkType, _loopType, _loopSeq, _loopStep, _tetActualized
 function _clearModeProps(xon) {
     xon._t60Ejected = false;
+    xon._pendingWeakEjection = false;
     _logMayReturn(xon, false, '_clearModeProps');
     xon._tetActualized = false;
 }
@@ -1897,59 +1915,25 @@ function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
 }
 
 // ── Single-Move Guard Check ──
-// Validates a proposed move for one xon against ALL projected guards.
-// STRUCTURAL GUARANTEE: any guard with projected() in LIVE_GUARD_REGISTRY
-// is automatically checked here. Add projected() to your test = covered everywhere.
-// Used by: _lookahead weak-force fallback, PHASE 0.5 weak BFS, PHASE 3/5 escape hatches.
+// Checks backtracker exclusion only. Projected guards were removed (redundant
+// with post-move check() and caused false-positive poisoning of unrelated xons).
 function _moveViolatesGuards(xon, fromNode, toNode) {
-    // Check persistent bad-move ledger (during backtrack retries)
     if (_btActive) {
         const xonIdx = _demoXons.indexOf(xon);
         if (_btIsMoveExcluded(xonIdx, toNode)) return true;
     }
-    if (typeof PROJECTED_GUARD_CHECKS === 'undefined' || !PROJECTED_GUARD_CHECKS.length) return false;
-    // Build futures: this xon at toNode, all others at current positions
-    const futures = [];
-    for (const x of _demoXons) {
-        if (!x.alive) continue;
-        if (x === xon) {
-            futures.push({ xon: x, futureNode: toNode, fromNode, futureMode: x._mode, futureColor: x.col });
-        } else {
-            futures.push({ xon: x, futureNode: x.node, fromNode: x.node, futureMode: x._mode, futureColor: x.col });
-        }
-    }
-    return _validateProjectedGuards(futures).length > 0;
+    return false;
 }
 
 // ── Detailed guard violation checker (for decision ledger logging) ──
 // Returns an array of {reason} objects explaining why a move is blocked,
-// or empty array if the move is allowed.
+// or empty array if the move is allowed. Only checks backtracker exclusion.
 function _moveViolatesGuardsDetailed(xon, fromNode, toNode) {
     const reasons = [];
     if (_btActive) {
         const xonIdx = _demoXons.indexOf(xon);
         if (_btIsMoveExcluded(xonIdx, toNode)) {
             reasons.push({ reason: 'backtracker-excluded' });
-            return reasons; // backtracker exclusion is terminal
-        }
-    }
-    if (typeof PROJECTED_GUARD_CHECKS === 'undefined' || !PROJECTED_GUARD_CHECKS.length) return reasons;
-    const futures = [];
-    for (const x of _demoXons) {
-        if (!x.alive) continue;
-        if (x === xon) {
-            futures.push({ xon: x, futureNode: toNode, fromNode, futureMode: x._mode, futureColor: x.col });
-        } else {
-            futures.push({ xon: x, futureNode: x.node, fromNode: x.node, futureMode: x._mode, futureColor: x.col });
-        }
-    }
-    for (const check of PROJECTED_GUARD_CHECKS) {
-        const result = check(futures);
-        if (result) {
-            const items = Array.isArray(result) ? result : [result];
-            for (const v of items) {
-                if (v) reasons.push({ reason: `${v.guard || '?'}: ${v.msg || JSON.stringify(v)}` });
-            }
         }
     }
     return reasons;
@@ -1994,26 +1978,8 @@ function _logWeakDecisionLedger(xon, occupied) {
     console.error(lines.join('\n'));
 }
 
-// ── Projected Guard Validator ──
-// Iterates the PROJECTED_GUARD_CHECKS array (defined in flux-tests.js).
-// Each check function receives the projected xon states and returns violations.
-// Adding a new test to that array = automatically covered by lookahead.
-//
-// `xonFutures` is an array of { xon, futureNode, futureMode, futureColor, fromNode }
-function _validateProjectedGuards(xonFutures) {
-    if (typeof PROJECTED_GUARD_CHECKS === 'undefined' || !PROJECTED_GUARD_CHECKS.length) {
-        return []; // guard checks not loaded yet (flux-tests.js loads after flux-demo.js)
-    }
-    const violations = [];
-    for (const check of PROJECTED_GUARD_CHECKS) {
-        const result = check(xonFutures);
-        if (result) {
-            const items = Array.isArray(result) ? result : [result];
-            for (const v of items) if (v) violations.push(v);
-        }
-    }
-    return violations;
-}
+// _validateProjectedGuards: Removed — projected guards were redundant with
+// post-move check() and caused false-positive poisoning of unrelated xons' moves.
 
 // _verifyPlan: Removed — backtracker handles downstream violations
 // function _verifyPlan(tetPlans, octPlans) { ... }
@@ -2115,10 +2081,23 @@ function _getOctCandidates(xon, occupied, blocked) {
         return candidates;
     }
 
+    // Pending-weak xons: give ALL base neighbors (they need to step OFF the oct)
+    if (xon._pendingWeakEjection) {
+        const candidates = [];
+        for (const nb of baseNeighbors[xon.node]) {
+            if (occupied.has(nb.node)) continue;
+            if (blocked && blocked.has(nb.node)) continue;
+            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            // Prefer non-oct destinations (score bonus for stepping off cage)
+            const offCageBonus = (_octNodeSet && _octNodeSet.has(nb.node)) ? 0 : 10;
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: offCageBonus, _needsMaterialise: false, _scId: undefined });
+        }
+        return candidates;
+    }
+
     // Constrain oct movement to cage nodes only.
     if (!_octNodeSet) return [];
 
-    // Constrain oct movement to cage nodes only.
     // Off-cage xons get no candidates here; the fallback _startIdleTetLoop handles them.
     const onCage = _octNodeSet.has(xon.node);
     if (!onCage) return [];
@@ -2537,8 +2516,8 @@ function _startIdleTetLoop(xon, occupied) {
 
     // Helper: try to assign xon to a face with free destination
     function tryFaces(faces) {
-        const shuffled = faces.sort(() => _sRng() - 0.5);
-        const shuffledTypes = types.slice().sort(() => _sRng() - 0.5);
+        const shuffled = _sRngShuffle(faces.slice());
+        const shuffledTypes = _sRngShuffle(types.slice());
         let bestSeq = null, bestFace = null, bestType = null;
         for (const face of shuffled) {
             const existingXon = _demoXons.find(x =>
@@ -2603,7 +2582,7 @@ function _startIdleTetLoop(xon, occupied) {
     // Try to materialise the missing SCs for non-actualized faces.
     // This creates new loiter space when the oct cage is congested.
     const newlyActualized = [];
-    for (const face of manifestCandidates.sort(() => _sRng() - 0.5)) {
+    for (const face of _sRngShuffle(manifestCandidates.slice())) {
         const fd = _nucleusTetFaceData[face];
         const missingSCs = fd.scIds.filter(scId =>
             !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
@@ -3251,15 +3230,12 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons: start as weak particles — must leave oct cage naturally
+        // Remaining 2 xons: free to move, become weak when they step off oct
         for (let i = 4; i < 6; i++) {
             const xon = _demoXons[i];
             if (xon._mode === 'oct_formation') {
-                xon._mode = 'weak';
-                xon._t60Ejected = true;
-                _logMayReturn(xon, false, 'opening_free_xon');
-                xon.col = WEAK_FORCE_COLOR;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                xon._mode = 'oct';
+                xon._pendingWeakEjection = true;
             }
         }
 
@@ -4179,39 +4155,69 @@ async function demoTick() {
         occupied = _occupiedNodes(); // refresh after assignments
     }
 
-    // ── OCT CAPACITY OVERFLOW — 2-tier relief ──
-    // If more than OCT_CAPACITY_MAX xons are in oct mode, shed the excess.
-    // T79 pressure: if oct was full last tick AND still full, force shed 1.
-    // Tier 1: _startIdleTetLoop (productive — manifests a hadron).
-    // Tier 2: Eject as weak particle with _t60Ejected = true.
+    // ── OCT CAPACITY OVERFLOW — proactive shedding ──
+    // Count ALL xons on oct nodes (any mode — oct, idle_tet, weak all count).
+    // T79 pressure: if approaching the consecutive-full limit, shed 1 extra.
+    // Priority: oct-mode first (least disruptive), then idle_tet, then weak.
+    // Tier 1: _startIdleTetLoop (productive — manifests a hadron, moves off cage).
+    // Tier 2: _pendingWeakEjection (becomes weak when it steps off oct).
     {
-        const octModeXons = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
-        // T79: consecutive full-oct pressure — after T79_MAX_FULL_TICKS-1 consecutive full ticks, shed 1 extra
-        const t79Pressure = (_octFullConsecutive >= T79_MAX_FULL_TICKS - 1 && octModeXons.length >= OCT_CAPACITY_MAX) ? 1 : 0;
-        let excess = octModeXons.length - OCT_CAPACITY_MAX + t79Pressure;
+        const allOnOct = (_octNodeSet && _octNodeSet.size > 0)
+            ? _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length : 0;
+        const t79Pressure = (_octFullConsecutive >= T79_MAX_FULL_TICKS - 1 && allOnOct >= OCT_CAPACITY_MAX) ? 1 : 0;
+        let excess = allOnOct - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
-            // Shuffle to avoid order bias
-            const candidates = octModeXons.slice().sort(() => _sRng() - 0.5);
-            for (const xon of candidates) {
+            // Priority 1: oct-mode xons (easiest to redirect)
+            const octCandidates = _sRngShuffle(_demoXons.filter(x =>
+                x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
+                _octNodeSet.has(x.node)
+            ));
+            for (const xon of octCandidates) {
                 if (excess <= 0) break;
-                // Tier 1: try idle_tet diversion
                 if (_startIdleTetLoop(xon, occupied)) {
                     _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> idle_tet f${xon._assignedFace}`);
                     _solverNeeded = true;
                     excess--;
                     continue;
                 }
-                // Tier 2: eject as weak particle
-                _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> weak (no idle_tet available)`);
-                xon._mode = 'weak';
-                xon._t60Ejected = true;
-                _logMayReturn(xon, false, 'phase2a_capacityOverflow');
-                xon.col = WEAK_FORCE_COLOR;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                _weakLifecycleEnter(xon, 'oct_capacity_overflow');
+                _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> pendingWeak`);
+                xon._pendingWeakEjection = true;
                 excess--;
             }
-            if (excess <= 0) occupied = _occupiedNodes(); // refresh after overflow relief
+            // Priority 2: idle_tet xons on oct nodes (interrupt loop, mark for ejection)
+            if (excess > 0) {
+                const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
+                    x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
+                    _octNodeSet.has(x.node)
+                ));
+                for (const xon of idleCandidates) {
+                    if (excess <= 0) break;
+                    const xi = _demoXons.indexOf(xon);
+                    _logChoreo(`X${xi} idle_tet on oct -> pendingWeak (T79 shed)`);
+                    xon._assignedFace = null;
+                    xon._loopSeq = null;
+                    xon._loopStep = 0;
+                    xon._mode = 'oct';
+                    xon._pendingWeakEjection = true;
+                    excess--;
+                }
+            }
+            // Priority 3: weak xons on oct nodes (force off-oct movement)
+            if (excess > 0) {
+                const weakOnOct = _sRngShuffle(_demoXons.filter(x =>
+                    x.alive && x._mode === 'weak' && !x._movedThisTick &&
+                    _octNodeSet.has(x.node)
+                ));
+                for (const xon of weakOnOct) {
+                    if (excess <= 0) break;
+                    const xi = _demoXons.indexOf(xon);
+                    _logChoreo(`X${xi} weak on oct -> pendingWeak (T79 shed)`);
+                    xon._mode = 'oct';
+                    xon._pendingWeakEjection = true;
+                    excess--;
+                }
+            }
+            if (allOnOct - OCT_CAPACITY_MAX + t79Pressure > 0) occupied = _occupiedNodes();
         }
     }
 
@@ -4341,9 +4347,25 @@ async function demoTick() {
         }
     }
 
-    // Maximum bipartite matching with arbitrary-depth backtracking (Kuhn's algorithm).
-    // Finds augmenting paths so the maximum number of oct xons get a valid destination.
-    _maxBipartiteAssignment(octPlans, planned);
+    // Move assignment: either Kuhn's augmenting-path matching or greedy first-fit.
+    if (_kuhnEnabled) {
+        // Maximum bipartite matching with arbitrary-depth backtracking (Kuhn's algorithm).
+        // Finds augmenting paths so the maximum number of oct xons get a valid destination.
+        _maxBipartiteAssignment(octPlans, planned);
+    } else {
+        // Greedy first-fit: assign each xon its best available candidate.
+        // Simpler than Kuhn's — no swap-removal, so no Pauli gap.
+        const greedyClaimed = new Set();
+        for (const plan of octPlans) {
+            plan.assigned = null;
+            for (const c of plan.candidates) {
+                if (planned.has(c.node) || greedyClaimed.has(c.node)) continue;
+                plan.assigned = c;
+                greedyClaimed.add(c.node);
+                break;
+            }
+        }
+    }
     const octClaimed = new Set();
     for (const plan of octPlans) {
         if (plan.assigned) octClaimed.add(plan.assigned.node);
@@ -4604,6 +4626,27 @@ async function demoTick() {
     // PHASE 3b: Removed — backtracker handles stuck oct xons via rewind
 
     // PHASE 3.5: Removed — PHASE 0.5 handles all weak xon movement
+
+    // ── PENDING WEAK EJECTION: transition xons that stepped off oct ──
+    // A xon with _pendingWeakEjection stays in oct mode until it physically
+    // lands on a non-oct node. Only THEN does it become weak.
+    for (const xon of _demoXons) {
+        if (!xon.alive || !xon._pendingWeakEjection) continue;
+        const onOct = _octNodeSet && _octNodeSet.has(xon.node);
+        if (!onOct) {
+            // Stepped off oct — now transition to weak
+            const xi = _demoXons.indexOf(xon);
+            _logChoreo(`X${xi} pending-weak → weak at node ${xon.node} (off oct)`);
+            xon._pendingWeakEjection = false;
+            xon._mode = 'weak';
+            xon._t60Ejected = true;
+            _logMayReturn(xon, false, 'pending_weak_offcage');
+            xon.col = WEAK_FORCE_COLOR;
+            if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+            _weakLifecycleEnter(xon, 'pending_ejection_offcage');
+        }
+        // If still on oct: stays in oct mode with _pendingWeakEjection — will try again next tick
+    }
 
     // ── POST-MOVE WEAK→OCT TRANSITION SWEEP ──
     // Any weak xon with _mayReturn=true that landed on an oct node (via PHASE 2
@@ -5369,7 +5412,7 @@ function _xonStep(e, freeOpts, costlyOpts, tetSCsOpen, faceData, ctx) {
         }
     }
     if (!chosen && freeOpts.length > 0) {
-        chosen = freeOpts[Math.floor(Math.random() * freeOpts.length)];
+        chosen = freeOpts[Math.floor(_sRng() * freeOpts.length)];
     }
     if (!chosen && costlyOpts.length > 0) {
         for (const opt of costlyOpts) {
@@ -5469,7 +5512,7 @@ QUARK_ALGO_REGISTRY.push({
 
         // Hop probability ∝ gradient (leave hot spots, stay in cold spots)
         const prob = Math.min(0.8, Math.max(0.05, 0.1 + gradient * 0.6));
-        if (Math.random() >= prob) return null;
+        if (_sRng() >= prob) return null;
 
         const unoccupied = groupFaces.filter(f => !occupiedFaces.has(f));
         if (unoccupied.length === 0) return null;
@@ -5485,7 +5528,7 @@ QUARK_ALGO_REGISTRY.push({
         const T = Math.max(1, avgCov * 0.3);
         const weights = candidates.map(c => Math.exp(-c.cov / T));
         const wTotal = weights.reduce((a, b) => a + b, 0);
-        let r = Math.random() * wTotal;
+        let r = _sRng() * wTotal;
         for (let i = 0; i < candidates.length; i++) {
             r -= weights[i];
             if (r <= 0) return { targetFace: candidates[i].face };
@@ -5648,7 +5691,7 @@ QUARK_ALGO_REGISTRY.push({
             if (cov < minCov) { minCov = cov; bestFace = f; }
         }
 
-        if (Math.random() >= 0.35) return null;
+        if (_sRng() >= 0.35) return null;
         return { targetFace: bestFace };
     }
 });
