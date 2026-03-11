@@ -25,6 +25,10 @@ let _testRunning = false;  // suppress display updates during test execution
 // ═══════════════════════════════════════════════════════════════════════
 const LIVE_GUARD_GRACE = 0;
 
+// T80: Base direction polarity — xons may only move in the positive vector direction
+// on base edges. Shortcut edges are bidirectional (exempt). Default: disabled.
+const _T80_BASE_POLARITY = true;
+
 // Oct capacity: hard maximum of 6 oct-mode xons at any time.
 const OCT_CAPACITY_MAX = 6;
 function _computeOctCapacity() {
@@ -879,6 +883,46 @@ const LIVE_GUARD_REGISTRY = [
         g.msg = `oct: ${octCount}/6 (consec: ${g._consecutiveFullTicks}/${maxFull})`;
         if (g._consecutiveFullTicks > maxFull) {
           return `tick ${tick}: 6/6 oct for ${g._consecutiveFullTicks} consecutive ticks (max ${maxFull})`;
+        }
+        return null;
+      }
+    },
+    // ── T80: Base direction polarity ──
+    // Xons may only traverse base edges in the POSITIVE vector direction.
+    // Shortcut edges are exempt (bidirectional). Feature-flagged via _T80_BASE_POLARITY.
+    { id: 'T80', name: 'Base direction polarity (positive only)',
+      projected(states) {
+        if (!_T80_BASE_POLARITY) return null;
+        for (const { xon, toNode } of states) {
+          if (!xon.alive || toNode === xon.node) continue;
+          const fromNode = xon.node;
+          // Is this a base edge?
+          const bnbs = baseNeighbors[fromNode] || [];
+          const baseNb = bnbs.find(nb => nb.node === toNode);
+          if (!baseNb) continue; // SC edge — exempt
+          // Check polarity: basePosNeighbor[from][dirIdx] === to means positive
+          if (basePosNeighbor[fromNode][baseNb.dirIdx] !== toNode) {
+            return `projected: ${fromNode}→${toNode} is negative base dir ${baseNb.dirIdx}`;
+          }
+        }
+        return null;
+      },
+      check(tick, g, ctx) {
+        if (!_T80_BASE_POLARITY) return null;
+        if (!ctx.prev) return null;
+        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
+          if (!xon.alive) continue;
+          const toNode = xon.node;
+          if (toNode === fromNode) continue;
+          if (prevMode !== xon._mode) continue;
+          // Is this a base edge?
+          const bnbs = baseNeighbors[fromNode] || [];
+          const baseNb = bnbs.find(nb => nb.node === toNode);
+          if (!baseNb) continue; // SC edge — exempt (bidirectional)
+          // Check polarity: basePosNeighbor[from][dirIdx] === to means positive direction
+          if (basePosNeighbor[fromNode][baseNb.dirIdx] !== toNode) {
+            return `tick ${tick}: xon moved ${fromNode}→${toNode} in negative base dir ${baseNb.dirIdx}`;
+          }
         }
         return null;
       }
