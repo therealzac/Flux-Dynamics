@@ -661,6 +661,23 @@ let _xonHighlightTimers = new Map(); // xon index → timeout id
 // Flash toggle — set false to disable mode-transition flash effects.
 // Re-enable by setting to true. Flash = sparkle scale/brightness pulse on mode change.
 let _flashEnabled = false;
+// ── Seeded PRNG for deterministic backtracker replay ─────────────────
+// Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).
+// The backtracker requires deterministic forward replay from the same
+// snapshot + exclusions. Math.random() breaks this because it's unseeded.
+// All choreography randomness MUST use _sRng() instead of Math.random().
+let _sRngState = 0;
+function _sRng() {
+    _sRngState |= 0;
+    _sRngState = (_sRngState + 0x6D2B79F5) | 0;
+    let t = Math.imul(_sRngState ^ (_sRngState >>> 15), 1 | _sRngState);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+// Seed from tick number — call at the start of each tick so replays
+// from the same snapshot produce the same random sequence.
+function _sRngSeed(tick) { _sRngState = tick * 2654435761; }
+
 // ── Diagnostic trace — permanent, extensible ─────────────────────────
 // Records every physical xon move with source code path label.
 // Used by T41/T26/T27 diagnostics and future debugging.
@@ -794,7 +811,7 @@ const _scAttribution = new Map();
 // ══════════════════════════════════════════════════════════════════════════
 let _rewindRequested = false;        // set by guard check when T19/T20 fails
 let _rewindViolation = null;         // description of the violation that triggered rewind
-const _BT_MAX_SNAPSHOTS = 50;       // cap snapshot stack to prevent unbounded memory
+const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
 let _btSnapshots = [];               // stack of state snapshots (one per tick)
 let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
@@ -844,8 +861,6 @@ function _btSaveSnapshot() {
         octFullConsecutive: _octFullConsecutive,
     };
     _btSnapshots.push(snap);
-    // Keep stack bounded (cap at _BT_MAX_SNAPSHOTS)
-    if (_btSnapshots.length > _BT_MAX_SNAPSHOTS) _btSnapshots.shift();
 }
 
 // Restore choreography state from a snapshot.
@@ -995,6 +1010,15 @@ function _btExtractExclusions() {
             for (const octNode of _octNodeSet) {
                 exclusions.push(`${xi}:${octNode}`);
             }
+        }
+    }
+
+    // ── Universal fallback: if no specific handler matched, exclude every
+    // move that happened this tick. This ensures the backtracker always
+    // gets new information from any guard failure, not just T19/T20/T55.
+    if (exclusions.length === 0 && _moveTrace.length > 0) {
+        for (const trace of _moveTrace) {
+            exclusions.push(`${trace.xonIdx}:${trace.to}`);
         }
     }
 
@@ -2507,8 +2531,8 @@ function _startIdleTetLoop(xon, occupied) {
 
     // Helper: try to assign xon to a face with free destination
     function tryFaces(faces) {
-        const shuffled = faces.sort(() => Math.random() - 0.5);
-        const shuffledTypes = types.slice().sort(() => Math.random() - 0.5);
+        const shuffled = faces.sort(() => _sRng() - 0.5);
+        const shuffledTypes = types.slice().sort(() => _sRng() - 0.5);
         let bestSeq = null, bestFace = null, bestType = null;
         for (const face of shuffled) {
             const existingXon = _demoXons.find(x =>
@@ -2573,7 +2597,7 @@ function _startIdleTetLoop(xon, occupied) {
     // Try to materialise the missing SCs for non-actualized faces.
     // This creates new loiter space when the oct cage is congested.
     const newlyActualized = [];
-    for (const face of manifestCandidates.sort(() => Math.random() - 0.5)) {
+    for (const face of manifestCandidates.sort(() => _sRng() - 0.5)) {
         const fd = _nucleusTetFaceData[face];
         const missingSCs = fd.scIds.filter(scId =>
             !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
@@ -3470,6 +3494,10 @@ async function demoTick() {
     // Yield to event loop every 32 retries to prevent browser freeze
     if (_btAttempt > 0 && _btAttempt % 32 === 0) await new Promise(r => setTimeout(r, 0));
 
+    // Seed PRNG from tick number — ensures deterministic replay from same snapshot.
+    // Backtracker retries at the same tick get the same random sequence, so
+    // only the exclusion ledger drives different outcomes (not random drift).
+    _sRngSeed(_demoTick);
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
     // Revert gluon xons to oct (fresh evaluation each tick per spec §2)
@@ -4136,7 +4164,7 @@ async function demoTick() {
 
             // Shuffle proposals — no xon gets priority by index order
             for (let i = proposals.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
+                const j = Math.floor(_sRng() * (i + 1));
                 [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
             }
 
@@ -4188,12 +4216,12 @@ async function demoTick() {
     // Tier 2: Eject as weak particle with _t60Ejected = true.
     {
         const octModeXons = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
-        // T79: consecutive full-oct pressure — after T79_MAX_FULL_TICKS-1 consecutive full ticks, shed 1 extra
-        const t79Pressure = (_octFullConsecutive >= T79_MAX_FULL_TICKS - 1 && octModeXons.length >= OCT_CAPACITY_MAX) ? 1 : 0;
+        // T79: STUBBED — no pressure applied (observe-only mode)
+        const t79Pressure = 0;
         let excess = octModeXons.length - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Shuffle to avoid order bias
-            const candidates = octModeXons.slice().sort(() => Math.random() - 0.5);
+            const candidates = octModeXons.slice().sort(() => _sRng() - 0.5);
             for (const xon of candidates) {
                 if (excess <= 0) break;
                 // Tier 1: try idle_tet diversion
