@@ -3654,15 +3654,8 @@ async function demoTick() {
                 // tet blocked by oct → don't evict, oct planner may vacate
             }
 
-            // Check 2: Loop-shape-aware lookahead — will this specific loop lead to a dead end?
-            // Uses the xon's actual loop sequence (fork, lollipop, ham CW/CCW)
-            // instead of generic graph traversal.
-            if (!shouldEvictSelf && !(occupied.get(nextNode) || 0)) {
-                const tmpOcc = new Map(occupied);
-                _occDel(tmpOcc, xon.node);
-                _occAdd(tmpOcc, nextNode);
-                if (!_lookaheadTetPath(xon._loopSeq, effectiveStep + 1, tmpOcc, _choreoParams.lookahead, xon)) shouldEvictSelf = true;
-            }
+            // Dead-end lookahead ejection removed — let tet xons attempt their loops.
+            // If they get stuck, PHASE 3 stuck-ejection handles it.
 
             if (shouldEvictSelf) {
                 // Eviction is ALWAYS weak + _t60Ejected, NEVER _returnXonToOct
