@@ -4532,16 +4532,46 @@ async function demoTick() {
         anyMoved = true;
     }
 
-    // Escape hatch: Removed — backtracker handles stuck tet xons via rewind.
-    // If a tet plan was approved and vacuum-negotiated, it should succeed.
-    // If it doesn't (vacuum changed), trigger backtrack.
+    // ── Stuck tet ejection: eject as weak particle instead of staying stuck ──
+    // If a tet/idle_tet xon couldn't move this tick (plan unapproved, blocked,
+    // or vacuum-rejected), eject it as a weak particle with _mayReturn so it
+    // can navigate back to the oct cage and re-enter the nucleus later.
     for (const plan of tetPlans) {
-        if (!plan.approved) continue;
-        if (plan.xon.node !== plan.fromNode) continue; // already moved — success
-        if (plan.xon._movedThisTick) continue; // moved by another path
-        // Tet move was approved but couldn't execute — trigger backtrack
-        _rewindRequested = true;
-        _rewindViolation = `PHASE 3 tet stuck: xon at ${plan.fromNode} couldn't reach ${plan.toNode}`;
+        if (plan.xon._movedThisTick) continue; // already moved — no problem
+        if (plan.xon.node !== plan.fromNode) continue; // moved successfully
+        // This tet xon is stuck — eject as weak particle
+        const xi = _demoXons.indexOf(plan.xon);
+        _logChoreo(`X${xi} tet stuck at n${plan.fromNode} (${plan.approved ? 'approved but blocked' : 'unapproved'}) → ejecting as weak`);
+        _relinquishFaceSCs(plan.xon);
+        _clearModeProps(plan.xon);
+        plan.xon._mode = 'weak';
+        plan.xon._t60Ejected = true;
+        plan.xon._mayReturn = true; // can return immediately — was already in nucleus
+        plan.xon._assignedFace = null;
+        plan.xon._loopSeq = null;
+        plan.xon._loopStep = 0;
+        plan.xon._quarkType = null;
+        plan.xon.col = WEAK_FORCE_COLOR;
+        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+        _weakLifecycleEnter(plan.xon, 'tet_stuck_ejection');
+        // Try to move to a free neighbor so T20 doesn't fire
+        const stuckNbs = baseNeighbors[plan.xon.node] || [];
+        for (const nb of stuckNbs) {
+            if ((occupied.get(nb.node) || 0) > 0) continue;
+            if (_swapBlocked(plan.xon.node, nb.node)) continue;
+            const fromStuck = plan.xon.node;
+            _occDel(occupied, plan.xon.node);
+            plan.xon.prevNode = plan.xon.node;
+            plan.xon.node = nb.node;
+            _occAdd(occupied, nb.node);
+            plan.xon._movedThisTick = true;
+            _moveRecord.set(nb.node, fromStuck);
+            _traceMove(plan.xon, fromStuck, nb.node, 'tetStuckEject');
+            _trailPush(plan.xon, nb.node, WEAK_FORCE_COLOR);
+            plan.xon.tweenT = 0;
+            anyMoved = true;
+            break;
+        }
     }
 
     const _pT3 = performance.now(); _profPhases.p3 += _pT3 - _pT2;
