@@ -12,8 +12,6 @@ IF THIS PROCESS IS AT ALL UNCLEAR, I WILL ASK FOR GUIDANCE
 
 UNIT TESTS MAY NOT BE UPDATED EXCEPT WITHOUT EXPRESS USER CONSENT
 
-EVERY NEW TEST MUST HAVE EXPLICIT AUTHORIZATION FROM THE USER BEFORE BEING CREATED. DO NOT CREATE TESTS WITHOUT ASKING FIRST.
-
 ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND ALL UNIT TESTS ARE DIRECTLY WIRED UP TO DO SO
 
 ---
@@ -29,23 +27,14 @@ If a change causes the Planck-second counter to run ~25x faster than normal, **y
 ### NEVER gut the framework to bypass tests
 **We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
 
-### NEVER soften constraints to fix failures
-**When something goes wrong, the answer is NEVER to relax, soften, or make constraints optional.** 99% of the time, the fix is to figure out why the choreographer made the wrong decision. If a guard fires and the backtracker loops, the problem is in the choreography logic or the backtracker's memory — not in the guard being "too strict." Constraints are physics. Softening them means the simulation is lying. Fix the decision-making, not the rules.
-
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
 
 ---
 
 ## Quick Start
-- Dev server: `node serve.js 8080` from project root (provides COOP/COEP headers for SharedArrayBuffer), open `flux-v2.html`
-- **The demo button automatically sets the lattice to L2** (107 nodes). You do NOT need to set the lattice level manually before clicking demo.
-- **Clicking the demo button programmatically**: The demo button does not have a stable `id`. To click it from preview_eval or JS console, find it by text content:
-  ```js
-  const btns = document.querySelectorAll('button');
-  btns.forEach(b => { if (b.textContent.trim().toLowerCase() === 'demo') b.click(); });
-  ```
-- If the simulation previously halted (from a guard failure), you must reset `simHalted = false` before the demo button will work again.
+- **Press the "demo" button** to start the deuteron simulation
+- Dev server: `python3 -m http.server 8080` from project root, open `flux-v2.html`
 - After editing JS, **bump the `?v=N` cache buster** in `flux-v2.html` script tags
 
 ---
@@ -379,17 +368,10 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 - **SOLUTION IS NEVER TO RELAX TIGHT THRESHOLD OF 0.01%; YOU MUST FIX YOUR PHYSICS.**
 - **DO NOT DO THINGS LIKE `_demoActive` TO DISABLE CHECKS! Fix the root cause.**
 
-### Tournament Doctrine
-- **ALL live guards and the backtracker MUST be active during tournament trials.** No exceptions.
-- `_testRunning` may suppress UI updates but MUST NOT skip `_liveGuardCheck` or `_liveGuardSnapshot`.
-- Tournament trials must obey the same physics rules as the interactive demo — if a trial halts from a guard failure, that's a legitimate fitness=0 result, not something to paper over.
-- The tournament is the proving ground: if the choreography can't survive guards, it's not fit.
-
 ### Movement Doctrine
 - **NO MULTI-HOP PATHS.** A xon may move at most ONE hop per tick. Multiple hops in a single tick = FTL = teleportation. NEVER allow it.
 - If a xon has already moved this tick, it MUST NOT be moved again by scatter, return-to-oct, or any other code path.
 - If a Pauli collision arises from a moved xon, prefer moving the OTHER xon. If neither can move without multi-hop, revert the original move.
-- **T20 "NEVER STAND STILL" HAS NO EXEMPTIONS.** Every alive xon MUST move to a different node every tick, regardless of mode. There are zero exceptions — not for mode transitions, not for ejections, not for any reason. If a code path changes a xon's mode but doesn't move it, that xon MUST still be moved by a later phase in the same tick. Designing around T20 is non-negotiable.
 
 ### Minimal Action Principle
 - Relinquish ONLY what's necessary at window transitions
