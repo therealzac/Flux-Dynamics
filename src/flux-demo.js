@@ -233,9 +233,12 @@
 //   Post-_mayReturn: top priority return to oct. May enter oct nodes and
 //     ejection-space nodes. May NOT enter _purelyTetNodes.
 //
-// OCT CAPACITY OVERFLOW (2-tier)
+// OCT CAPACITY OVERFLOW (2-tier + T79 pressure)
 //   1. Send xon into unscheduled hadronic loop (idle_tet) to vacate the cage.
 //   2. If impossible, eject with _t60Ejected = true.
+//   T79 pressure: after T79_MAX_FULL_TICKS-1 consecutive full-oct ticks,
+//   overflow adds +1 to excess so that exactly-at-capacity (6) triggers
+//   a shed. T79_MAX_FULL_TICKS is a tunable constant (default 6).
 //
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ 7. VACUUM NEGOTIATION                                                       │
@@ -300,6 +303,9 @@
 //   T60  Non-actualized tet  Ejection on face SC loss.
 //   T61  No weak on oct      Weak xons cannot occupy oct nodes.
 //   T62  Weak re-entry       Weak xons may only re-enter at oct nodes.
+//   T79  Oct full limit       All 6 xons on oct nodes may persist for at most
+//                              T79_MAX_FULL_TICKS consecutive ticks (tunable,
+//                              default 6). Choreographer must shed at least 1.
 //
 //   All guards fire into the backtracker. The backtracker is the universal
 //   resolution mechanism. There are no escape hatches, rescue phases, or
@@ -634,6 +640,8 @@ let _demoXons = [];               // active xon objects (dynamic count)
 let _demoGluons = [];             // active gluon objects (lightweight)
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
+const T79_MAX_FULL_TICKS = 6;     // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
 // Used to prevent adjacent xon swaps (A→B while B→A in the same tick).
 const _moveRecord = new Map();
@@ -653,6 +661,23 @@ let _xonHighlightTimers = new Map(); // xon index → timeout id
 // Flash toggle — set false to disable mode-transition flash effects.
 // Re-enable by setting to true. Flash = sparkle scale/brightness pulse on mode change.
 let _flashEnabled = false;
+// ── Seeded PRNG for deterministic backtracker replay ─────────────────
+// Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).
+// The backtracker requires deterministic forward replay from the same
+// snapshot + exclusions. Math.random() breaks this because it's unseeded.
+// All choreography randomness MUST use _sRng() instead of Math.random().
+let _sRngState = 0;
+function _sRng() {
+    _sRngState |= 0;
+    _sRngState = (_sRngState + 0x6D2B79F5) | 0;
+    let t = Math.imul(_sRngState ^ (_sRngState >>> 15), 1 | _sRngState);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+// Seed from tick number — call at the start of each tick so replays
+// from the same snapshot produce the same random sequence.
+function _sRngSeed(tick) { _sRngState = tick * 2654435761; }
+
 // ── Diagnostic trace — permanent, extensible ─────────────────────────
 // Records every physical xon move with source code path label.
 // Used by T41/T26/T27 diagnostics and future debugging.
@@ -786,7 +811,7 @@ const _scAttribution = new Map();
 // ══════════════════════════════════════════════════════════════════════════
 let _rewindRequested = false;        // set by guard check when T19/T20 fails
 let _rewindViolation = null;         // description of the violation that triggered rewind
-const _BT_MAX_SNAPSHOTS = 50;       // cap snapshot stack to prevent unbounded memory
+const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
 let _btSnapshots = [];               // stack of state snapshots (one per tick)
 let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
@@ -832,10 +857,10 @@ function _btSaveSnapshot() {
         scAttribution: new Map(_scAttribution),
         // Solver vertex positions (deep copy)
         pos: pos.map(p => [p[0], p[1], p[2]]),
+        // T79 state
+        octFullConsecutive: _octFullConsecutive,
     };
     _btSnapshots.push(snap);
-    // Keep stack bounded (cap at _BT_MAX_SNAPSHOTS)
-    if (_btSnapshots.length > _BT_MAX_SNAPSHOTS) _btSnapshots.shift();
 }
 
 // Restore choreography state from a snapshot.
@@ -886,6 +911,8 @@ function _btRestoreSnapshot(snap) {
     }
     // Restore opening phase flag
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;
+    // Restore T79 state
+    if ('octFullConsecutive' in snap) _octFullConsecutive = snap.octFullConsecutive;
     // Clear tick-level state
     _moveRecord.clear();
     _moveTrace.length = 0;
@@ -983,6 +1010,15 @@ function _btExtractExclusions() {
             for (const octNode of _octNodeSet) {
                 exclusions.push(`${xi}:${octNode}`);
             }
+        }
+    }
+
+    // ── Universal fallback: if no specific handler matched, exclude every
+    // move that happened this tick. This ensures the backtracker always
+    // gets new information from any guard failure, not just T19/T20/T55.
+    if (exclusions.length === 0 && _moveTrace.length > 0) {
+        for (const trace of _moveTrace) {
+            exclusions.push(`${trace.xonIdx}:${trace.to}`);
         }
     }
 
@@ -1099,13 +1135,24 @@ function _weakLifecycleExit(xon, reason) {
     }
 }
 
+// ── _mayReturn transition logger ──
+// Logs every _mayReturn state change with context: xon index, node, oct membership, source.
+function _logMayReturn(xon, newVal, source) {
+    const xi = _demoXons.indexOf(xon);
+    const onOct = _octNodeSet && _octNodeSet.has(xon.node);
+    const old = !!xon._mayReturn;
+    if (old === newVal) return; // no actual change
+    console.error(`[_mayReturn] X${xi} ${old}→${newVal} at node ${xon.node} (${xon._mode}${onOct ? ' OCT' : ''}) source="${source}" tick=${_demoTick}`);
+    xon._mayReturn = newVal;
+}
+
 // ── Clear class-specific properties on mode transitions ──
 // Called BEFORE setting new mode to prevent stale properties leaking across classes.
 // weak-class: _t60Ejected, _mayReturn
 // tet-class: _assignedFace, _quarkType, _loopType, _loopSeq, _loopStep, _tetActualized
 function _clearModeProps(xon) {
     xon._t60Ejected = false;
-    xon._mayReturn = false;
+    _logMayReturn(xon, false, '_clearModeProps');
     xon._tetActualized = false;
 }
 
@@ -2484,8 +2531,8 @@ function _startIdleTetLoop(xon, occupied) {
 
     // Helper: try to assign xon to a face with free destination
     function tryFaces(faces) {
-        const shuffled = faces.sort(() => Math.random() - 0.5);
-        const shuffledTypes = types.slice().sort(() => Math.random() - 0.5);
+        const shuffled = faces.sort(() => _sRng() - 0.5);
+        const shuffledTypes = types.slice().sort(() => _sRng() - 0.5);
         let bestSeq = null, bestFace = null, bestType = null;
         for (const face of shuffled) {
             const existingXon = _demoXons.find(x =>
@@ -2550,7 +2597,7 @@ function _startIdleTetLoop(xon, occupied) {
     // Try to materialise the missing SCs for non-actualized faces.
     // This creates new loiter space when the oct cage is congested.
     const newlyActualized = [];
-    for (const face of manifestCandidates.sort(() => Math.random() - 0.5)) {
+    for (const face of manifestCandidates.sort(() => _sRng() - 0.5)) {
         const fd = _nucleusTetFaceData[face];
         const missingSCs = fd.scIds.filter(scId =>
             !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
@@ -3404,7 +3451,7 @@ function _executeOpeningTick(occupied) {
                 // Not on oct node → weak, navigate back via PHASE 0.5
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
-                xon._mayReturn = true;
+                _logMayReturn(xon, true, 'octFormation_notOnOct');
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
@@ -3447,6 +3494,10 @@ async function demoTick() {
     // Yield to event loop every 32 retries to prevent browser freeze
     if (_btAttempt > 0 && _btAttempt % 32 === 0) await new Promise(r => setTimeout(r, 0));
 
+    // Seed PRNG from tick number — ensures deterministic replay from same snapshot.
+    // Backtracker retries at the same tick get the same random sequence, so
+    // only the exclusion ledger drives different outcomes (not random drift).
+    _sRngSeed(_demoTick);
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
     // Revert gluon xons to oct (fresh evaluation each tick per spec §2)
@@ -3543,7 +3594,7 @@ async function demoTick() {
         if (!xon.alive) continue;
         if (xon._t60Ejected && xon._mode !== 'weak') {
             xon._mode = 'weak';
-            xon._mayReturn = false;
+            _logMayReturn(xon, false, 'T60_modeCorrection');
             xon._assignedFace = null;
             xon._quarkType = null;
             xon._loopSeq = null;
@@ -3597,7 +3648,7 @@ async function demoTick() {
                     xon._loopStep = 0;
                     xon._tetActualized = false;
                     xon._t60Ejected = true; // must reach ejection target before returning
-                    xon._mayReturn = false;
+                    _logMayReturn(xon, false, 'phase0_nonActualized');
                     xon.col = WEAK_FORCE_COLOR;
                     if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                     _weakLifecycleEnter(xon, 'non_actualized_tet');
@@ -3636,7 +3687,7 @@ async function demoTick() {
                     _logChoreo(`X${_demoXons.indexOf(blocker)} idle_tet blocker at n${nextNode} → weak (evicted by X${_demoXons.indexOf(xon)})`);
                     blocker._mode = 'weak';
                     blocker._t60Ejected = true;
-                    blocker._mayReturn = false;
+                    _logMayReturn(blocker, false, 'phase0_blockerEvict');
                     blocker._assignedFace = null;
                     blocker._quarkType = null;
                     blocker._loopSeq = null;
@@ -3684,7 +3735,7 @@ async function demoTick() {
                 _logChoreo(`X${_demoXons.indexOf(xon)} evicted (dead end/blocked) → weak`);
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
-                xon._mayReturn = false;
+                _logMayReturn(xon, false, 'phase0_selfEvict');
                 xon._assignedFace = null;
                 xon._quarkType = null;
                 xon._loopSeq = null;
@@ -3715,7 +3766,7 @@ async function demoTick() {
         if (xon._t60Ejected && !xon._mayReturn) {
             // Already on ejection space node? Flip _mayReturn and proceed to BFS return below.
             if (_isValidEjectionTarget(xon.node)) {
-                xon._mayReturn = true;
+                _logMayReturn(xon, true, 'phase0.5_alreadyOnEjectionTarget');
                 // Fall through to post-_mayReturn BFS below
             } else {
                 // Must move to an ejection-space node
@@ -3757,7 +3808,7 @@ async function demoTick() {
                     anyMoved = true;
                     _weakLifecycleStep(xon);
                     // Arrived at ejection space — flip _mayReturn
-                    xon._mayReturn = true;
+                    _logMayReturn(xon, true, 'phase0.5_arrivedEjectionSpace');
                 }
                 continue; // done for this xon this tick (whether moved or not)
             }
@@ -4049,7 +4100,7 @@ async function demoTick() {
                 xon._loopStep = 0;
                 xon._tetActualized = false;
                 xon._t60Ejected = true; // must reach ejection target before returning
-                xon._mayReturn = false;
+                _logMayReturn(xon, false, 'phase1_nonActualized');
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'non_actualized_tet');
@@ -4113,7 +4164,7 @@ async function demoTick() {
 
             // Shuffle proposals — no xon gets priority by index order
             for (let i = proposals.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
+                const j = Math.floor(_sRng() * (i + 1));
                 [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
             }
 
@@ -4160,14 +4211,17 @@ async function demoTick() {
 
     // ── OCT CAPACITY OVERFLOW — 2-tier relief ──
     // If more than OCT_CAPACITY_MAX xons are in oct mode, shed the excess.
+    // T79 pressure: if oct was full last tick AND still full, force shed 1.
     // Tier 1: _startIdleTetLoop (productive — manifests a hadron).
     // Tier 2: Eject as weak particle with _t60Ejected = true.
     {
         const octModeXons = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
-        let excess = octModeXons.length - OCT_CAPACITY_MAX;
+        // T79: STUBBED — no pressure applied (observe-only mode)
+        const t79Pressure = 0;
+        let excess = octModeXons.length - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Shuffle to avoid order bias
-            const candidates = octModeXons.slice().sort(() => Math.random() - 0.5);
+            const candidates = octModeXons.slice().sort(() => _sRng() - 0.5);
             for (const xon of candidates) {
                 if (excess <= 0) break;
                 // Tier 1: try idle_tet diversion
@@ -4181,7 +4235,7 @@ async function demoTick() {
                 _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> weak (no idle_tet available)`);
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
-                xon._mayReturn = false;
+                _logMayReturn(xon, false, 'phase2a_capacityOverflow');
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'oct_capacity_overflow');
@@ -4391,7 +4445,7 @@ async function demoTick() {
         if (!diverted) {
             plan.xon._mode = 'weak';
             plan.xon._t60Ejected = true;
-            plan.xon._mayReturn = false;
+            _logMayReturn(plan.xon, false, 'phase2_collisionEject');
             plan.xon.col = WEAK_FORCE_COLOR;
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
@@ -4467,7 +4521,7 @@ async function demoTick() {
                 // T60: check if ejected weak xon reached ejection target → flip _mayReturn
                 if (plan.xon._t60Ejected && !plan.xon._mayReturn &&
                     _isValidEjectionTarget(plan.xon.node)) {
-                    plan.xon._mayReturn = true;
+                    _logMayReturn(plan.xon, true, 'phase3_arrivedEjectionTarget');
                 }
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;
@@ -4546,7 +4600,7 @@ async function demoTick() {
         _clearModeProps(plan.xon);
         plan.xon._mode = 'weak';
         plan.xon._t60Ejected = true;
-        plan.xon._mayReturn = true; // can return immediately — was already in nucleus
+        _logMayReturn(plan.xon, true, 'stuckTetEjection');
         plan.xon._assignedFace = null;
         plan.xon._loopSeq = null;
         plan.xon._loopStep = 0;
@@ -4589,8 +4643,17 @@ async function demoTick() {
     for (const xon of _demoXons) {
         if (!xon.alive) continue;
         if (xon._mode !== 'weak') continue;
-        if (!xon._mayReturn) continue;
-        if (!_octNodeSet || !_octNodeSet.has(xon.node)) continue;
+        const onOct = _octNodeSet && _octNodeSet.has(xon.node);
+        if (!xon._mayReturn) {
+            if (onOct) {
+                const xi = _demoXons.indexOf(xon);
+                console.error(`[SWEEP SKIP] X${xi} weak on oct node ${xon.node} but _mayReturn=false — T61 will fire! tick=${_demoTick}`);
+            }
+            continue;
+        }
+        if (!onOct) continue;
+        const xi = _demoXons.indexOf(xon);
+        console.error(`[SWEEP CATCH] X${xi} weak→oct at node ${xon.node} tick=${_demoTick}`);
         _weakLifecycleExit(xon, 'post_move_oct_arrival');
         _clearModeProps(xon);
         xon._mode = 'oct';
@@ -4782,6 +4845,13 @@ async function demoTick() {
     }
 
     const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;
+
+    // T79: track consecutive full-oct ticks (for next tick's overflow pressure)
+    if (_octNodeSet && _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length >= 6) {
+        _octFullConsecutive++;
+    } else {
+        _octFullConsecutive = 0;
+    }
 
     _demoTick++;
 

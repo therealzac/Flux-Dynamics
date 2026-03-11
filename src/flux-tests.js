@@ -1043,6 +1043,29 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // T79: Full oct occupancy tracker (STUBBED — observe only, never fails).
+    // Tracks consecutive ticks with all 6 xons on oct nodes for diagnostics.
+    { id: 'T79', name: 'Oct full (6/6) [observe]',
+      init: { _consecutiveFullTicks: 0, _maxConsecutive: 0 },
+      convergence: true,
+      snapshot(g) {
+        if (!_octNodeSet || _octNodeSet.size === 0) { g._consecutiveFullTicks = 0; return; }
+        const octCount = _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length;
+        if (octCount >= 6) {
+          g._consecutiveFullTicks++;
+          if (g._consecutiveFullTicks > g._maxConsecutive) g._maxConsecutive = g._consecutiveFullTicks;
+        } else {
+          g._consecutiveFullTicks = 0;
+        }
+      },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        const octCount = _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length;
+        g.msg = `oct: ${octCount}/6 (consec: ${g._consecutiveFullTicks}, max: ${g._maxConsecutive})`;
+        return null; // never fails — observe only
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
