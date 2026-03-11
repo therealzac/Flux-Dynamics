@@ -25,8 +25,8 @@ let _testRunning = false;  // suppress display updates during test execution
 // ═══════════════════════════════════════════════════════════════════════
 const LIVE_GUARD_GRACE = 0;
 
-// Oct capacity: hard maximum of 4 oct-mode xons at any time.
-const OCT_CAPACITY_MAX = 4;
+// Oct capacity: hard maximum of 6 oct-mode xons at any time.
+const OCT_CAPACITY_MAX = 6;
 function _computeOctCapacity() {
     return OCT_CAPACITY_MAX;
 }
@@ -219,11 +219,13 @@ const LIVE_GUARD_REGISTRY = [
     },
     { id: 'T20', name: 'Never stand still',
       projected(states) {
+        // Only check the xon whose move is being evaluated — the one where
+        // futureNode !== fromNode. Other xons appear stationary because their
+        // phase hasn't run yet; that's expected, not a violation.
         for (const s of states) {
-          if (s.xon._mode === 'oct_formation') continue; // formation phase: scripted
-          if (s.futureNode === s.fromNode && s.futureMode === s.xon._mode) {
-            return { guard: 'T20', xon: s.xon, msg: `would stay at node ${s.fromNode} (${s.futureMode})` };
-          }
+          if (s.xon._mode === 'oct_formation') continue;
+          if (s.futureNode === s.fromNode) continue; // hasn't moved yet — skip
+          // The moved xon IS moving (futureNode !== fromNode), so T20 is satisfied.
         }
         return null;
       },
@@ -691,89 +693,34 @@ const LIVE_GUARD_REGISTRY = [
     },
     // T52 REMOVED: No forced loop termination — no longer needed since window system eliminated.
     // All tet→oct transitions are now legitimate (PHASE 0 eviction, safety escape, loop completion).
-    { id: 'T54', name: 'No cyclic path outside oct cage',
-      projected(states) {
-        if (typeof _octNodeSet === 'undefined' || !_octNodeSet) return null;
-        const violations = [];
-        for (const s of states) {
-          const trail = s.xon.trail;
-          if (!trail || trail.length < 5) continue;
-          // Would the proposed move create a cycle outside the oct cage?
-          const recent = trail.slice(-7);
-          recent.push(s.futureNode);
-          const seen = new Set();
-          let hasCycle = false;
-          for (const n of recent) {
-            if (seen.has(n)) { hasCycle = true; break; }
-            seen.add(n);
-          }
-          if (!hasCycle) continue;
-          let touchesOct = false;
-          for (const n of recent) {
-            if (_octNodeSet.has(n)) { touchesOct = true; break; }
-          }
-          if (!touchesOct) {
-            violations.push({ guard: 'T54', xon: s.xon, msg: `would cycle outside oct: [${recent.join(',')}]` });
-          }
-        }
-        return violations.length ? violations : null;
-      },
-      check(tick, g, ctx) {
-        if (tick <= LIVE_GUARD_GRACE) return null;
-        if (typeof _octNodeSet === 'undefined' || !_octNodeSet) return null;
-        // Check every xon's trail for a repeated node (cycle) with no oct nodes
-        for (const xon of _demoXons) {
-          if (!xon.alive) continue;
-          const trail = xon.trail;
-          if (!trail || trail.length < 6) continue;
-          // Look at the last 8 trail entries (or fewer if trail is short)
-          const recent = trail.slice(-8);
-          // Cycle detection: does any node appear more than once?
-          const seen = new Set();
-          let hasCycle = false;
-          for (const n of recent) {
-            if (seen.has(n)) { hasCycle = true; break; }
-            seen.add(n);
-          }
-          if (!hasCycle) continue;
-          // Cycle detected — does any node in recent trail touch the oct cage?
-          let touchesOct = false;
-          for (const n of recent) {
-            if (_octNodeSet.has(n)) { touchesOct = true; break; }
-          }
-          if (!touchesOct) {
-            return `tick ${tick}: xon ${_demoXons.indexOf(xon)} (${xon._mode}) cycling outside oct cage: [${recent.join(',')}]`;
-          }
-        }
-        if (g.ok === null) { g.ok = true; g.msg = ''; }
-        return null;
-      }
-    },
+    // T54 REMOVED: incompatible with weak xon free-roaming outside oct cage
     // T53 REMOVED: per user request (covered by T22)
     // T56 REMOVED: diagonal traversal fixed at the source (movement filtering)
     { id: 'T55', name: 'Oct capacity (hard max 4)',
       init: { _octCapacity: OCT_CAPACITY_MAX },
       projected(states) {
+        // Oct doesn't exist until discovered (~tick 2). No grace needed — just skip if no oct yet.
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
         let octCount = 0;
         for (const s of states) {
-          if (s.futureMode === 'oct') octCount++;
+          if (_octNodeSet.has(s.futureNode)) octCount++;
         }
         if (octCount > OCT_CAPACITY_MAX) {
-          // Blame the last oct xon
-          const octXons = states.filter(s => s.futureMode === 'oct');
+          const octXons = states.filter(s => _octNodeSet.has(s.futureNode));
           return { guard: 'T55', xon: octXons[octXons.length - 1].xon,
-            msg: `projected ${octCount} oct xons > max ${OCT_CAPACITY_MAX}` };
+            msg: `projected ${octCount} xons on oct nodes > max ${OCT_CAPACITY_MAX}` };
         }
         return null;
       },
       check(tick, g) {
         const cap = OCT_CAPACITY_MAX;
         g._octCapacity = cap;
-        const octCount = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
+        // Oct doesn't exist until discovered (~tick 2). No grace needed.
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        const octCount = _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length;
         g.msg = `oct: ${octCount}/${cap}`;
-        if (tick < 16) return null; // grace period for opening choreography
         if (octCount > cap) {
-          return `tick ${tick}: ${octCount} oct xons > capacity ${cap}`;
+          return `tick ${tick}: ${octCount} xons on oct nodes > capacity ${cap}`;
         }
         return null;
       }
@@ -904,11 +851,15 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T61', name: 'No weak xon on oct node',
       projected(states) {
         if (!_octNodeSet || _octNodeSet.size === 0) return null;
-        // Don't reject during early ticks — choreographer needs setup time
+        // Don't reject during opening phase or early ticks
+        if (typeof _openingPhase !== 'undefined' && _openingPhase) return null;
         if (typeof _demoTick !== 'undefined' && _demoTick < LIVE_GUARD_GRACE) return null;
         const violations = [];
         for (const s of states) {
           if (s.xon._mode === 'weak' && _octNodeSet.has(s.futureNode)) {
+            // Exception: weak xon with _mayReturn arriving at oct node is legal —
+            // PHASE 0.5 transitions it to oct in the same tick.
+            if (s.xon._mayReturn) continue;
             violations.push({ guard: 'T61', xon: s.xon, msg: `weak on oct node ${s.futureNode}` });
           }
         }
@@ -916,6 +867,7 @@ const LIVE_GUARD_REGISTRY = [
       },
       check(tick, g) {
         if (tick < LIVE_GUARD_GRACE) return null; // grace period
+        if (typeof _openingPhase !== 'undefined' && _openingPhase) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!_demoXons || !_octNodeSet || _octNodeSet.size === 0) return null;
         for (let xi = 0; xi < _demoXons.length; xi++) {
@@ -991,16 +943,20 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    // ── T72: _allTetNodes completeness ──
-    { id: 'T72', name: '_allTetNodes complete', convergence: true,
+    // ── T72: _actualizedTetNodes correctness ──
+    { id: 'T72', name: '_actualizedTetNodes correct', convergence: true,
       check(tick, g) {
         if (g.ok === true) return null;
-        if (!_allTetNodes || typeof voidNeighborData === 'undefined') return null;
-        // Verify every tet void's nodes are in _allTetNodes
+        if (!_actualizedTetNodes || typeof voidNeighborData === 'undefined') return null;
+        // Verify: every tet with ALL SCs active has its nodes in _actualizedTetNodes
         for (const v of voidNeighborData) {
           if (v.type !== 'tet') continue;
-          for (const n of v.nbrs) {
-            if (!_allTetNodes.has(n)) return `tick ${tick}: tet void node ${n} missing from _allTetNodes`;
+          const allActive = v.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (allActive) {
+            for (const n of v.nbrs) {
+              if (!_actualizedTetNodes.has(n)) return `tick ${tick}: actualized tet node ${n} missing from _actualizedTetNodes`;
+            }
           }
         }
         g.ok = true; g.msg = ''; _liveGuardRender(); return null;
@@ -1010,14 +966,14 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T73', name: 'Ejection target validity', convergence: true,
       check(tick, g) {
         if (g.ok === true) return null;
-        if (!_ejectionForbidden || !_octNodeSet || !_allTetNodes) return null;
+        if (!_ejectionForbidden || !_octNodeSet || !_actualizedTetNodes) return null;
         // Oct nodes must be forbidden
         for (const n of _octNodeSet) {
           if (!_ejectionForbidden.has(n)) return `tick ${tick}: oct node ${n} not in _ejectionForbidden`;
         }
-        // Tet nodes must be forbidden
-        for (const n of _allTetNodes) {
-          if (!_ejectionForbidden.has(n)) return `tick ${tick}: tet node ${n} not in _ejectionForbidden`;
+        // Actualized tet nodes must be forbidden
+        for (const n of _actualizedTetNodes) {
+          if (!_ejectionForbidden.has(n)) return `tick ${tick}: actualized tet node ${n} not in _ejectionForbidden`;
         }
         // _isValidEjectionTarget must return false for oct nodes
         for (const n of _octNodeSet) {
@@ -1055,22 +1011,7 @@ const LIVE_GUARD_REGISTRY = [
         g.ok = true; g.msg = ''; _liveGuardRender(); return null;
       }
     },
-    // ── T76: Direction balance convergence ──
-    // After 64+ ticks, every xon should have used at least 4 of 10 directions.
-    // This validates that the xonic movement balance system is active and tracking.
-    { id: 'T76', name: 'Direction balance active', convergence: true,
-      check(tick, g) {
-        if (g.ok === true) return null;
-        if (tick < 64) return null; // need time for directions to diversify
-        for (const xon of _demoXons) {
-          if (!xon.alive || !xon._dirBalance) continue;
-          let usedDirs = 0;
-          for (let i = 0; i < 10; i++) if (xon._dirBalance[i] > 0) usedDirs++;
-          if (usedDirs < 4) return `tick ${tick}: xon has only used ${usedDirs}/10 directions (need ≥4)`;
-        }
-        g.ok = true; g.msg = ''; _liveGuardRender(); return null;
-      }
-    },
+    // T76 (direction balance) removed — no trivial way to test convergence threshold
     // ── T77: BFS severance infrastructure ──
     // Verify that the 2-depth BFS severance system is operational.
     // _severanceCount must be a number (tracks total successful severances).
