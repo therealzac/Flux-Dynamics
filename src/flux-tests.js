@@ -517,32 +517,8 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    // T45: No bouncing for oct/weak xons. Only tet/idle_tet exempt (fork needs a→b→a→c→a).
-    // Bounces are only allowed in actualized hadronic patterns that require them.
-    { id: 'T45', name: 'No xon bounce (A→B→A)',
-      snapshot(g) {
-        g._t45prev = new Map();
-        for (const xon of _demoXons) {
-          if (!xon.alive) continue;
-          g._t45prev.set(xon, { prevNode: xon.prevNode, node: xon.node, mode: xon._mode });
-        }
-      },
-      check(tick, g, ctx) {
-        if (!ctx.prev || tick <= LIVE_GUARD_GRACE) return null;
-        for (const xon of _demoXons) {
-          if (!xon.alive) continue;
-          if (xon._mode === 'tet' || xon._mode === 'idle_tet') continue; // hadronic patterns exempt
-          const prev = g._t45prev?.get(xon);
-          if (!prev) continue;
-          if (prev.mode === 'tet' || prev.mode === 'idle_tet') continue; // was in hadronic pattern — skip
-          if (xon.node === prev.prevNode && xon.node !== prev.node && prev.prevNode != null) {
-            return `tick ${tick}: ${xon._mode} xon ${_demoXons.indexOf(xon)} bounced ${prev.prevNode}→${prev.node}→${xon.node}`;
-          }
-        }
-        if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
-        return null;
-      }
-    },
+    // T45: DISABLED — bounce guard removed to give weak xons more movement freedom.
+    // Re-enable by setting _T45_BOUNCE_GUARD = true in flux-demo.js and uncommenting.
     { id: 'T44', name: 'Traversal lock edge-only',
       check(tick, g) {
         // _traversalLockedSCs must ONLY contain SCs on edges xons are straddling

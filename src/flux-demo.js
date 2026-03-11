@@ -596,7 +596,7 @@ let _demoPaused = false;  // true when user has paused via pause button
 // T45 bounce guard — prevents A→B→A oscillation for oct AND weak xons.
 // Only tet/idle_tet xons are exempt (actualized hadronic patterns like fork: a→b→a→c→a).
 // Bounces are only allowed in actualized hadronic patterns that require them.
-const _T45_BOUNCE_GUARD = true;
+const _T45_BOUNCE_GUARD = false;
 let _demoTick = 0;
 let _demoVisits = null;       // {face: {pu:0, pd:0, nu:0, nd:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
