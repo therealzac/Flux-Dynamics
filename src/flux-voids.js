@@ -323,9 +323,10 @@ function updateVoidSpheres(){
         }
         return true;
     }
-    // An O_h void requires ALL cycles at its centroid to be geometric squares simultaneously.
-    // Physically: one octahedron = 3 mutually perpendicular squares sharing a center.
-    // Boundary voids (fewer than 3 cycles) never actualize — not a full octahedron.
+    // An O_h void is actualized when ALL of its square cycles are geometric
+    // squares (SCs active + 90° angles). The solver deforms base edges to 90°
+    // when shortcuts activate — this is the geometric sanity check for proper
+    // sphere packing. Boundary voids (fewer than 3 cycles) never actualize.
     function _isSquare(cycles){
         if(cycles.length < 3) return false; // boundary: not a full octahedron
         return cycles.every(({verts, scIds}) => _isCycleSquare(verts, scIds));
@@ -413,20 +414,9 @@ function updateVoidSpheres(){
         // Only re-evaluate actualization if the open-SC set changed
         let actualized = entry.wasActualized; // default: keep previous state
         if(scSetChanged){
-            actualized = _forceActualizedVoids.has(vi)
-                ? scIds.every(id => allActive.has(id))  // force: skip geometric check
-                : type==='tet'
+            actualized = type==='tet'
                     ? scIds.every(id => allActive.has(id))
                     : _isSquare(cycles||[]);
-            // Oct rendering gate: only hadronic center octs render.
-            // An oct qualifies as hadronic center only if it has had a tet
-            // actualized on each of its 8 faces since birth. Currently only
-            // the nucleus oct (_octVoidIdx) qualifies. This is ALWAYS enforced,
-            // not just in demo mode — spurious octs from solver implication
-            // are suppressed everywhere.
-            if (type === 'oct' && actualized && _octVoidIdx >= 0 && vi !== _octVoidIdx) {
-                actualized = false;
-            }
             voidNeighborData[vi].actualized = actualized;
             // Store per-cycle actualization for oct voids — excitations can
             // survive on a single square cycle, not just the full octahedron.
@@ -435,14 +425,14 @@ function updateVoidSpheres(){
                     const wasCycleActualized = cycle.actualized || false;
                     cycle.actualized = _isCycleSquare(cycle.verts, cycle.scIds);
                     // Lock in oct cycle SCs: when a cycle newly actualizes,
-                    // promote any cascade-implied SCs to electronImpliedSet
+                    // promote any cascade-implied SCs to xonImpliedSet
                     // so they persist across detectImplied recalculations.
                     // Without this, octs built partly on cascade-implied SCs
                     // pop in and immediately out of existence.
                     if(cycle.actualized && !wasCycleActualized){
                         for(const id of cycle.scIds){
-                            if(impliedSet.has(id) && !electronImpliedSet.has(id) && !activeSet.has(id)){
-                                electronImpliedSet.add(id);
+                            if(impliedSet.has(id) && !xonImpliedSet.has(id) && !activeSet.has(id)){
+                                xonImpliedSet.add(id);
                                 if(!impliedBy.has(id)) impliedBy.set(id, new Set());
                             }
                         }
@@ -627,11 +617,10 @@ function applyStateFromJSON(data){
         rebuildShortcutLines();
         rebuildVoidSpheres();
         applySphereOpacity();
-        sph.r=Math.max(7.5,latticeLevel*3.2);
         applyCamera();
     }
     activeSet.clear(); impliedSet.clear(); impliedBy.clear();
-    electronImpliedSet.clear(); blockedImplied.clear();
+    xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
     // Apply active shortcuts first (positions will be solved fresh)
     if(data.active){
@@ -673,14 +662,27 @@ document.getElementById('graph-opacity-slider').addEventListener('input',updateG
 document.getElementById('sphere-opacity-slider').addEventListener('input',applySphereOpacity);
 document.getElementById('void-opacity-slider').addEventListener('input',applyVoidOpacity);
 document.getElementById('excitation-speed-slider').addEventListener('input', ()=>{
-    // Slider 1–100 mapped logarithmically: 1→1000ms (slow), 50→220ms (default), 100→30ms (fast)
     const t = +document.getElementById('excitation-speed-slider').value / 100;
-    ELECTRON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
-    document.getElementById('excitation-speed-val').textContent = ELECTRON_STEP_MS + 'ms';
+    if (t >= 1.0) {
+        ELECTRON_STEP_MS = 0;
+        document.getElementById('excitation-speed-val').textContent = 'MAX';
+    } else {
+        ELECTRON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
+        document.getElementById('excitation-speed-val').textContent = ELECTRON_STEP_MS + 'ms';
+    }
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
-    // Also restart demo interval if demo is running
-    if(_demoActive && _demoInterval){ clearInterval(_demoInterval); _demoInterval = setInterval(demoTick, _getDemoIntervalMs()); }
+    // Also restart demo interval if demo is running (but NOT if paused)
+    if(_demoActive && typeof isDemoPaused === 'function' && !isDemoPaused()) {
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+        const intervalMs = _getDemoIntervalMs();
+        if (intervalMs === 0) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        } else {
+            _demoInterval = setInterval(demoTick, intervalMs);
+        }
+    }
 });
 document.getElementById('trail-opacity-slider').addEventListener('input',()=>{
     const pct=+document.getElementById('trail-opacity-slider').value;

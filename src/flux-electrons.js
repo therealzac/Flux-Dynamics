@@ -6,6 +6,7 @@ let excitations=[], electronNextId=0, placingExcitation=false;
 let _deferUIUpdates = false, _uiDirty = false; // batch UI updates during tick
 const ELECTRON_ALPHA=3.0, TRAIL_LENGTH=24;
 let ELECTRON_STEP_MS=30;  // fastest default — tournament needs throughput
+let _severanceCount = 0;
 
 // scPairToId hoisted to early block (line ~315) to avoid TDZ in computeVoidNeighbors
 function rebuildScPairLookup(){ scPairToId = new Map(); ALL_SC.forEach(s=>{ scPairToId.set(pairId(s.a, s.b), s.id); }); }
@@ -27,16 +28,16 @@ function rebuildScPairLookup(){ scPairToId = new Map(); ALL_SC.forEach(s=>{ scPa
 // multi-excitation overconstrained-set halt that has recurred multiple times.
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── Excitation SC materialisation ────────────────────────────────────────────
-// Takes an explicit scId. Adds to electronImpliedSet, runs solver, rolls back
+// Takes an explicit scId. Adds to xonImpliedSet, runs solver, rolls back
 // if overconstrained. Returns true on success, false on rollback.
 // Preserves ownShortcut for tet completion detection.
 function excitationMaterialiseSC(e, scId, isBridge){
-    if(electronImpliedSet.has(scId)){ e.ownShortcut=scId; return true; }
+    if(xonImpliedSet.has(scId)){ e.ownShortcut=scId; return true; }
     if(activeSet.has(scId)){ e.ownShortcut=scId; return true; }
     const prevShortcut = e.ownShortcut;
     const posBefore = pos.map(p=>[p[0],p[1],p[2]]);
     e.ownShortcut = scId;
-    electronImpliedSet.add(scId);
+    xonImpliedSet.add(scId);
     impliedSet.add(scId);
     impliedBy.set(scId, new Set());
     bumpState();
@@ -71,7 +72,7 @@ function excitationMaterialiseSC(e, scId, isBridge){
             }
         }
         if(worstErr>ROLLBACK_TOL || sumErr/BASE_EDGES.length>AVG_TOL){
-            electronImpliedSet.delete(scId);
+            xonImpliedSet.delete(scId);
             impliedSet.delete(scId);
             impliedBy.delete(scId);
             e.ownShortcut = prevShortcut;
@@ -111,13 +112,34 @@ function excitationMaterialiseSC(e, scId, isBridge){
 // Returns true iff adding scId to the constraint system passes the strain
 // thresholds. Uses a SINGLE solver call (no detectImplied) and never
 // leaves side effects — safe to call in lookahead.
+let _cmqCallCount = 0, _cmqCpuCount = 0, _cmqCacheHits = 0, _cmqTotalMs = 0;
 function canMaterialiseQuick(scId){
-    if(activeSet.has(scId)||impliedSet.has(scId)||electronImpliedSet.has(scId)) return true;
+    _cmqCallCount++;
+    if(activeSet.has(scId)||impliedSet.has(scId)||xonImpliedSet.has(scId)) return true;
+    // Fast rejection: SC endpoints must be near the ideal FCC shortcut
+    // length 2/sqrt(3) ≈ 1.1547 (unactivated) or already at unit length.
+    const _sc=SC_BY_ID[scId];
+    if(_sc && pos[_sc.a] && pos[_sc.b]){
+        const _dx=pos[_sc.b][0]-pos[_sc.a][0],_dy=pos[_sc.b][1]-pos[_sc.a][1],_dz=pos[_sc.b][2]-pos[_sc.a][2];
+        const _dist=Math.sqrt(_dx*_dx+_dy*_dy+_dz*_dz);
+        const _SC_IDEAL=2/Math.sqrt(3); // 1.1547
+        if(Math.abs(_dist-1)>0.05 && Math.abs(_dist-_SC_IDEAL)>0.10) return false;
+    }
+    // Check GPU batch cache first (avoids redundant CPU solve)
+    if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
+        const cached = SolverProxy.getBatchResult(scId);
+        if (cached) { _cmqCacheHits++; }
+        if (cached) return cached.pass;
+    }
     // Build constraint pairs with the candidate SC added (cached base pairs)
+    _cmqCpuCount++;
+    const _cmqT0 = performance.now();
     const basePairs = _getBasePairs();
     const sc=SC_BY_ID[scId];
     const pairs = [...basePairs, [sc.a, sc.b]];
-    const {p}=_solve(pairs);
+    // 500 iters is enough for strain check (don't need full convergence)
+    const {p}=_solve(pairs, 500);
+    _cmqTotalMs += performance.now() - _cmqT0;
     // Don't bail on !converged — solver may not reach 1e-9 on L3+
     // but positions can still be within strain tolerance. Let strain check decide.
     const ROLLBACK_TOL=5e-4, AVG_TOL=1e-5;
@@ -141,7 +163,7 @@ function canMaterialiseQuick(scId){
 
 // ─── excitationSeverForRoom: sever a non-load-bearing implied SC ────────
 // When an excitation needs to materialise a shortcut but strain is too high,
-// it may try severing ONE non-load-bearing electronImplied shortcut to make
+// it may try severing ONE non-load-bearing xonImplied shortcut to make
 // room. Candidates are ranked by fewest excitation references (orphans first).
 // The function tries each candidate in rank order: sever it, check if the
 // target SC can now be materialized, and if so keep the sever. If not, undo
@@ -150,16 +172,16 @@ function canMaterialiseQuick(scId){
 // oct cycle, or part of any excitation's claimed void.
 // Returns true if a sever enabled the target materialization.
 function excitationSeverForRoom(targetScId){
-    if(!electronImpliedSet.size) return false;
+    if(!xonImpliedSet.size) return false;
 
     // Build protected set (same logic as strainMonitorCheck)
     const protectedSCs = new Set();
     // Protect tet pairs
-    for(const scId of electronImpliedSet){
+    for(const scId of xonImpliedSet){
         const partners = tetPartnerMap.get(scId);
         if(partners){
             for(const pid of partners){
-                if(electronImpliedSet.has(pid) || activeSet.has(pid)){
+                if(xonImpliedSet.has(pid) || activeSet.has(pid)){
                     protectedSCs.add(scId);
                     protectedSCs.add(pid);
                 }
@@ -171,7 +193,7 @@ function excitationSeverForRoom(targetScId){
         if(v.type !== 'oct' || !v.cycles) continue;
         for(const cycle of v.cycles){
             const allPresent = cycle.scIds.every(id =>
-                electronImpliedSet.has(id) || activeSet.has(id) || impliedSet.has(id));
+                xonImpliedSet.has(id) || activeSet.has(id) || impliedSet.has(id));
             if(!allPresent) continue;
             for(const id of cycle.scIds) protectedSCs.add(id);
         }
@@ -194,7 +216,7 @@ function excitationSeverForRoom(targetScId){
     // Collect severable candidates, scored by fewest excitation references
     // (prefer severing orphan shortcuts that no excitation currently owns)
     const ranked = [];
-    for(const scId of electronImpliedSet){
+    for(const scId of xonImpliedSet){
         if(protectedSCs.has(scId)) continue;
         let refs = 0;
         for(const ex of excitations){
@@ -209,7 +231,7 @@ function excitationSeverForRoom(targetScId){
     // undo if not, try next. Only ONE sever is kept.
     for(const {scId: victimId} of ranked){
         // Temporarily sever
-        electronImpliedSet.delete(victimId);
+        xonImpliedSet.delete(victimId);
         impliedSet.delete(victimId);
         stateVersion++; // invalidate cache so canMaterialiseQuick sees removal
 
@@ -224,14 +246,52 @@ function excitationSeverForRoom(targetScId){
                     ex.voidScIds = null; ex.voidNodes = null;
                 }
             }
+            _severanceCount++;
             bumpState();
             return true;
         }
 
         // Undo — this sever didn't help
-        electronImpliedSet.add(victimId);
+        xonImpliedSet.add(victimId);
         impliedSet.add(victimId);
         stateVersion++; // invalidate cache after undo
+    }
+
+    // PHASE 2: BFS 2-severance combos (try all pairs)
+    for (let i = 0; i < ranked.length; i++) {
+        for (let j = i + 1; j < ranked.length; j++) {
+            const v1 = ranked[i].scId, v2 = ranked[j].scId;
+            xonImpliedSet.delete(v1);
+            xonImpliedSet.delete(v2);
+            impliedSet.delete(v1);
+            impliedSet.delete(v2);
+            stateVersion++;
+
+            if (canMaterialiseQuick(targetScId)) {
+                // Success — finalize both severs
+                impliedBy.delete(v1);
+                impliedBy.delete(v2);
+                for (const ex of excitations) {
+                    for (const vid of [v1, v2]) {
+                        if (ex.ownShortcut === vid) ex.ownShortcut = null;
+                        if (ex.voidScIds && ex.voidScIds.includes(vid)) {
+                            ex.zeroPoint = null; ex.voidType = null;
+                            ex.voidScIds = null; ex.voidNodes = null;
+                        }
+                    }
+                }
+                _severanceCount += 2;
+                bumpState();
+                return true;
+            }
+
+            // Undo both
+            xonImpliedSet.add(v1);
+            xonImpliedSet.add(v2);
+            impliedSet.add(v1);
+            impliedSet.add(v2);
+            stateVersion++;
+        }
     }
     return false;
 }
@@ -519,7 +579,7 @@ function excitationStep(e, canMaterialise){
                 if(tetPartners){
                     const savedOwn = e.ownShortcut;
                     for(const pid of tetPartners){
-                        if(!electronImpliedSet.has(pid) && !activeSet.has(pid)){
+                        if(!xonImpliedSet.has(pid) && !activeSet.has(pid)){
                             if(canMaterialiseQuick(pid)){
                                 excitationMaterialiseSC(e, pid, /*isBridge=*/true);
                                 e.ownShortcut = savedOwn;
@@ -703,7 +763,7 @@ function removeAllExcitations(){
     // Electron-implied SCs are real structure — keep them unless they cause
     // strain violations. The old behavior of wiping all electron-implied SCs
     // on clear was too aggressive (shortcuts visibly vanished).
-    if(electronImpliedSet.size){
+    if(xonImpliedSet.size){
         // Check for actual strain before clearing anything
         const TOL = 1e-3;
         let hasStrain = false;
@@ -712,8 +772,8 @@ function removeAllExcitations(){
         }
         if(hasStrain){
             // Only clear if strain exists — soft recovery
-            for(const id of [...electronImpliedSet]){
-                electronImpliedSet.delete(id);
+            for(const id of [...xonImpliedSet]){
+                xonImpliedSet.delete(id);
                 impliedSet.delete(id);
                 impliedBy.delete(id);
             }
@@ -858,7 +918,7 @@ const STRAIN_CHECK_INTERVAL = 8;  // check every N ticks (not every tick — per
 const STRAIN_EVICT_TOL = 1e-6;    // 1 ppm avgErr threshold
 
 function strainMonitorCheck(){
-    if(!electronImpliedSet.size) return;
+    if(!xonImpliedSet.size) return;
 
     // Check strain level
     let sumErr=0;
@@ -867,13 +927,13 @@ function strainMonitorCheck(){
     if(avgErr <= STRAIN_EVICT_TOL) return;
 
     // Build set of protected SCs — shortcuts whose tet partner is ALSO in
-    // electronImpliedSet form a completed tet void and must not be evicted.
+    // xonImpliedSet form a completed tet void and must not be evicted.
     const protectedSCs = new Set();
-    for(const scId of electronImpliedSet){
+    for(const scId of xonImpliedSet){
         const partners = tetPartnerMap.get(scId);
         if(partners){
             for(const pid of partners){
-                if(electronImpliedSet.has(pid)){
+                if(xonImpliedSet.has(pid)){
                     protectedSCs.add(scId);
                     protectedSCs.add(pid);
                 }
@@ -888,7 +948,7 @@ function strainMonitorCheck(){
         if(v.type !== 'oct' || !v.cycles) continue;
         for(const cycle of v.cycles){
             const allPresent = cycle.scIds.every(id =>
-                electronImpliedSet.has(id) || activeSet.has(id) || impliedSet.has(id));
+                xonImpliedSet.has(id) || activeSet.has(id) || impliedSet.has(id));
             if(!allPresent) continue;
             for(const id of cycle.scIds) protectedSCs.add(id);
         }
@@ -898,11 +958,11 @@ function strainMonitorCheck(){
     // Evict at most 1 per tick — the monitor runs every STRAIN_CHECK_INTERVAL
     // ticks, so high strain converges over a few intervals without frame freezes.
     let bestId=null, bestAvg=avgErr;
-    for(const scId of electronImpliedSet){
+    for(const scId of xonImpliedSet){
         if(protectedSCs.has(scId)) continue; // don't evict tet pair members
         const sc=SC_BY_ID[scId];
         // Test: remove this SC and re-solve
-        const testPairs=[...[...activeSet,...electronImpliedSet]
+        const testPairs=[...[...activeSet,...xonImpliedSet]
             .filter(id=>id!==scId)
             .map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; })];
         const {p:tp, converged} = _solve(testPairs);
@@ -918,7 +978,7 @@ function strainMonitorCheck(){
     if(bestId===null) return; // all remaining SCs are protected
 
     // Evict the worst SC
-    electronImpliedSet.delete(bestId);
+    xonImpliedSet.delete(bestId);
     impliedSet.delete(bestId);
     impliedBy.delete(bestId);
     // Clear ownShortcut on any excitation that owned it
@@ -983,13 +1043,13 @@ function excitationClockTick(){
         let _tickChanges = 0;
 
         // Combined allOpen set for models that check if an SC is active/implied
-        const _allOpenTick = new Set([...activeSet, ...impliedSet, ...electronImpliedSet]);
+        const _allOpenTick = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
 
         const tickCtx = {
             // ── Direct state references (read-only recommended) ──
             activeSet,
             impliedSet,
-            electronImpliedSet,
+            xonImpliedSet,
             excitations,
             ALL_SC,
             pos,
@@ -1454,8 +1514,8 @@ function excitationClockTick(){
                     for (const scId of oldFaceData.scIds) {
                         // Never sever oct SCs — the bosonic cage must stay intact
                         if (octSCSet.has(scId)) continue;
-                        if (electronImpliedSet.has(scId)) {
-                            electronImpliedSet.delete(scId);
+                        if (xonImpliedSet.has(scId)) {
+                            xonImpliedSet.delete(scId);
                             impliedSet.delete(scId);
                             impliedBy.delete(scId);
                             for (const ex of excitations) {
@@ -1594,23 +1654,23 @@ function excitationClockTick(){
         // The excitation clock will stop (no excitations → no more ticks), so
         // strainMonitorCheck would never run again. Without cleanup, orphaned
         // SCs accumulate strain and trigger invariant violations.
-        if(!excitations.length && electronImpliedSet.size){
+        if(!excitations.length && xonImpliedSet.size){
             let cleaned = 0;
-            while(electronImpliedSet.size){
-                const before = electronImpliedSet.size;
+            while(xonImpliedSet.size){
+                const before = xonImpliedSet.size;
                 strainMonitorCheck();
-                if(electronImpliedSet.size >= before) break; // couldn't evict (all protected)
+                if(xonImpliedSet.size >= before) break; // couldn't evict (all protected)
                 cleaned++;
                 if(cleaned > 50) break; // safety cap
             }
             // If strain is still above halt threshold after cleanup, clear ALL
             // orphaned electron-implied SCs as a last resort.
-            if(electronImpliedSet.size){
+            if(xonImpliedSet.size){
                 let sumErr = 0;
                 for(const [i,j] of BASE_EDGES) sumErr += Math.abs(vd(pos[i],pos[j]) - 1.0);
                 if(sumErr / BASE_EDGES.length > 1e-3){
-                    for(const id of [...electronImpliedSet]){
-                        electronImpliedSet.delete(id);
+                    for(const id of [...xonImpliedSet]){
+                        xonImpliedSet.delete(id);
                         impliedSet.delete(id);
                         impliedBy.delete(id);
                     }

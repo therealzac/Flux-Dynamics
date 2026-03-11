@@ -103,9 +103,14 @@ let _syncStatus = 'ok';              // 'ok' | 'warn' | 'error'
 let _faceCoverageTotal = {};         // key → cumulative tick count (type_face, e.g. pu_1, nd_5)
 let _nucleusTick = 0;               // global tick counter for nucleus mode
 let _octEdgeLastTraced = new Map();  // pairId(a,b) → tick number when last traced by a quark
-let _octNodeSet = null;              // Set of oct-void node indices (set in simulateNucleus)
-let _octSCIds = [];                  // Oct void SC ids (quarks materialise these naturally)
+let _octNodeSet = null;              // Set of oct-void node indices (set by simulateNucleus)
+let _octSCIds = [];                  // Oct void SC ids (4 equatorial cage SCs)
 let _octVoidIdx = -1;               // Void index of the nucleus oct (hadronic center)
+let _octSeedCenter = -1;            // Center node (all xons start here)
+let _openingPhase = false;           // true during 2-tick opening choreography (ticks 0-1)
+let _octEquatorCycle = [];           // 4 equatorial nodes in cycle order (for merry-go-round)
+let _octCageSCCycle = [];            // 4 cage SC IDs in matching cycle order
+let _octAntipodal = new Map();       // node → antipodal oct node (diagonal pairs)
 let voidNeighborData = [];
 let _nodeTetVoids = new Map(); // node → tet voids containing that node
 let _nodeOctVoids = new Map(); // node → oct voids containing that node
@@ -421,7 +426,7 @@ function rebuildLatticeGeometry(level){
         [_R4,0,0],[-_R4,0,0],[0,_R4,0],[0,-_R4,0],[0,0,_R4],[0,0,-_R4]
     ];
     const _vLookup=(x,y,z)=>vmap.get(`${Math.round(x*10000)},${Math.round(y*10000)},${Math.round(z*10000)}`);
-    BASE_EDGES=[]; REPULSION_PAIRS=[]; ALL_SC=[];
+    BASE_EDGES=[]; REPULSION_PAIRS=[]; ALL_SC=[]; _repFlat=new Uint32Array(0);
     for(let i=0;i<N;i++){
         const [px,py,pz]=REST[i];
         for(const [dx,dy,dz] of _BASE_DELTAS){
@@ -451,6 +456,23 @@ function rebuildLatticeGeometry(level){
         if(dx*v[0]+dy*v[1]+dz*v[2] > 0){ basePosNeighbor[i][dir]=j; }
         else { basePosNeighbor[j][dir]=i; }
     });
+    // Pre-flatten data for solver inner loop (avoids array dereference in hot path)
+    _restFlat = new Float64Array(N * 3);
+    for (let i = 0; i < N; i++) {
+        _restFlat[i*3]   = REST[i][0];
+        _restFlat[i*3+1] = REST[i][1];
+        _restFlat[i*3+2] = REST[i][2];
+    }
+    _baseFlat = new Uint32Array(BASE_EDGES.length * 2);
+    for (let e = 0; e < BASE_EDGES.length; e++) {
+        _baseFlat[e*2]   = BASE_EDGES[e][0];
+        _baseFlat[e*2+1] = BASE_EDGES[e][1];
+    }
+    _repFlat = new Uint32Array(REPULSION_PAIRS.length * 2);
+    for (let r = 0; r < REPULSION_PAIRS.length; r++) {
+        _repFlat[r*2]   = REPULSION_PAIRS[r][0];
+        _repFlat[r*2+1] = REPULSION_PAIRS[r][1];
+    }
     // BFS 2-color the BASE_EDGES graph for void duality visualisation
     computeVoidTypes();
     // Find 4-neighbor sets for each void; stored as indices into REST/pos
@@ -464,7 +486,7 @@ function rebuildLatticeGeometry(level){
 const activeSet=new Set();
 const impliedSet=new Set();
 const impliedBy=new Map();
-const electronImpliedSet=new Set();
+const xonImpliedSet=new Set();
 const IMPLY_THRESHOLD=1e-6;
 
 // ─── Void duality classification ──────────────────────────────────────────────
@@ -505,7 +527,15 @@ function _pairsHash(sorted){
     }
     return h;
 }
+let _solveCallCount = 0;
+let _solveCallCountPerTick = 0;
+let _solveTotalMs = 0;
+let _solveMaxMs = 0;
+let _solveIterTotal = 0;
 function _solve(scPairs,iters=5000,noBailout=false){
+    _solveCallCount++;
+    _solveCallCountPerTick++;
+    const _t0 = performance.now();
     const sortedSC=[...scPairs].sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
     // Cache hit? Return deep copy of cached positions (caller may mutate)
     if(!noBailout && iters===5000){
@@ -515,26 +545,61 @@ function _solve(scPairs,iters=5000,noBailout=false){
             return { p: cached.p.map(v=>[v[0],v[1],v[2]]), converged: cached.converged };
         }
     }
-    const p=REST.map(v=>[...v]);
-    const C=[...BASE_EDGES.map(([i,j])=>({i,j,d:1})),...sortedSC.map(([i,j])=>({i,j,d:1}))];
+    // ─── Optimized solver: flat typed arrays, no per-call allocation ───
+    // Position buffer: copy from pre-flattened rest positions
+    const nNodes = N; // global N
+    const px = new Float64Array(nNodes * 3);
+    if (_restFlat) {
+        px.set(_restFlat);
+    } else {
+        for (let i = 0; i < nNodes; i++) {
+            const off = i * 3;
+            px[off]   = REST[i][0];
+            px[off+1] = REST[i][1];
+            px[off+2] = REST[i][2];
+        }
+    }
+    // Constraint indices: copy pre-flattened base edges + append SC pairs
+    const nBase = BASE_EDGES.length;
+    const nSC = sortedSC.length;
+    const nC = nBase + nSC;
+    const ci = new Uint32Array(nC * 2);
+    ci.set(_baseFlat); // copy pre-flattened base edges in one shot
+    for (let e = 0; e < nSC; e++) {
+        ci[(nBase+e)*2]   = sortedSC[e][0];
+        ci[(nBase+e)*2+1] = sortedSC[e][1];
+    }
+    // Repulsion pairs: flat (pre-built at lattice init would be better but this is one-time per solve)
+    const nRep = REPULSION_PAIRS.length;
     let mx=0, mx50=Infinity;
     for(let it=0;it<iters;it++){
         mx=0;
-        for(const c of C){
-            const dx=p[c.j][0]-p[c.i][0],dy=p[c.j][1]-p[c.i][1],dz=p[c.j][2]-p[c.i][2];
-            const d=Math.sqrt(dx*dx+dy*dy+dz*dz); if(d<1e-10) continue;
-            const f=(d-c.d)/d*0.5; mx=Math.max(mx,Math.abs(d-c.d));
-            p[c.i][0]+=f*dx; p[c.i][1]+=f*dy; p[c.i][2]+=f*dz;
-            p[c.j][0]-=f*dx; p[c.j][1]-=f*dy; p[c.j][2]-=f*dz;
+        // Project distance-1 constraints
+        for(let e=0;e<nC;e++){
+            const ii=ci[e*2], jj=ci[e*2+1];
+            const io=ii*3, jo=jj*3;
+            const dx=px[jo]-px[io], dy=px[jo+1]-px[io+1], dz=px[jo+2]-px[io+2];
+            const d2=dx*dx+dy*dy+dz*dz;
+            if(d2<1e-20) continue;
+            const d=Math.sqrt(d2);
+            const err=d-1.0;
+            const absErr=err<0?-err:err;
+            if(absErr>mx) mx=absErr;
+            const f=err/d*0.5;
+            px[io]+=f*dx; px[io+1]+=f*dy; px[io+2]+=f*dz;
+            px[jo]-=f*dx; px[jo+1]-=f*dy; px[jo+2]-=f*dz;
         }
-        for(const [i,j] of REPULSION_PAIRS){
-            const dx=p[j][0]-p[i][0],dy=p[j][1]-p[i][1],dz=p[j][2]-p[i][2];
-            const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
-            if(d<1.0-1e-6){
-                const f=(d-1.0)/d*0.5;
-                p[i][0]+=f*dx; p[i][1]+=f*dy; p[i][2]+=f*dz;
-                p[j][0]-=f*dx; p[j][1]-=f*dy; p[j][2]-=f*dz;
-            }
+        // Project repulsion (only when too close) — uses pre-flattened buffer
+        for(let r=0;r<nRep;r++){
+            const ri=_repFlat[r*2], rj=_repFlat[r*2+1];
+            const rio=ri*3, rjo=rj*3;
+            const dx=px[rjo]-px[rio], dy=px[rjo+1]-px[rio+1], dz=px[rjo+2]-px[rio+2];
+            const d2=dx*dx+dy*dy+dz*dz;
+            if(d2>=0.999999) continue; // fast squared-distance check (1.0-1e-6)^2 ≈ 0.999998
+            const d=Math.sqrt(d2);
+            const f=(d-1.0)/d*0.5;
+            px[rio]+=f*dx; px[rio+1]+=f*dy; px[rio+2]+=f*dz;
+            px[rjo]-=f*dx; px[rjo+1]-=f*dy; px[rjo+2]-=f*dz;
         }
         if(mx<1e-9) break;
         if(!noBailout){
@@ -542,12 +607,21 @@ function _solve(scPairs,iters=5000,noBailout=false){
             if(it===99&&mx>mx50*0.5) break;
         }
     }
+    // Convert back to array-of-arrays for compatibility
+    const p = new Array(nNodes);
+    for (let i = 0; i < nNodes; i++) {
+        const off = i * 3;
+        p[i] = [px[off], px[off+1], px[off+2]];
+    }
     const result = {p,converged:mx<1e-9};
     // Store in cache (only for default-param calls)
     if(!noBailout && iters===5000){
         const cacheKey = _pairsHash(sortedSC);
         _solveCache = { key: cacheKey, len: sortedSC.length, result: { p: p.map(v=>[v[0],v[1],v[2]]), converged: result.converged } };
     }
+    const _dt = performance.now() - _t0;
+    _solveTotalMs += _dt;
+    if (_dt > _solveMaxMs) _solveMaxMs = _dt;
     return result;
 }
 function solvePositions(extraPair){
@@ -560,22 +634,25 @@ function solvePositions(extraPair){
 function tryAdd(sc){
     const pairs=[];
     activeSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
-    electronImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
+    xonImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
     pairs.push([sc.a,sc.b]);
     return _solve(pairs).converged;
 }
+let _detectImpliedCount = 0, _detectImpliedMs = 0;
 function detectImplied(){
+    _detectImpliedCount++;
+    const _diT0 = performance.now();
     impliedSet.clear(); impliedBy.clear();
     const activePairs=[];
     activeSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
-    electronImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
+    xonImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
     const {p,converged:probeConverged}=_solve(activePairs);
     let newImplied = 0;
     if(probeConverged){
         // When excitations are active, bypass blockedImplied for cascade detection.
         // blockedImplied is a manual-mode feature; excitation physics should detect
         // all cascade shortcuts so octahedral voids can actualize properly.
-        const skipBlocked = electronImpliedSet.size > 0;
+        const skipBlocked = xonImpliedSet.size > 0;
         // Shared snapshot: all implied SCs in one pass share the same cause set
         // (avoids N × new Set(activeSet) allocations)
         let _activeSnap = null;
@@ -587,16 +664,16 @@ function detectImplied(){
                 impliedSet.add(s.id);
                 if(!_activeSnap) _activeSnap = new Set(activeSet);
                 impliedBy.set(s.id, _activeSnap);
-                if(!electronImpliedSet.has(s.id)) newImplied++;
+                if(!xonImpliedSet.has(s.id)) newImplied++;
             }
         });
     }
-    electronImpliedSet.forEach(id=>{
+    xonImpliedSet.forEach(id=>{
         if(!activeSet.has(id)&&!impliedSet.has(id)){ impliedSet.add(id); impliedBy.set(id,new Set()); }
     });
     // If no new cascade-implied shortcuts were found, the probe positions
     // are already correct — skip the second solve entirely.
-    if(newImplied === 0 && probeConverged) return p;
+    if(newImplied === 0 && probeConverged) { _detectImpliedMs += performance.now() - _diT0; return p; }
     const {p:pFinal,converged:finalConverged}=_solve((()=>{
         const pairs=[];
         activeSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });
@@ -605,14 +682,16 @@ function detectImplied(){
     })());
     if(!finalConverged){
         impliedSet.clear(); impliedBy.clear();
-        electronImpliedSet.forEach(id=>{ impliedSet.add(id); impliedBy.set(id,new Set()); });
+        xonImpliedSet.forEach(id=>{ impliedSet.add(id); impliedBy.set(id,new Set()); });
+        _detectImpliedMs += performance.now() - _diT0;
         return solvePositions();
     }
+    _detectImpliedMs += performance.now() - _diT0;
     return pFinal;
 }
 
 // ─── Performance: state version caching ──────────────────────────────────────
-// stateVersion increments whenever activeSet / impliedSet / electronImpliedSet
+// stateVersion increments whenever activeSet / impliedSet / xonImpliedSet
 // change. This lets candidateOk and the side panel skip expensive solver work
 // when called from the hover path (where state hasn't changed).
 
@@ -625,7 +704,7 @@ function bumpState() {
 // ── Performance helpers (cached per stateVersion) ──────────────────────
 function getAllOpen(){
     if(_allOpenVersion === stateVersion) return _allOpenCache;
-    _allOpenCache = new Set([...activeSet, ...impliedSet, ...electronImpliedSet]);
+    _allOpenCache = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
     _allOpenVersion = stateVersion;
     return _allOpenCache;
 }
@@ -634,7 +713,7 @@ function _getBasePairs(){
     const pairs = [];
     activeSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
     impliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
-    electronImpliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
+    xonImpliedSet.forEach(id => { const s = SC_BY_ID[id]; pairs.push([s.a, s.b]); });
     _basePairsCache = pairs;
     _basePairsVersion = stateVersion;
     return pairs;
@@ -645,7 +724,7 @@ function pairId(a, b){ return a < b ? a * 20000 + b : b * 20000 + a; }
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.setClearColor(0x000000,1); // solid black background
+renderer.setClearColor(0x333333,1); // dark gray background
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45,1,0.01,100);
 function resize(){ renderer.setSize(innerWidth,innerHeight); camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); }
@@ -856,10 +935,11 @@ function updateLatticeLevel(){
     removeAllExcitations();
     latticeLevel=+document.getElementById('lattice-slider').value;
     document.getElementById('lattice-lv').textContent='L'+latticeLevel;
-    activeSet.clear(); impliedSet.clear(); impliedBy.clear(); electronImpliedSet.clear(); blockedImplied.clear();
+    activeSet.clear(); impliedSet.clear(); impliedBy.clear(); xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
     rebuildLatticeGeometry(latticeLevel);
     _solveCache = { key: -1, len: -1, result: null }; // invalidate solve cache
+    if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildScPairLookup();
     rebuildSphereMeshes();
     // Force full rebuild (lattice geometry changed — edge count differs)
@@ -868,7 +948,6 @@ function updateLatticeLevel(){
     rebuildBaseLines();
     rebuildShortcutLines();
     applySphereOpacity();
-    sph.r=Math.max(7.5,latticeLevel*3.2);
     applyCamera();
     bumpState();
     resetTemporalK();
@@ -1029,6 +1108,7 @@ function startRenderLoop(){
         _renderLastTime = now;
         tickExcitations(dt);
         if(_demoActive) _tickDemoXons(dt);
+        if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
         tickOctVoids();
         renderer.render(scene, camera);

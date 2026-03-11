@@ -154,11 +154,11 @@ const NucleusSimulator = (function(){
     // ── Count emergent oct voids (naturally formed, not force-actualized) ──
     function countEmergentOctVoids(){
         let count = 0;
-        const allOpen = new Set([...activeSet, ...impliedSet, ...electronImpliedSet]);
+        const allOpen = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
         for(let vi = 0; vi < voidNeighborData.length; vi++){
             const v = voidNeighborData[vi];
             if(v.type !== 'oct') continue;
-            if(_forceActualizedVoids.has(vi)) continue;
+            if(vi === _octVoidIdx) continue; // skip nucleus oct (always rendered)
             if(v.scIds && v.scIds.every(id => allOpen.has(id))) count++;
         }
         return count;
@@ -284,7 +284,7 @@ const NucleusSimulator = (function(){
     }
 
     // ── Main: simulate nucleus ──
-    // Bottom-up approach: actualize a single central oct void on L3 lattice
+    // Bottom-up approach: actualize a single central oct void on L2 lattice
     function simulateNucleus(){
         const statusEl = document.getElementById('nucleus-status');
         if(statusEl) statusEl.textContent = 'initializing...';
@@ -296,199 +296,33 @@ const NucleusSimulator = (function(){
         // 2. Clear state
         activeSet.clear();
         if(typeof impliedSet !== 'undefined') impliedSet.clear();
-        if(typeof electronImpliedSet !== 'undefined') electronImpliedSet.clear();
+        if(typeof xonImpliedSet !== 'undefined') xonImpliedSet.clear();
         if(typeof blockedImplied !== 'undefined') blockedImplied.clear();
         if(typeof impliedBy !== 'undefined') impliedBy.clear();
-        _forceActualizedVoids.clear();
         _quarkExcitations = [];
 
         // 3. Save previous rule index
         _prevRuleIndex = activeRuleIndex;
         activeRuleIndex = 0; // use first rule (will evolve)
 
-        // 4. Construct an oct void by finding a square of 4 SCs near center
-        //    An octahedral void = 4 shortcuts forming a closed cycle (square)
-        const _scAdj = {};  // node -> [{neighbor, scId, stype}]
-        for(let i = 0; i < ALL_SC.length; i++){
-            const sc = ALL_SC[i];
-            if(!_scAdj[sc.a]) _scAdj[sc.a] = [];
-            if(!_scAdj[sc.b]) _scAdj[sc.b] = [];
-            _scAdj[sc.a].push({neighbor: sc.b, scId: i, stype: sc.stype});
-            _scAdj[sc.b].push({neighbor: sc.a, scId: i, stype: sc.stype});
-        }
-
-        // Gather nodes near center, sorted by distance
-        const _centerNodes = [];
-        for(let n = 0; n < pos.length; n++){
-            const p = pos[n];
-            const dist = Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
-            if(dist < 2.0) _centerNodes.push({node: n, dist});
-        }
-        _centerNodes.sort((a,b) => a.dist - b.dist);
-
-        // Search for 4-cycles (squares) from central nodes
-        let bestSquare = null, bestSquareDist = Infinity;
-        const _checkedSquares = new Set();
-        for(const {node: A} of _centerNodes.slice(0, 30)){
-            if(!_scAdj[A]) continue;
-            for(const e1 of _scAdj[A]){
-                const B = e1.neighbor;
-                if(!_scAdj[B]) continue;
-                for(const e2 of _scAdj[B]){
-                    const C = e2.neighbor;
-                    if(C === A) continue;
-                    if(!_scAdj[C]) continue;
-                    for(const e3 of _scAdj[C]){
-                        const D = e3.neighbor;
-                        if(D === A || D === B) continue;
-                        if(!_scAdj[D]) continue;
-                        const e4 = _scAdj[D].find(e => e.neighbor === A);
-                        if(!e4) continue;
-                        // Found a square A→B→C→D→A
-                        const key = [A, B, C, D].sort().join(',');
-                        if(_checkedSquares.has(key)) continue;
-                        _checkedSquares.add(key);
-                        // Compute centroid distance from origin
-                        const cx = (pos[A][0]+pos[B][0]+pos[C][0]+pos[D][0])/4;
-                        const cy = (pos[A][1]+pos[B][1]+pos[C][1]+pos[D][1])/4;
-                        const cz = (pos[A][2]+pos[B][2]+pos[C][2]+pos[D][2])/4;
-                        const cdist = Math.sqrt(cx*cx + cy*cy + cz*cz);
-                        if(cdist < bestSquareDist){
-                            bestSquareDist = cdist;
-                            bestSquare = {
-                                nodes: [A, B, C, D],
-                                scIds: [e1.scId, e2.scId, e3.scId, e4.scId],
-                                stypes: [e1.stype, e2.stype, e3.stype, e4.stype]
-                            };
-                        }
-                    }
-                }
-            }
-        }
-
+        // 4. Find center node — oct formation is discovered by the choreography
+        //    at tick 1. Tick 0 sends 4 xons below center (z-axis) to form the equator.
+        const center = _findCenterNode();
+        _octSeedCenter = center;
+        _octNodeSet = null;
+        _octSCIds = [];
+        _octEquatorCycle = [];
+        _octCageSCCycle = [];
+        _octAntipodal = new Map();
         _octVoidIdx = -1;
-        if(bestSquare){
-            // Do NOT add oct SCs to activeSet — quarks materialise everything.
-            // The first moves of the choreography naturally actualize the oct.
-            // Just record the oct void for tet discovery below.
-            const sqNodeSet = new Set(bestSquare.nodes);
-            for(let vi = 0; vi < voidNeighborData.length; vi++){
-                const v = voidNeighborData[vi];
-                if(v.type !== 'oct' || !v.cycles) continue;
-                for(const cycle of v.cycles){
-                    if(cycle.verts.length === 4 && cycle.verts.every(n => sqNodeSet.has(n))){
-                        _octVoidIdx = vi;
-                        break;
-                    }
-                }
-                if(_octVoidIdx >= 0) break;
-            }
-            // Store oct SC ids so quarks know which edges to actualize
-            _octSCIds = bestSquare.scIds;
-            console.log(`[nucleus] Oct void discovered (no SCs imposed): nodes [${bestSquare.nodes.join(',')}], ` +
-                `SCs [${bestSquare.scIds.join(',')}], stypes [${bestSquare.stypes.join(',')}], ` +
-                `centroid dist: ${bestSquareDist.toFixed(3)}`);
-        } else {
-            console.warn('[nucleus] No SC square found near center!');
-        }
+        _nucleusTetFaceData = {};
 
-        // 5. Discover and actualize ALL 8 tet voids adjacent to the central oct void
-        // Each oct face has an adjacent tet sharing 3 oct-nodes + 1 external node.
-        // Build runtime lookup: faceId → {voidIdx, allNodes, extNode, scIds, cycle}
-        _nucleusTetFaceData = {};  // reset
+        console.log(`[nucleus] Center=${center}, oct will be discovered by choreography at tick 1`);
 
-        // Get oct void nodes from discovered oct void (no longer force-actualized)
-        _octNodeSet = new Set();
-        if (_octVoidIdx >= 0) {
-            const v = voidNeighborData[_octVoidIdx];
-            if (v && v.type === 'oct' && v.cycles) {
-                for (const c of v.cycles) {
-                    for (const n of c.verts) _octNodeSet.add(n);
-                }
-            }
-        }
-        console.log(`[nucleus] Oct void nodes: [${[..._octNodeSet].sort((a,b)=>a-b).join(',')}]`);
-
-        for (const [faceIdStr, faceDef] of Object.entries(DEUTERON_TET_FACES)) {
-            const faceId = parseInt(faceIdStr);
-            const sortedOctFace = [...faceDef.octNodes].sort((a,b) => a-b);
-
-            // Search voidNeighborData for tet containing exactly these 3 oct nodes + 1 external
-            for (let vi = 0; vi < voidNeighborData.length; vi++) {
-                const v = voidNeighborData[vi];
-                if (v.type !== 'tet') continue;
-                const tetNodes = v.nbrs;  // sorted 4-node array
-                // Must have exactly 3 nodes from our oct face
-                const inOct = tetNodes.filter(n => _octNodeSet.has(n));
-                if (inOct.length !== 3) continue;
-                const sortedInOct = [...inOct].sort((a,b) => a-b);
-                if (sortedInOct.join(',') !== sortedOctFace.join(',')) continue;
-
-                // Found matching tet
-                const extNode = tetNodes.find(n => !_octNodeSet.has(n));
-                // Hamiltonian cycle: octNode0 → extNode → octNode1 → octNode2
-                const cycle = [faceDef.octNodes[0], extNode, faceDef.octNodes[1], faceDef.octNodes[2]];
-
-                _nucleusTetFaceData[faceId] = {
-                    voidIdx: vi,
-                    allNodes: [...tetNodes],
-                    extNode: extNode,
-                    scIds: [...v.scIds],
-                    cycle: cycle,
-                };
-
-                // Do NOT force-actualize tet SCs — quarks physically
-                // traverse them to materialise (new movement paradigm).
-                // Only oct void stays force-actualized.
-                console.log(`[nucleus] Mapped tet #${vi} (face ${faceId}, group ${faceDef.group}): ` +
-                    `nodes [${tetNodes}], ext=${extNode}, SCs [${v.scIds}], cycle [${cycle}]`);
-                break;
-            }
-        }
-        console.log(`[nucleus] No force-actualized voids — all SCs materialised by quark choreography`);
-
-        // 6. Solver
+        // 5. Solver (no SCs yet — just base lattice)
         bumpState();
         const pFinal = detectImplied();
         applyPositions(pFinal);
-
-        // 7. Spawn deuteron xon excitations (anonymous workers)
-        // Xons are confined to their tet's 4 nodes via voidNodes.
-        // No SCs are materialised at spawn — xons physically traverse
-        // tet edges to materialise them (new movement paradigm).
-        // Pauli exclusion at spawn: stagger starting positions.
-        const _spawnOccupied = new Set();
-        for (const xDef of DEUTERON_XONS) {
-            const faceData = _nucleusTetFaceData[xDef.startFace];
-            if (!faceData) {
-                console.warn(`[nucleus] No tet data for face ${xDef.startFace} (xon ${xDef.id})`);
-                continue;
-            }
-
-            // Pick a spawn node within the tet, preferring oct nodes.
-            // Stagger to avoid Pauli collisions at shared oct nodes.
-            const octNodes = faceData.allNodes.filter(n => _octNodeSet.has(n));
-            const extNodes = faceData.allNodes.filter(n => !_octNodeSet.has(n));
-            const preferOrder = [...octNodes, ...extNodes];
-            let startNode = preferOrder[0];
-            for (const n of preferOrder) {
-                if (!_spawnOccupied.has(n)) { startNode = n; break; }
-            }
-            _spawnOccupied.add(startNode);
-
-            const e = _createExcitation(startNode, xDef.color);
-            if (!e) { console.warn(`[nucleus] Failed to create xon ${xDef.id}`); continue; }
-            e._isQuark = true;
-            e._xonId = xDef.id;
-            e._hopGroup = xDef.group;
-            e._tetVoidIdx = faceData.voidIdx;
-            e._currentFace = xDef.startFace;
-            e._stepsInFace = 0;
-            e.voidNodes = new Set(faceData.allNodes);
-            e.spark.scale.set(0.35, 0.35, 1);
-            _quarkExcitations.push(e);
-        }
-        console.log(`[nucleus] Spawned ${_quarkExcitations.length} deuteron xons (${Object.keys(_nucleusTetFaceData).length} tets)`);
 
         // 8. Start clock
         if(typeof startExcitationClock === 'function') startExcitationClock();
@@ -533,6 +367,7 @@ const NucleusSimulator = (function(){
             { label: 'neutron up',  color: 0x4488ff },
             { label: 'neutron down', color: 0xff4444 },
             { label: 'bosonic',     color: 0xffffff },
+            { label: 'gluon (cage)',color: 0xff8800 },
             { label: 'weak',        color: 0xcc44ff },
         ];
         let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;
@@ -670,7 +505,6 @@ const NucleusSimulator = (function(){
     function deactivate(){
         _active = false;
         _quarkExcitations = [];
-        _forceActualizedVoids.clear();
         _nucleusTetFaceData = {};
         _faceCoverageTotal = {};
         _syncMaxDeviation = 0;

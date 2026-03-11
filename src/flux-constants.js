@@ -34,7 +34,7 @@ const blockedImplied = new Set();
 
 // Void sphere mesh handles — hoisted to avoid TDZ before first rebuildVoidSpheres() call
 let _voidMeshPool = []; // {fillMesh, wireMesh, type} per void
-let _forceActualizedVoids = new Set(); // Nucleus mode: bypass geometric check for these voids
+// (_forceActualizedVoids removed — all octs render unconditionally as gray)
 
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  DO NOT DELETE — FLUX DYNAMICS CANONICAL MECHANICS REFERENCE       ║
