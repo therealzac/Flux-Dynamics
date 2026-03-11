@@ -107,13 +107,6 @@ const LIVE_GUARD_REGISTRY = [
     },
     // T05-T07 REMOVED: per user request
     { id: 'T12', name: 'Conservation (alive+2*stored=6)',
-      projected(states) {
-        const liveCount = states.length;
-        const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
-        const total = liveCount + 2 * stored;
-        if (total !== 6) return { guard: 'T12', xon: null, msg: `conservation: alive=${liveCount} stored=${stored} total=${total}` };
-        return null;
-      },
       check(tick, g) {
         const liveCount = _demoXons.filter(x => x.alive && !x._dying).length;
         const stored = typeof _gluonStoredPairs !== 'undefined' ? _gluonStoredPairs : 0;
@@ -185,16 +178,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T19', name: 'Pauli exclusion (1 xon/node)',
-      projected(states) {
-        if (_demoTick === 0) return null; // tick 0: all 6 xons at center (allowed)
-        const counts = new Map();
-        for (const s of states) {
-            const c = (counts.get(s.futureNode) || 0) + 1;
-            counts.set(s.futureNode, c);
-            if (c > 1) return { guard: 'T19', xon: s.xon, msg: `Pauli at node ${s.futureNode}` };
-        }
-        return null;
-      },
       check(tick, g) {
         if (tick === 0) return null; // tick 0: all 6 xons born at center (allowed)
         const occupied = new Map();
@@ -218,17 +201,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T20', name: 'Never stand still',
-      projected(states) {
-        // Only check the xon whose move is being evaluated — the one where
-        // futureNode !== fromNode. Other xons appear stationary because their
-        // phase hasn't run yet; that's expected, not a violation.
-        for (const s of states) {
-          if (s.xon._mode === 'oct_formation') continue;
-          if (s.futureNode === s.fromNode) continue; // hasn't moved yet — skip
-          // The moved xon IS moving (futureNode !== fromNode), so T20 is satisfied.
-        }
-        return null;
-      },
       check(tick, g, ctx) {
         if (!ctx.prev) return null;
         for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
@@ -241,18 +213,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T21', name: 'Oct cage permanence', init: { _octSnapshot: null },
-      projected(states) {
-        // Only protect oct SCs that have ALREADY been actualized (in snapshot).
-        // Can't demand all 4 be present from start — cage emerges from choreography.
-        if (typeof _octSCIds === 'undefined') return null;
-        if (!_liveGuards || !_liveGuards.T21 || !_liveGuards.T21._octSnapshot) return null;
-        const snap = _liveGuards.T21._octSnapshot;
-        if (snap.size === 0) return null;
-        for (const scId of snap) {
-            if (!activeSet.has(scId)) return { guard: 'T21', xon: null, msg: `oct SC ${scId} lost from activeSet` };
-        }
-        return null;
-      },
       activate(g) {
         const snap = new Set();
         for (const scId of _octSCIds) { if (activeSet.has(scId)) snap.add(scId); }
@@ -347,20 +307,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T26', name: 'No unactivated SC traversal',
-      projected(states) {
-        const violations = [];
-        for (const s of states) {
-            if (s.futureNode === s.fromNode) continue;
-            const pid = pairId(s.fromNode, s.futureNode);
-            const scId = scPairToId.get(pid);
-            if (scId === undefined) continue;
-            const hasBase = (baseNeighbors[s.fromNode] || []).some(nb => nb.node === s.futureNode);
-            if (!hasBase && !activeSet.has(scId) && !impliedSet.has(scId) && !xonImpliedSet.has(scId)) {
-                violations.push({ guard: 'T26', xon: s.xon, msg: `unactivated SC ${scId} (${s.fromNode}\u2192${s.futureNode})` });
-            }
-        }
-        return violations.length ? violations : null;
-      },
       snapshot(g) {
         // Capture SC activation state BEFORE the tick so check() verifies
         // the SC was active at the time of the move, not after same-tick severance.
@@ -403,20 +349,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T27', name: 'No teleportation',
-      projected(states) {
-        const violations = [];
-        for (const s of states) {
-            if (s.futureNode === s.fromNode) continue;
-            const nbs = baseNeighbors[s.fromNode] || [];
-            let connected = nbs.some(nb => nb.node === s.futureNode);
-            if (!connected) {
-                const scs = scByVert[s.fromNode] || [];
-                connected = scs.some(sc => (sc.a === s.fromNode ? sc.b : sc.a) === s.futureNode);
-            }
-            if (!connected) violations.push({ guard: 'T27', xon: s.xon, msg: `teleport ${s.fromNode}\u2192${s.futureNode}` });
-        }
-        return violations.length ? violations : null;
-      },
       check(tick, g, ctx) {
         if (!ctx.prev) return null;
         for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
@@ -588,17 +520,6 @@ const LIVE_GUARD_REGISTRY = [
     // T45: No bouncing for oct/weak xons. Only tet/idle_tet exempt (fork needs a→b→a→c→a).
     // Bounces are only allowed in actualized hadronic patterns that require them.
     { id: 'T45', name: 'No xon bounce (A→B→A)',
-      projected(states) {
-        if (!_T45_BOUNCE_GUARD) return null;
-        const violations = [];
-        for (const s of states) {
-          if (s.xon._mode === 'tet' || s.xon._mode === 'idle_tet') continue; // hadronic patterns exempt
-          if (s.futureNode === s.xon.prevNode && s.futureNode !== s.fromNode && s.xon.prevNode != null) {
-            violations.push({ guard: 'T45', xon: s.xon, msg: `would bounce to prevNode ${s.xon.prevNode}` });
-          }
-        }
-        return violations.length ? violations : null;
-      },
       snapshot(g) {
         g._t45prev = new Map();
         for (const xon of _demoXons) {
@@ -698,20 +619,6 @@ const LIVE_GUARD_REGISTRY = [
     // T56 REMOVED: diagonal traversal fixed at the source (movement filtering)
     { id: 'T55', name: 'Oct capacity (hard max 4)',
       init: { _octCapacity: OCT_CAPACITY_MAX },
-      projected(states) {
-        // Oct doesn't exist until discovered (~tick 2). No grace needed — just skip if no oct yet.
-        if (!_octNodeSet || _octNodeSet.size === 0) return null;
-        let octCount = 0;
-        for (const s of states) {
-          if (_octNodeSet.has(s.futureNode)) octCount++;
-        }
-        if (octCount > OCT_CAPACITY_MAX) {
-          const octXons = states.filter(s => _octNodeSet.has(s.futureNode));
-          return { guard: 'T55', xon: octXons[octXons.length - 1].xon,
-            msg: `projected ${octCount} xons on oct nodes > max ${OCT_CAPACITY_MAX}` };
-        }
-        return null;
-      },
       check(tick, g) {
         const cap = OCT_CAPACITY_MAX;
         g._octCapacity = cap;
@@ -726,23 +633,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     { id: 'T57', name: 'Tracer segments unit-length',
-      projected(states) {
-        // Pre-solver: SC edges are ~1.15 before activation+convergence.
-        // Use wide tolerance to allow SC moves but catch teleportation (>1.5).
-        const tol = 0.20;
-        const violations = [];
-        for (const s of states) {
-          if (s.futureNode === s.fromNode) continue;
-          const a = pos[s.fromNode], b = pos[s.futureNode];
-          if (!a || !b) continue;
-          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          if (Math.abs(dist - 1) > tol) {
-            violations.push({ guard: 'T57', xon: s.xon, msg: `segment len=${dist.toFixed(4)} (${s.fromNode}→${s.futureNode})` });
-          }
-        }
-        return violations.length ? violations : null;
-      },
       check(tick, g) {
         // Post-solver: use current pos[] (solver has converged).
         // Activated edges are ~1.0. Teleportation shows as >> 1.0.
@@ -849,22 +739,6 @@ const LIVE_GUARD_REGISTRY = [
     // must eject away from the oct cage, not linger on it.
     // projected() also lets the backtracker steer away from weak-on-oct states.
     { id: 'T61', name: 'No weak xon on oct node',
-      projected(states) {
-        if (!_octNodeSet || _octNodeSet.size === 0) return null;
-        // Don't reject during opening phase or early ticks
-        if (typeof _openingPhase !== 'undefined' && _openingPhase) return null;
-        if (typeof _demoTick !== 'undefined' && _demoTick < LIVE_GUARD_GRACE) return null;
-        const violations = [];
-        for (const s of states) {
-          if (s.xon._mode === 'weak' && _octNodeSet.has(s.futureNode)) {
-            // Exception: weak xon with _mayReturn arriving at oct node is legal —
-            // PHASE 0.5 transitions it to oct in the same tick.
-            if (s.xon._mayReturn) continue;
-            violations.push({ guard: 'T61', xon: s.xon, msg: `weak on oct node ${s.futureNode}` });
-          }
-        }
-        return violations.length ? violations : null;
-      },
       check(tick, g) {
         if (tick < LIVE_GUARD_GRACE) return null; // grace period
         if (typeof _openingPhase !== 'undefined' && _openingPhase) return null;
@@ -1055,21 +929,6 @@ const LIVE_GUARD_REGISTRY = [
         } else {
           g._consecutiveFullTicks = 0;
         }
-      },
-      projected(states) {
-        if (!_octNodeSet || _octNodeSet.size === 0) return null;
-        const maxFull = (typeof T79_MAX_FULL_TICKS !== 'undefined') ? T79_MAX_FULL_TICKS : 1;
-        let futureOctCount = 0;
-        for (const s of states) {
-          if (_octNodeSet.has(s.futureNode)) futureOctCount++;
-        }
-        const g = _liveGuards['T79'];
-        if (!g || g._consecutiveFullTicks < maxFull) return null;
-        if (futureOctCount >= 6) {
-          return { guard: 'T79', xon: states[0].xon,
-            msg: `6/6 oct for ${maxFull + 1} consecutive ticks` };
-        }
-        return null;
       },
       check(tick, g) {
         if (tick < LIVE_GUARD_GRACE) return null;
@@ -1420,9 +1279,7 @@ function runDemo3Tests() {
 
     // Simulate button
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
-        // Demo mode: set L3 lattice default, simulate nucleus, then start pattern demo
-        const latticeSlider = document.getElementById('lattice-slider');
-        if (latticeSlider && !_demoActive) latticeSlider.value = 3;
+        // Use whatever lattice level is already on the slider
         NucleusSimulator.simulateNucleus();
         // Small delay to let lattice build, then start demo loop
         setTimeout(function() {
@@ -1599,12 +1456,7 @@ function _startVisualTrial(params, maxTicks) {
         // Apply candidate params
         Object.assign(_choreoParams, params);
 
-        // Force L3 lattice for tournament trials
-        const slider = document.getElementById('lattice-slider');
-        if (slider && +slider.value !== 3) {
-            slider.value = 3;
-            if (typeof updateLatticeLevel === 'function') updateLatticeLevel();
-        }
+        // Use whatever lattice level is already on the slider
 
         // Ensure nucleus is active
         if (!NucleusSimulator.active) NucleusSimulator.simulateNucleus();
