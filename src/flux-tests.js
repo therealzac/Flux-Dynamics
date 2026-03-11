@@ -1043,6 +1043,46 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // T79: Full oct occupancy (all 6 xons on oct nodes) may persist for at most
+    // T79_MAX_FULL_TICKS consecutive ticks. Tune via global T79_MAX_FULL_TICKS.
+    { id: 'T79', name: 'Oct full (6/6) limit',
+      init: { _consecutiveFullTicks: 0 },
+      snapshot(g) {
+        if (!_octNodeSet || _octNodeSet.size === 0) { g._consecutiveFullTicks = 0; return; }
+        const octCount = _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length;
+        if (octCount >= 6) {
+          g._consecutiveFullTicks++;
+        } else {
+          g._consecutiveFullTicks = 0;
+        }
+      },
+      projected(states) {
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        const maxFull = (typeof T79_MAX_FULL_TICKS !== 'undefined') ? T79_MAX_FULL_TICKS : 6;
+        let futureOctCount = 0;
+        for (const s of states) {
+          if (_octNodeSet.has(s.futureNode)) futureOctCount++;
+        }
+        const g = _liveGuards['T79'];
+        if (!g || g._consecutiveFullTicks < maxFull) return null;
+        if (futureOctCount >= 6) {
+          return { guard: 'T79', xon: states[0].xon,
+            msg: `6/6 oct for ${maxFull + 1} consecutive ticks` };
+        }
+        return null;
+      },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        const maxFull = (typeof T79_MAX_FULL_TICKS !== 'undefined') ? T79_MAX_FULL_TICKS : 6;
+        const octCount = _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length;
+        g.msg = `oct: ${octCount}/6 (consec: ${g._consecutiveFullTicks}/${maxFull})`;
+        if (g._consecutiveFullTicks > maxFull) {
+          return `tick ${tick}: 6/6 oct for ${g._consecutiveFullTicks} consecutive ticks (max ${maxFull})`;
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
