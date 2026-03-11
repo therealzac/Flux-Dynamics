@@ -1403,9 +1403,9 @@ function runDemo3Tests() {
 
     // Simulate button
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
-        // Demo mode: set L2 lattice default, simulate nucleus, then start pattern demo
+        // Demo mode: set L3 lattice default, simulate nucleus, then start pattern demo
         const latticeSlider = document.getElementById('lattice-slider');
-        if (latticeSlider && !_demoActive) latticeSlider.value = 2;
+        if (latticeSlider && !_demoActive) latticeSlider.value = 3;
         NucleusSimulator.simulateNucleus();
         // Small delay to let lattice build, then start demo loop
         setTimeout(function() {
@@ -1582,10 +1582,10 @@ function _startVisualTrial(params, maxTicks) {
         // Apply candidate params
         Object.assign(_choreoParams, params);
 
-        // Force L2 lattice for tournament trials
+        // Force L3 lattice for tournament trials
         const slider = document.getElementById('lattice-slider');
-        if (slider && +slider.value !== 2) {
-            slider.value = 2;
+        if (slider && +slider.value !== 3) {
+            slider.value = 3;
             if (typeof updateLatticeLevel === 'function') updateLatticeLevel();
         }
 
