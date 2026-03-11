@@ -799,24 +799,7 @@ const LIVE_GUARD_REGISTRY = [
         return null; // no gluons seen yet — convergence test stays null
       }
     },
-    // ── T71: _mayReturn lifecycle ──
-    { id: 'T71', name: '_mayReturn lifecycle',
-      check(tick, g) {
-        for (const xon of _demoXons) {
-          if (!xon.alive) continue;
-          // _mayReturn must be false when entering weak mode (checked indirectly:
-          // if _mayReturn is true but xon hasn't left ejection-forbidden zone, it's wrong)
-          if (xon._mode === 'weak' && xon._mayReturn && _ejectionForbidden && _ejectionForbidden.has(xon.node) && !_octNodeSet.has(xon.node)) {
-            return `tick ${tick}: weak xon at node ${xon.node} has _mayReturn=true but is in ejection-forbidden zone`;
-          }
-          // _mayReturn must be false for non-weak modes
-          if (xon._mode !== 'weak' && xon._mayReturn) {
-            return `tick ${tick}: non-weak xon (mode=${xon._mode}) has _mayReturn=true`;
-          }
-        }
-        return null;
-      }
-    },
+    // (T71 removed: _mayReturn no longer used)
     // ── T72: _actualizedTetNodes correctness ──
     { id: 'T72', name: '_actualizedTetNodes correct', convergence: true,
       check(tick, g) {
@@ -857,25 +840,7 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
     // ── T75: Ejected xon movement restriction ──
-    { id: 'T75', name: 'Ejected xon obeys restriction',
-      check(tick, g) {
-        for (const xon of _demoXons) {
-          if (!xon.alive || xon._mode !== 'weak' || !xon._t60Ejected) continue;
-          if (!xon._mayReturn) {
-            // Pre-_mayReturn: must be on ejection-space node (or just ejected and not yet moved)
-            if (_ejectionForbidden && _ejectionForbidden.has(xon.node) && xon._movedThisTick) {
-              return `tick ${tick}: ejected xon at node ${xon.node} in forbidden zone (pre-_mayReturn)`;
-            }
-          } else {
-            // Post-_mayReturn: may be on oct nodes, but NOT on _purelyTetNodes
-            if (_purelyTetNodes && _purelyTetNodes.has(xon.node)) {
-              return `tick ${tick}: returning weak xon at node ${xon.node} on purely-tet node`;
-            }
-          }
-        }
-        return null;
-      }
-    },
+    // (T75 removed: _mayReturn no longer used, weak xons may traverse freely)
     // ── T74: Backtracker uncapped (infrastructure guarantee) ──
     { id: 'T74', name: 'Backtracker uncapped', convergence: true,
       check(tick, g) {

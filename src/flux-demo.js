@@ -775,6 +775,14 @@ function _isValidEjectionTarget(node) {
     _ensureNucleusNodeSet();
     return _ejectionForbidden ? !_ejectionForbidden.has(node) : false;
 }
+// Returns true if a hadron (tet or idle_tet xon) currently occupies this node.
+// Weak xons may traverse actualized tet geometry but must avoid active hadrons.
+function _isHadronOccupied(node) {
+    for (const x of _demoXons) {
+        if (x.alive && x.node === node && (x._mode === 'tet' || x._mode === 'idle_tet')) return true;
+    }
+    return false;
+}
 // ── Cage integrity check: would the cage break without this xon? ──
 // Uses SC set membership to determine if cage SCs remain stable
 // without this xon's participation this tick.
@@ -866,7 +874,7 @@ function _btSaveSnapshot() {
             _loopStep: x._loopStep, col: x.col,
             _movedThisTick: x._movedThisTick, _evictedThisTick: x._evictedThisTick,
             _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
-            _t60Ejected: !!x._t60Ejected, _mayReturn: !!x._mayReturn, _pendingWeakEjection: !!x._pendingWeakEjection,
+            _t60Ejected: !!x._t60Ejected, _weakLeftOct: !!x._weakLeftOct, _pendingWeakEjection: !!x._pendingWeakEjection,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
@@ -881,6 +889,8 @@ function _btSaveSnapshot() {
         pos: pos.map(p => [p[0], p[1], p[2]]),
         // T79 state
         octFullConsecutive: _octFullConsecutive,
+        // Hadron balance counts (must rewind with backtracker for correct T22)
+        demoVisits: _demoVisits ? JSON.parse(JSON.stringify(_demoVisits)) : null,
     };
     _btSnapshots.push(snap);
 }
@@ -908,7 +918,7 @@ function _btRestoreSnapshot(snap) {
         x.alive = s.alive;
         x._highlightT = s._highlightT;
         x._t60Ejected = !!s._t60Ejected;
-        x._mayReturn = !!s._mayReturn;
+        x._weakLeftOct = !!s._weakLeftOct;
         x._pendingWeakEjection = !!s._pendingWeakEjection;
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
         x.trail = s.trail.slice();
@@ -936,6 +946,8 @@ function _btRestoreSnapshot(snap) {
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;
     // Restore T79 state
     if ('octFullConsecutive' in snap) _octFullConsecutive = snap.octFullConsecutive;
+    // Restore hadron balance counts
+    if (snap.demoVisits) _demoVisits = JSON.parse(JSON.stringify(snap.demoVisits));
     // Clear tick-level state
     _moveRecord.clear();
     _moveTrace.length = 0;
@@ -1158,25 +1170,14 @@ function _weakLifecycleExit(xon, reason) {
     }
 }
 
-// ── _mayReturn transition logger ──
-// Logs every _mayReturn state change with context: xon index, node, oct membership, source.
-function _logMayReturn(xon, newVal, source) {
-    const xi = _demoXons.indexOf(xon);
-    const onOct = _octNodeSet && _octNodeSet.has(xon.node);
-    const old = !!xon._mayReturn;
-    if (old === newVal) return; // no actual change
-    console.error(`[_mayReturn] X${xi} ${old}→${newVal} at node ${xon.node} (${xon._mode}${onOct ? ' OCT' : ''}) source="${source}" tick=${_demoTick}`);
-    xon._mayReturn = newVal;
-}
-
 // ── Clear class-specific properties on mode transitions ──
 // Called BEFORE setting new mode to prevent stale properties leaking across classes.
-// weak-class: _t60Ejected, _mayReturn
+// weak-class: _t60Ejected, _weakLeftOct
 // tet-class: _assignedFace, _quarkType, _loopType, _loopSeq, _loopStep, _tetActualized
 function _clearModeProps(xon) {
     xon._t60Ejected = false;
+    xon._weakLeftOct = false;
     xon._pendingWeakEjection = false;
-    _logMayReturn(xon, false, '_clearModeProps');
     xon._tetActualized = false;
 }
 
@@ -1243,7 +1244,6 @@ function _spawnXon(face, quarkType, sign) {
         _mode: 'tet',           // 'tet', 'oct', 'idle_tet', 'weak', or 'gluon'
         _lastDir: null,         // last direction index (0-3) for momentum
         _dirHistory: [],        // direction vector history for T16 test
-        _mayReturn: false,      // weak mode: true after 1+ valid ejection moves
         _dirBalance: new Array(10).fill(0), // xonic movement balance: 4 base + 6 SC dirs
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
@@ -1438,7 +1438,6 @@ function _initPersistentXons() {
             _mode: 'oct_formation',
             _lastDir: initDir,
             _dirHistory: [],
-            _mayReturn: false,
             _dirBalance: new Array(10).fill(0),
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
@@ -1568,7 +1567,6 @@ function _manifestXonPair() {
     xonA.node = nodeA; // bypass interceptor for respawn
     xonA.prevNode = nodeA;
     xonA._mode = 'oct';
-    xonA._mayReturn = false;
     xonA._assignedFace = null;
     xonA._quarkType = null;
     xonA._loopType = null;
@@ -1589,7 +1587,6 @@ function _manifestXonPair() {
     xonB.node = nodeB;
     xonB.prevNode = nodeB;
     xonB._mode = 'oct';
-    xonB._mayReturn = false;
     xonB._assignedFace = null;
     xonB._quarkType = null;
     xonB._loopType = null;
@@ -2017,18 +2014,21 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     let score = 0;
 
     // 1. QUARK TYPE SELECTION (hadronic ratio deficit — weighted 10×)
+    // PRNG jitter diversifies type assignment across backtracker retries
+    // (seed incorporates retry count so each attempt gets different sequence).
     const isProtonFace = A_SET.has(face);
     const primaryType = isProtonFace ? 'pu' : 'nd';
     const secondaryType = isProtonFace ? 'pd' : 'nu';
     const primaryDeficit = _ratioTracker.deficit(primaryType);
     const secondaryDeficit = _ratioTracker.deficit(secondaryType);
+    const jitter = (_sRng() - 0.5) * 0.15;
     let quarkType;
-    if (secondaryDeficit > primaryDeficit + _choreoParams.ratioThreshold) {
+    if (secondaryDeficit > primaryDeficit + _choreoParams.ratioThreshold + jitter) {
         quarkType = secondaryType;
-        score += secondaryDeficit * _choreoParams.ratioDeficitWeight * 10; // 10× hadronic weight
+        score += secondaryDeficit * _choreoParams.ratioDeficitWeight * 10;
     } else {
         quarkType = primaryType;
-        score += Math.max(0, primaryDeficit) * _choreoParams.ratioDeficitWeight * 10; // 10× hadronic weight
+        score += Math.max(0, primaryDeficit) * _choreoParams.ratioDeficitWeight * 10;
     }
 
     // 2. XONIC MOVEMENT BALANCE: score by how much the loop's directions
@@ -3396,7 +3396,7 @@ function _executeOpeningTick(occupied) {
                 // Not on oct node → weak, navigate back via PHASE 0.5
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
-                _logMayReturn(xon, true, 'octFormation_notOnOct');
+                // (removed: _logMayReturn — _mayReturn no longer used)
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
@@ -3439,17 +3439,16 @@ async function demoTick() {
     // Yield to event loop every 32 retries to prevent browser freeze
     if (_btAttempt > 0 && _btAttempt % 32 === 0) await new Promise(r => setTimeout(r, 0));
 
-    // Seed PRNG from tick number — ensures deterministic replay from same snapshot.
-    // Backtracker retries at the same tick get the same random sequence, so
-    // only the exclusion ledger drives different outcomes (not random drift).
-    _sRngSeed(_demoTick);
+    // Seed PRNG from tick number + retry context. The retry count and BFS layer
+    // ensure each backtracker attempt gets a different PRNG sequence, so type
+    // selection, shuffles, and other randomized decisions explore new paths.
+    _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31);
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
     // Revert gluon xons to oct (fresh evaluation each tick per spec §2)
     for (const xon of _demoXons) {
         if (xon.alive && xon._mode === 'gluon') {
             xon._mode = 'oct';
-            xon._mayReturn = false;
             xon.col = 0xffffff;
             if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
         }
@@ -3540,7 +3539,6 @@ async function demoTick() {
         if (!xon.alive) continue;
         if (xon._t60Ejected && xon._mode !== 'weak') {
             xon._mode = 'weak';
-            _logMayReturn(xon, false, 'T60_modeCorrection');
             xon._assignedFace = null;
             xon._quarkType = null;
             xon._loopSeq = null;
@@ -3593,8 +3591,7 @@ async function demoTick() {
                     xon._loopSeq = null;
                     xon._loopStep = 0;
                     xon._tetActualized = false;
-                    xon._t60Ejected = true; // must reach ejection target before returning
-                    _logMayReturn(xon, false, 'phase0_nonActualized');
+                    xon._t60Ejected = true;
                     xon.col = WEAK_FORCE_COLOR;
                     if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                     _weakLifecycleEnter(xon, 'non_actualized_tet');
@@ -3633,7 +3630,6 @@ async function demoTick() {
                     _logChoreo(`X${_demoXons.indexOf(blocker)} idle_tet blocker at n${nextNode} → weak (evicted by X${_demoXons.indexOf(xon)})`);
                     blocker._mode = 'weak';
                     blocker._t60Ejected = true;
-                    _logMayReturn(blocker, false, 'phase0_blockerEvict');
                     blocker._assignedFace = null;
                     blocker._quarkType = null;
                     blocker._loopSeq = null;
@@ -3674,7 +3670,6 @@ async function demoTick() {
                 _logChoreo(`X${_demoXons.indexOf(xon)} evicted (dead end/blocked) → weak`);
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
-                _logMayReturn(xon, false, 'phase0_selfEvict');
                 xon._assignedFace = null;
                 xon._quarkType = null;
                 xon._loopSeq = null;
@@ -3692,78 +3687,26 @@ async function demoTick() {
     const _pT0 = performance.now(); _profPhases.p0 += _pT0 - _pT;
 
     // ── PHASE 0.5: Weak force xon movement ──
-    // Handles ALL weak xon movement (including _t60Ejected).
-    // Pre-_mayReturn: move to ejection-space nodes only (_isValidEjectionTarget).
-    //   After 1+ valid ejection moves, flip _mayReturn = true.
-    // Post-_mayReturn: BFS toward nearest oct node. May enter oct nodes and
-    //   ejection-space nodes. May NOT enter _purelyTetNodes.
-    //   On arrival at oct node → transition to oct mode.
+    // Handles ALL weak xon movement. Weak xons BFS toward nearest oct node.
+    // May traverse any node that isn't hadron-occupied.
+    // On arrival at oct node → transition to oct mode immediately.
     for (const xon of _demoXons) {
         if (!xon.alive || xon._mode !== 'weak') continue;
 
-        // ── Pre-_mayReturn: ejected xons must reach ejection space first ──
-        if (xon._t60Ejected && !xon._mayReturn) {
-            // Already on ejection space node? Flip _mayReturn and proceed to BFS return below.
-            if (_isValidEjectionTarget(xon.node)) {
-                _logMayReturn(xon, true, 'phase0.5_alreadyOnEjectionTarget');
-                // Fall through to post-_mayReturn BFS below
-            } else {
-                // Must move to an ejection-space node
-                // Use full baseNeighbors — weak xons have freedom to roam the full lattice
-                const allNbs = baseNeighbors[xon.node] || [];
-                const recentTrail = new Set(xon.trail ? xon.trail.slice(-6) : []);
-                // Tier 1: ejection target, guard-safe, not in trail, not prevNode
-                let target = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    _isValidEjectionTarget(nb.node) &&
-                    !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
-                    !_swapBlocked(xon.node, nb.node) &&
-                    !_moveViolatesGuards(xon, xon.node, nb.node));
-                // Tier 2: ejection target, guard-safe, not prevNode
-                if (!target) {
-                    target = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                        _isValidEjectionTarget(nb.node) &&
-                        nb.node !== xon.prevNode &&
-                        !_swapBlocked(xon.node, nb.node) &&
-                        !_moveViolatesGuards(xon, xon.node, nb.node));
-                }
-                // Tier 3: ejection target, guard-safe, allow prevNode
-                if (!target) {
-                    target = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                        _isValidEjectionTarget(nb.node) &&
-                        !_swapBlocked(xon.node, nb.node) &&
-                        !_moveViolatesGuards(xon, xon.node, nb.node));
-                }
-                if (target) {
-                    const fromWk = xon.node;
-                    _occDel(occupied, xon.node);
-                    xon.prevNode = xon.node;
-                    xon.node = target.node;
-                    _occAdd(occupied, target.node);
-                    xon._movedThisTick = true;
-                    _moveRecord.set(target.node, fromWk);
-                    _traceMove(xon, fromWk, target.node, 'weakEjection');
-                    _trailPush(xon, target.node, WEAK_FORCE_COLOR);
-                    xon.tweenT = 0;
-                    anyMoved = true;
-                    _weakLifecycleStep(xon);
-                    // Arrived at ejection space — flip _mayReturn
-                    _logMayReturn(xon, true, 'phase0.5_arrivedEjectionSpace');
-                }
-                continue; // done for this xon this tick (whether moved or not)
+        // Already at oct node → becomes oct immediately, UNLESS just ejected
+        // (must leave oct cage first to prevent eject→return oscillation).
+        if (_octNodeSet && _octNodeSet.has(xon.node)) {
+            if (!xon._t60Ejected || xon._weakLeftOct) {
+                _weakLifecycleExit(xon, 'arrived_oct_immediate');
+                _clearModeProps(xon);
+                xon._mode = 'oct';
+                if (_flashEnabled) xon.flashT = 1.0;
+                xon.col = 0xffffff;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                continue;
             }
-        }
-
-        // ── Post-_mayReturn (or non-ejected weak): return to oct cage ──
-        // Weak xon with _mayReturn already at oct node → becomes oct immediately (no capacity gate).
-        // The choreographer is responsible for not over-populating the oct cage.
-        if (xon._mayReturn && _octNodeSet && _octNodeSet.has(xon.node)) {
-            _weakLifecycleExit(xon, 'arrived_oct_immediate');
-            _clearModeProps(xon);
-            xon._mode = 'oct';
-            if (_flashEnabled) xon.flashT = 1.0;
-            xon.col = 0xffffff;
-            if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-            continue;
+            // Ejected and haven't left oct yet — must move off first.
+            // Fall through to BFS which will step toward ejection space.
         }
 
         // Log decision ledger for this weak xon (first attempt only)
@@ -3785,8 +3728,8 @@ async function demoTick() {
             const nbs = baseNeighbors[cur] || [];
             for (const nb of nbs) {
                 if (visited.has(nb.node)) continue;
-                // Post-_mayReturn: may NOT enter actualized tet nodes (active geometry)
-                if (_purelyTetNodes && _purelyTetNodes.has(nb.node)) continue;
+                // Post-_mayReturn: may enter actualized tet nodes unless a hadron is there
+                if (_isHadronOccupied(nb.node)) continue;
                 visited.add(nb.node);
                 const nextStep = step || nb.node;
                 if (_octNodeSet && _octNodeSet.has(nb.node)) {
@@ -3819,6 +3762,10 @@ async function demoTick() {
         }
         if (bestStep !== null) {
             const fromWk = xon.node;
+            // Track when ejected xon leaves oct cage (enables return)
+            if (xon._t60Ejected && _octNodeSet && _octNodeSet.has(fromWk) && !_octNodeSet.has(bestStep)) {
+                xon._weakLeftOct = true;
+            }
             _occDel(occupied, xon.node);
             xon.prevNode = xon.node;
             xon.node = bestStep;
@@ -3830,8 +3777,9 @@ async function demoTick() {
             xon.tweenT = 0;
             anyMoved = true;
             _weakLifecycleStep(xon);
-            // Check if arrived at oct node — transition if _mayReturn and capacity
-            if (_octNodeSet && _octNodeSet.has(bestStep) && xon._mayReturn) {
+            // Check if arrived at oct node — transition immediately (no _mayReturn gate).
+            // Weak xons that reach the oct cage have successfully returned.
+            if (_octNodeSet && _octNodeSet.has(bestStep)) {
                 const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
                 if (octCountNow < OCT_CAPACITY_MAX) {
                     _weakLifecycleExit(xon, 'arrived_oct_bfs');
@@ -3843,35 +3791,38 @@ async function demoTick() {
                 }
             }
         } else {
-            // All BFS steps blocked — try free neighbor (avoiding actualized tet nodes)
+            // All BFS steps blocked — try free neighbor (avoiding hadron-occupied nodes)
             // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
             // — weak xons have freedom to roam the full lattice.
             const allNbs = baseNeighbors[xon.node] || [];
-            const purelyTetFilter = nb => !(_purelyTetNodes && _purelyTetNodes.has(nb.node));
-            // Tier 1: guard-safe, not purelyTet, not in recent trail, not prevNode
+            const hadronFilter = nb => !_isHadronOccupied(nb.node);
+            // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                purelyTetFilter(nb) &&
+                hadronFilter(nb) &&
                 !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
                 !_swapBlocked(xon.node, nb.node) &&
                 !_moveViolatesGuards(xon, xon.node, nb.node));
-            // Tier 2: guard-safe, not purelyTet, not prevNode
+            // Tier 2: guard-safe, no hadron, not prevNode
             if (!freeNb) {
                 freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    purelyTetFilter(nb) &&
+                    hadronFilter(nb) &&
                     nb.node !== xon.prevNode &&
                     !_swapBlocked(xon.node, nb.node) &&
                     !_moveViolatesGuards(xon, xon.node, nb.node));
             }
-            // Tier 3: guard-safe, not purelyTet, allow prevNode
+            // Tier 3: guard-safe, no hadron, allow prevNode
             if (!freeNb) {
                 freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    purelyTetFilter(nb) &&
+                    hadronFilter(nb) &&
                     !_swapBlocked(xon.node, nb.node) &&
                     !_moveViolatesGuards(xon, xon.node, nb.node));
             }
             // No guard bypass — if no guard-safe move exists, xon stays put
             if (freeNb) {
                 const fromWk2 = xon.node;
+                if (xon._t60Ejected && _octNodeSet && _octNodeSet.has(fromWk2) && !_octNodeSet.has(freeNb.node)) {
+                    xon._weakLeftOct = true;
+                }
                 _occDel(occupied, xon.node);
                 xon.prevNode = xon.node;
                 xon.node = freeNb.node;
@@ -3883,7 +3834,7 @@ async function demoTick() {
                 xon.tweenT = 0;
                 anyMoved = true;
                 _weakLifecycleStep(xon);
-                if (_octNodeSet && _octNodeSet.has(freeNb.node) && xon._mayReturn) {
+                if (_octNodeSet && _octNodeSet.has(freeNb.node)) {
                     const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
                     if (octCountNow < OCT_CAPACITY_MAX) {
                         _weakLifecycleExit(xon, 'arrived_oct_detour');
@@ -4038,8 +3989,7 @@ async function demoTick() {
                 xon._loopSeq = null;
                 xon._loopStep = 0;
                 xon._tetActualized = false;
-                xon._t60Ejected = true; // must reach ejection target before returning
-                _logMayReturn(xon, false, 'phase1_nonActualized');
+                xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'non_actualized_tet');
@@ -4218,7 +4168,7 @@ async function demoTick() {
     let octXons = [];
     let octPlans = [];
     {
-    octXons = _demoXons.filter(x => x.alive && (x._mode === 'oct' || x._mode === 'gluon' || (x._mode === 'weak' && !x._mayReturn)) && !x._movedThisTick);
+    octXons = _demoXons.filter(x => x.alive && (x._mode === 'oct' || x._mode === 'gluon' || x._mode === 'weak') && !x._movedThisTick);
     for (const xon of octXons) _occDel(occupied, xon.node);
 
     octPlans = octXons.map(xon => ({
@@ -4430,7 +4380,6 @@ async function demoTick() {
         if (!diverted) {
             plan.xon._mode = 'weak';
             plan.xon._t60Ejected = true;
-            _logMayReturn(plan.xon, false, 'phase2_collisionEject');
             plan.xon.col = WEAK_FORCE_COLOR;
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
@@ -4503,11 +4452,7 @@ async function demoTick() {
                 plan.xon._movedThisTick = true; // prevent double-move in PHASE 3.5/4
                 _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
                 _traceMove(plan.xon, fromNode, plan.xon.node, 'p3oct');
-                // T60: check if ejected weak xon reached ejection target → flip _mayReturn
-                if (plan.xon._t60Ejected && !plan.xon._mayReturn &&
-                    _isValidEjectionTarget(plan.xon.node)) {
-                    _logMayReturn(plan.xon, true, 'phase3_arrivedEjectionTarget');
-                }
+                // (removed: _mayReturn flip — no longer used)
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;
                     plan.xon._solverNeeded = false;
@@ -4585,7 +4530,6 @@ async function demoTick() {
         _clearModeProps(plan.xon);
         plan.xon._mode = 'weak';
         plan.xon._t60Ejected = true;
-        _logMayReturn(plan.xon, true, 'stuckTetEjection');
         plan.xon._assignedFace = null;
         plan.xon._loopSeq = null;
         plan.xon._loopStep = 0;
@@ -4633,7 +4577,6 @@ async function demoTick() {
             xon._pendingWeakEjection = false;
             xon._mode = 'weak';
             xon._t60Ejected = true;
-            _logMayReturn(xon, false, 'pending_weak_offcage');
             xon.col = WEAK_FORCE_COLOR;
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(xon, 'pending_ejection_offcage');
@@ -4642,24 +4585,12 @@ async function demoTick() {
     }
 
     // ── POST-MOVE WEAK→OCT TRANSITION SWEEP ──
-    // Any weak xon with _mayReturn=true that landed on an oct node (via PHASE 2
-    // bipartite matching or any other phase) becomes oct immediately.
-    // This ensures the user's directive: "weak xons become type oct on the turn
-    // that they land on the oct, since it has successfully returned."
+    // Any weak xon that landed on an oct node becomes oct immediately.
     for (const xon of _demoXons) {
         if (!xon.alive) continue;
         if (xon._mode !== 'weak') continue;
-        const onOct = _octNodeSet && _octNodeSet.has(xon.node);
-        if (!xon._mayReturn) {
-            if (onOct) {
-                const xi = _demoXons.indexOf(xon);
-                console.error(`[SWEEP SKIP] X${xi} weak on oct node ${xon.node} but _mayReturn=false — T61 will fire! tick=${_demoTick}`);
-            }
-            continue;
-        }
-        if (!onOct) continue;
+        if (!(_octNodeSet && _octNodeSet.has(xon.node))) continue;
         const xi = _demoXons.indexOf(xon);
-        console.error(`[SWEEP CATCH] X${xi} weak→oct at node ${xon.node} tick=${_demoTick}`);
         _weakLifecycleExit(xon, 'post_move_oct_arrival');
         _clearModeProps(xon);
         xon._mode = 'oct';
