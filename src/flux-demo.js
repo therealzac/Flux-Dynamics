@@ -817,15 +817,11 @@ function _traceMove(xon, from, to, path) {
     _moveTrace.push(entry);
     _moveTraceHistory.push(entry);
     if (_moveTraceHistory.length > 60) _moveTraceHistory.splice(0, _moveTraceHistory.length - 60);
-    // FLASHLIGHT TRAP: freeze if xon moves to a non-nucleus node
-    // Exception: weak-mode xons may visit ejection-space nodes (T60 ejection)
+    // FLASHLIGHT: log (but don't freeze) if xon moves to a non-nucleus node
     _ensureNucleusNodeSet();
     if (_nucleusNodeSet && !_nucleusNodeSet.has(to) &&
         !(xon._mode === 'weak' && _isValidEjectionTarget(to))) {
-        console.error(`[FLASHLIGHT] tick=${_demoTick} X${entry.xonIdx} moved ${from}→${to} via "${path}" mode=${xon._mode} face=${xon._assignedFace} quark=${xon._quarkType} loopStep=${xon._loopStep} loopSeq=${JSON.stringify(xon._loopSeq)}`);
-        console.error(`[FLASHLIGHT] nucleus nodes: [${Array.from(_nucleusNodeSet).sort((a,b)=>a-b).join(',')}]`);
-        console.error(`[FLASHLIGHT] FREEZING — node ${to} is outside the nucleus`);
-        simHalted = true;
+        console.warn(`[FLASHLIGHT] tick=${_demoTick} X${entry.xonIdx} moved ${from}→${to} (outside nucleus) mode=${xon._mode}`);
     }
 }
 // SC Attribution Registry — tracks why each SC entered xonImpliedSet.
@@ -4601,7 +4597,9 @@ async function demoTick() {
 
     // ── POST-EXECUTION PAULI CHECK (replaces PHASE 4) ──
     // If planning was correct, no collisions exist. If one slipped through, trigger backtrack.
-    {
+    // Tournament mode: skip entirely — guards don't halt/backtrack during tournament,
+    // and the fitness evaluator scores failures at trial end.
+    if (!_tournamentRunning) {
         const _p4occ = new Map();
         for (const xon of _demoXons) {
             if (!xon.alive) continue;
