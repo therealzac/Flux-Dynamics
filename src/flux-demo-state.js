@@ -10,6 +10,12 @@ let _tickLog = [];             // lightweight per-tick log for export
 let _tickLogLastGuards = {};   // last full guard state for delta encoding
 let _redoStack = [];           // snapshots saved during rewind for instant step-forward
 let _rlActiveModel = null;     // active RL model for oct scoring (null = use heuristic)
+// PPO training state
+let _ppoTraining = false;       // true during PPO training (enables trajectory collection)
+let _ppoStrategicBuffer = null; // PPOTrajectoryBuffer for strategic decisions
+let _ppoTacticalBuffer = null;  // PPOTrajectoryBuffer for tactical decisions
+let _ppoStrategicAC = null;     // strategic actor-critic during training
+let _ppoTacticalAC = null;      // tactical actor-critic during training
 // T45 bounce guard — prevents A→B→A oscillation for oct AND weak xons.
 // Only tet/idle_tet xons are exempt (actualized hadronic patterns like fork: a→b→a→c→a).
 // Bounces are only allowed in actualized hadronic patterns that require them.

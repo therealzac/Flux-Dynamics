@@ -425,6 +425,14 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     if (typeof _rlStrategicModel !== 'undefined' && _rlStrategicModel &&
         typeof scoreStrategicRL === 'function' && typeof extractStrategicFeatures === 'function') {
         const features = extractStrategicFeatures(xon, face, quarkType, occupied);
+        // PPO training mode: sample from policy + collect trajectory
+        if (typeof _ppoTraining !== 'undefined' && _ppoTraining &&
+            typeof _ppoStrategicBuffer !== 'undefined' && _rlStrategicModel.sampleAction) {
+            const result = _rlStrategicModel.sampleAction(features, 1);
+            _ppoStrategicBuffer.push(features, result.actionIdx, result.logProb, result.value, 1);
+            return { face, quarkType, score: result.value, onFace };
+        }
+        // Inference mode: use forward pass score
         const rlScore = scoreStrategicRL(features, _rlStrategicModel);
         return { face, quarkType, score: rlScore, onFace };
     }
@@ -531,20 +539,43 @@ function _getOctCandidates(xon, occupied, blocked) {
 
     // Score candidates — RL model if available, else xonic movement balance heuristic
     const useRL = _rlActiveModel && typeof extractRLFeatures === 'function' && typeof scoreCandidateRL === 'function';
-    const candidates = [];
+    const usePPO = useRL && typeof _ppoTraining !== 'undefined' && _ppoTraining &&
+        typeof _ppoTacticalBuffer !== 'undefined' && _rlActiveModel.sampleAction;
+    const validNeighbors = [];
     for (const nb of allOctNeighbors) {
-        if (occupied.has(nb.node)) continue; // Pauli: already occupied
-        if (blocked && blocked.has(nb.node)) continue; // Pauli: reserved by another planned move
-        // No bouncing: don't go back to the node we just came from
+        if (occupied.has(nb.node)) continue;
+        if (blocked && blocked.has(nb.node)) continue;
         if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
-        let score;
-        if (useRL) {
-            const features = extractRLFeatures(xon, nb, occupied);
-            score = scoreCandidateRL(features, _rlActiveModel);
-        } else {
-            score = _dirBalanceScore(xon, nb.dirIdx);
+        validNeighbors.push(nb);
+    }
+    const candidates = [];
+    if (usePPO && validNeighbors.length > 0) {
+        // PPO training: extract features for all valid candidates, sample from policy
+        const featuresList = [];
+        for (const nb of validNeighbors) {
+            featuresList.push(extractRLFeatures(xon, nb, occupied));
         }
-        candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
+        // Use first candidate's features as the "state" (simplified — tactical state)
+        // and sample which candidate to prefer
+        const result = _rlActiveModel.sampleAction(featuresList[0], validNeighbors.length);
+        _ppoTacticalBuffer.push(featuresList[0], result.actionIdx, result.logProb, result.value, validNeighbors.length);
+        // Assign scores: sampled action gets highest, rest get decreasing
+        for (let i = 0; i < validNeighbors.length; i++) {
+            const nb = validNeighbors[i];
+            const score = i === result.actionIdx ? 100 : (validNeighbors.length - i);
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
+        }
+    } else {
+        for (const nb of validNeighbors) {
+            let score;
+            if (useRL) {
+                const features = extractRLFeatures(xon, nb, occupied);
+                score = scoreCandidateRL(features, _rlActiveModel);
+            } else {
+                score = _dirBalanceScore(xon, nb.dirIdx);
+            }
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
+        }
     }
 
     // 2-step awareness SCORING — penalize candidates that appear to lack a

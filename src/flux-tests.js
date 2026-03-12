@@ -1799,6 +1799,7 @@ let _tournamentRunning = false;
 let _tournamentVisualsApplied = false;
 let _tournamentTargetTick = 0; // tick at which current trial ends
 let _tournamentCallback = null; // called when trial reaches target tick
+let _tournamentSavedPan = null; // camera position saved at tournament start
 
 // Evaluate fitness from current _demoVisits state.
 // 7 priority metrics aligned with user's optimization goals:
@@ -2078,6 +2079,13 @@ function _startVisualTrial(params, maxTicks) {
 
         // Start the demo — it will run visually using the normal animation loop
         startDemoLoop();
+        // Restore camera (opening choreography skips centering during tournament)
+        if (typeof _tournamentSavedPan !== 'undefined' && _tournamentSavedPan) {
+            panTarget.x = _tournamentSavedPan.x;
+            panTarget.y = _tournamentSavedPan.y;
+            panTarget.z = _tournamentSavedPan.z;
+            applyCamera();
+        }
 
         // Tournament no longer overrides visual settings — preserve user's view
         _tournamentVisualsApplied = true;
@@ -2154,135 +2162,210 @@ function _drawFitnessCurve() {
     ctx.fillText(minFit.toFixed(2), 28, H - 20);
 }
 
-// Main tournament runner — pure RL genome evolution with live fitness curve
+// Main tournament runner — PPO training with live metrics
 async function _runTournament() {
     _tournamentRunning = true;
     _tournamentVisualsApplied = false;
     _rlFitnessCurve = [];
+    const savedPan = { x: panTarget.x, y: panTarget.y, z: panTarget.z };
+    _tournamentSavedPan = savedPan;
 
-    const popEl   = document.getElementById('tournament-pop-size');
-    const genEl   = document.getElementById('tournament-generations');
-    const tickEl  = document.getElementById('tournament-ticks');
-
-    const POP_SIZE    = popEl  ? Math.max(2, parseInt(popEl.value)   || 8) : 8;
-    const GENERATIONS = genEl  ? Math.max(1, parseInt(genEl.value)   || 10) : 10;
-    const ELITE_COUNT = Math.max(1, Math.floor(POP_SIZE / 3));
+    const epochsEl = document.getElementById('tournament-generations');
+    const tickEl   = document.getElementById('tournament-ticks');
+    const EPOCHS   = epochsEl ? Math.max(1, parseInt(epochsEl.value) || 10) : 10;
+    const TICKS_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 500) : 500;
     const statusEl = document.getElementById('tune-status');
-    const titleEl = document.getElementById('rule-title');
+    const titleEl  = document.getElementById('rule-title');
 
-    // Initialize RL — required for this tournament
+    // Initialize RL models
     const rlReady = typeof initRL === 'function' && await initRL();
     if (!rlReady) {
-        if (statusEl) { statusEl.textContent = 'TF.js required for RL training'; statusEl.style.color = '#ff6644'; }
+        if (statusEl) { statusEl.textContent = 'TF.js required for PPO'; statusEl.style.color = '#ff6644'; }
         _tournamentRunning = false;
+        panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
+        applyCamera();
         return;
     }
-    console.log(`[RL Train] Starting: ${GENERATIONS} gens × ${POP_SIZE} pop, genome=${getGenomeSize()} params`);
 
-    // Show fitness canvas
+    // Create actor-critic models for training
+    _ppoStrategicAC = _rlStrategicModel;
+    _ppoTacticalAC = _rlModel;
+    _rlActiveModel = _rlModel;
+
+    // Create Adam optimizers
+    const strategicOptimizer = tf.train.adam(PPO_LEARNING_RATE);
+    const tacticalOptimizer  = tf.train.adam(PPO_LEARNING_RATE);
+
+    // Create trajectory buffers
+    _ppoStrategicBuffer = new PPOTrajectoryBuffer();
+    _ppoTacticalBuffer  = new PPOTrajectoryBuffer();
+
+    // Enable trajectory collection in planner hooks
+    _ppoTraining = true;
+    resetTickRewardState();
+
+    // Show fitness canvas + tensor dashboard
     const fitnessCanvas = document.getElementById('rl-fitness-canvas');
     if (fitnessCanvas) fitnessCanvas.style.display = '';
-
-    // Build initial population of pure genomes
-    let population = [];
-    // Try loading saved genome as seed
-    const saved = await rlLoadGenome();
-    if (saved && saved.genome.length === getGenomeSize()) {
-        population.push({ _rlGenome: saved.genome, ..._choreoParams });
-        console.log(`[RL Train] Seeded with saved genome (fitness=${saved.fitness?.toFixed(3)})`);
-    } else {
-        population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
+    for (const id of ['rl-policy-canvas', 'rl-weights-canvas', 'rl-metrics-canvas']) {
+        const c = document.getElementById(id);
+        if (c) c.style.display = '';
     }
-    for (let i = population.length; i < POP_SIZE; i++) {
-        population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
-    }
+    // Clear metrics history for fresh run
+    if (typeof _ppoMetricsHistory !== 'undefined') _ppoMetricsHistory.length = 0;
 
-    let bestGenome = null;
-    let bestFitnessEver = -Infinity;
-    let bestClean = false;
+    console.log(`[PPO] Starting: ${EPOCHS} epochs × ${TICKS_PER_EPOCH} ticks, rollout=${PPO_ROLLOUT_LENGTH}`);
+    const tensorsBefore = tf.memory().numTensors;
 
-    for (let gen = 0; gen < GENERATIONS; gen++) {
+    let bestFitness = -Infinity;
+    let updateCount = 0;
+
+    for (let epoch = 0; epoch < EPOCHS; epoch++) {
         if (!_tournamentRunning) break;
 
-        const results = [];
-        for (let i = 0; i < population.length; i++) {
+        // Start a fresh demo for this epoch
+        if (typeof stopDemo === 'function') stopDemo();
+        simHalted = false;
+        if (!NucleusSimulator.active) NucleusSimulator.simulateNucleus();
+        startDemoLoop();
+
+        // CRITICAL: Kill the auto-tick loop that startDemoLoop() created.
+        // The PPO training loop drives ticks manually — double-ticking
+        // causes race conditions and Pauli violations.
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+
+        // Suppress live guards & backtracker during PPO training.
+        // Must be set AFTER startDemoLoop() because runDemo3Tests() resets it.
+        // The random policy will violate constraints — that's expected.
+        // The reward signal (not guards) teaches the policy to avoid violations.
+        _testRunning = true;
+
+        // Restore camera
+        panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
+        applyCamera();
+        _tournamentVisualsApplied = true;
+
+        _ppoStrategicBuffer.clear();
+        _ppoTacticalBuffer.clear();
+        resetTickRewardState();
+
+        let epochRewardSum = 0;
+        let epochTicks = 0;
+        let guardFailures = 0;
+
+        // Run ticks for this epoch
+        for (let tick = 0; tick < TICKS_PER_EPOCH; tick++) {
             if (!_tournamentRunning) break;
 
-            const params = population[i];
-            const maxTicks = tickEl ? Math.max(100, parseInt(tickEl.value) || 500) : 500;
-
-            if (statusEl) {
-                const bestStr = bestFitnessEver > -Infinity ? bestFitnessEver.toFixed(3) : '...';
-                statusEl.textContent = `gen ${gen+1}/${GENERATIONS} | ${i+1}/${POP_SIZE} | best=${bestStr}`;
+            // During PPO training, guard halts are non-fatal — reset and penalize
+            if (simHalted) {
+                simHalted = false;
+                guardFailures++;
+                // Heavy penalty for guard failure
+                const penalty = -5.0;
+                epochRewardSum += penalty;
+                _ppoStrategicBuffer.assignReward(penalty);
+                _ppoTacticalBuffer.assignReward(penalty);
+                // Reset guard state so training can continue
+                for (const entry of LIVE_GUARD_REGISTRY) {
+                    const g = _liveGuards[entry.id];
+                    if (g && g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
+                }
+                _liveGuardFailTick = null;
+                _liveGuardDumped = false;
             }
-            if (titleEl) {
-                titleEl.textContent = `RL gen ${gen+1}.${i+1}`;
-                titleEl.dataset.trialLabel = `RL gen ${gen+1}.${i+1}`;
-            }
 
-            const result = await _startVisualTrial(params, maxTicks);
-            results.push({ genome: params._rlGenome, ...result });
+            // Run one tick
+            await new Promise(resolve => {
+                demoTick();
+                // Yield to event loop for rendering
+                setTimeout(resolve, 0);
+            });
 
-            if (result.fitness > bestFitnessEver) {
-                bestFitnessEver = result.fitness;
-                bestGenome = new Float32Array(params._rlGenome);
-                bestClean = result.clean;
+            // Compute reward for this tick
+            const reward = computeTickReward();
+            epochRewardSum += reward;
+            epochTicks++;
+
+            // Assign reward to both buffers
+            _ppoStrategicBuffer.assignReward(reward);
+            _ppoTacticalBuffer.assignReward(reward);
+
+            // PPO update every ROLLOUT_LENGTH ticks
+            if ((tick + 1) % PPO_ROLLOUT_LENGTH === 0) {
+                // Perform PPO update for strategic network
+                let stratMetrics = null, tactMetrics = null;
+                if (_ppoStrategicBuffer.length >= 2 && _ppoStrategicAC) {
+                    const lastVal = 0; // bootstrap with 0 at rollout boundary
+                    stratMetrics = ppoUpdate(_ppoStrategicAC, strategicOptimizer, _ppoStrategicBuffer, lastVal);
+                    console.log(`[PPO] Strategic update #${updateCount}: loss=${stratMetrics.policyLoss.toFixed(4)}`);
+                }
+                // Perform PPO update for tactical network
+                if (_ppoTacticalBuffer.length >= 2 && _ppoTacticalAC) {
+                    const lastVal = 0;
+                    tactMetrics = ppoUpdate(_ppoTacticalAC, tacticalOptimizer, _ppoTacticalBuffer, lastVal);
+                    console.log(`[PPO] Tactical update #${updateCount}: loss=${tactMetrics.policyLoss.toFixed(4)}`);
+                }
+                // Record metrics for tensor dashboard
+                const dashMetrics = tactMetrics || stratMetrics;
+                if (dashMetrics && typeof _ppoRecordMetrics === 'function') {
+                    _ppoRecordMetrics(dashMetrics);
+                }
+                _ppoStrategicBuffer.clear();
+                _ppoTacticalBuffer.clear();
+                updateCount++;
+                // Update tensor dashboard after each PPO update
+                if (typeof _updateTensorDashboard === 'function') _updateTensorDashboard();
             }
         }
 
-        // Sort by fitness
-        results.sort((a, b) => b.fitness - a.fitness);
+        // End of epoch: evaluate fitness
+        const fitness = _evaluateHadronicRatioFitness();
+        const avgReward = epochTicks > 0 ? epochRewardSum / epochTicks : 0;
+        const currentCV = typeof _ppoComputeAvgCV === 'function' ? _ppoComputeAvgCV() : 1;
 
-        const top = results[0];
-        const avgFitness = results.reduce((s, r) => s + r.fitness, 0) / results.length;
-        console.log(`[RL Train] Gen ${gen+1}: best=${top.fitness.toFixed(3)} avg=${avgFitness.toFixed(3)} visits=${top.totalVisits} clean=${top.clean}`);
+        console.log(`[PPO] Epoch ${epoch+1}: fitness=${fitness.fitness.toFixed(3)} avgReward=${avgReward.toFixed(4)} CV=${currentCV.toFixed(3)} guardFails=${guardFailures} tensors=${tf.memory().numTensors}`);
+
+        if (fitness.fitness > bestFitness) {
+            bestFitness = fitness.fitness;
+            // Save best weights
+            await rlSaveWeights(_ppoStrategicAC, _ppoTacticalAC, bestFitness);
+        }
 
         // Update fitness curve
-        _rlFitnessCurve.push({ gen: gen + 1, best: top.fitness, avg: avgFitness });
+        _rlFitnessCurve.push({ gen: epoch + 1, best: bestFitness, avg: fitness.fitness });
         _drawFitnessCurve();
 
-        // Build next generation from genomes only
-        const eliteGenomes = results.slice(0, ELITE_COUNT).map(r => r.genome);
-        population = [];
-        // Elites carry forward
-        for (const g of eliteGenomes) {
-            population.push({ _rlGenome: new Float32Array(g), ..._choreoParams });
+        if (statusEl) {
+            statusEl.textContent = `PPO epoch ${epoch+1}/${EPOCHS} | fitness=${fitness.fitness.toFixed(3)} | best=${bestFitness.toFixed(3)}`;
         }
-        // Crossovers
-        for (let i = 0; i < ELITE_COUNT && population.length < POP_SIZE; i++) {
-            const a = eliteGenomes[i % ELITE_COUNT];
-            const b = eliteGenomes[(i + 1) % ELITE_COUNT];
-            population.push({ _rlGenome: rlCrossoverGenome(a, b), ..._choreoParams });
-        }
-        // Mutations
-        while (population.length < POP_SIZE - 1) {
-            const base = eliteGenomes[Math.floor(Math.random() * ELITE_COUNT)];
-            population.push({ _rlGenome: rlMutateGenome(base), ..._choreoParams });
-        }
-        // One random genome for exploration
-        if (population.length < POP_SIZE) {
-            population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
+        if (titleEl) {
+            titleEl.textContent = `PPO epoch ${epoch+1}`;
+            titleEl.dataset.trialLabel = `PPO epoch ${epoch+1}`;
         }
     }
 
-    // Save and apply best genome
-    if (bestGenome) {
-        await rlSaveGenome(bestGenome, bestFitnessEver);
-        if (!_rlModel) _rlModel = createPolicyModel();
-        if (!_rlStrategicModel) _rlStrategicModel = createStrategicModel();
-        genomeToModel(bestGenome, _rlStrategicModel, _rlModel);
-        _rlActiveModel = _rlModel;
-        console.log(`[RL Train] Best genome saved (fitness=${bestFitnessEver.toFixed(3)}, ${bestGenome.length} params)`);
-    }
+    // Cleanup
+    _ppoTraining = false;
+    _testRunning = false;
+    _ppoStrategicBuffer = null;
+    _ppoTacticalBuffer = null;
+    strategicOptimizer.dispose();
+    tacticalOptimizer.dispose();
+
+    const tensorsAfter = tf.memory().numTensors;
+    console.log(`[PPO] Done. Tensors: ${tensorsBefore} → ${tensorsAfter} (delta=${tensorsAfter - tensorsBefore})`);
 
     if (statusEl) {
-        const tag = bestClean ? ' CLEAN' : '';
-        statusEl.textContent = `done! fitness=${bestFitnessEver.toFixed(3)}${tag}`;
-        statusEl.style.color = bestClean ? '#66dd66' : '#ccaa44';
+        statusEl.textContent = `PPO done! fitness=${bestFitness.toFixed(3)}`;
+        statusEl.style.color = '#66dd66';
     }
 
     _tournamentRunning = false;
     _tournamentVisualsApplied = false;
+    panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
+    applyCamera();
     const tuneBtn = document.getElementById('btn-tune-t22');
     if (tuneBtn) { tuneBtn.textContent = 'train RL'; tuneBtn.style.borderColor = '#aa8844'; }
 

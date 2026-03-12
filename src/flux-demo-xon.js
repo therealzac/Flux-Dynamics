@@ -239,6 +239,8 @@ function _advanceXon(xon) {
             _demoVisits[xon._assignedFace][xon._quarkType]++;
             _demoVisits[xon._assignedFace].total++;
         }
+        // PPO reward signal: tet loop completion
+        if (typeof _ppoTetCompletionsThisTick !== 'undefined') _ppoTetCompletionsThisTick++;
     }
 
     // Push trail history + per-segment color, start tween

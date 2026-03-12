@@ -307,6 +307,15 @@
                 </div>
                 <canvas id="rl-fitness-canvas" width="260" height="100"
                     style="display:none; position:static; margin-top:6px; border:1px solid rgba(170,136,68,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
+                <!-- Tensor Dashboard: policy heatmap -->
+                <canvas id="rl-policy-canvas" width="260" height="120"
+                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(100,180,255,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
+                <!-- Tensor Dashboard: weight distributions -->
+                <canvas id="rl-weights-canvas" width="260" height="80"
+                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(100,255,180,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
+                <!-- Tensor Dashboard: training metrics -->
+                <canvas id="rl-metrics-canvas" width="260" height="100"
+                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(255,180,100,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
             </div>
             <!-- Nucleus info (shown during simulation) -->
             <div id="nucleus-info" style="display:none; margin-top:6px; border-top:1px solid #4a3a1a;
@@ -377,21 +386,21 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=7"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=11"></script>
-    <script src="src/flux-demo-xon.js?v=2"></script>
+    <script src="src/flux-demo-state.js?v=12"></script>
+    <script src="src/flux-demo-xon.js?v=3"></script>
     <script src="src/flux-demo-backtrack.js?v=5"></script>
-    <script src="src/flux-demo-planner.js?v=7"></script>
+    <script src="src/flux-demo-planner.js?v=8"></script>
     <script src="src/flux-demo-ui.js?v=14"></script>
-    <script src="src/flux-demo.js?v=329"></script>
+    <script src="src/flux-demo.js?v=331"></script>
     <script src="src/flux-solver-render.js?v=25"></script>
     <script src="src/flux-tournament.js?v=9"></script>
-    <script src="src/flux-rl.js?v=3"></script>
+    <script src="src/flux-rl.js?v=7"></script>
     <script src="src/flux-ui.js?v=11"></script>
     <script src="src/flux-electrons.js?v=14"></script>
     <script src="src/flux-voids.js?v=12"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=33"></script>
-    <script src="src/flux-tests.js?v=193"></script>
+    <script src="src/flux-tests.js?v=199"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

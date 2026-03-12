@@ -1151,7 +1151,7 @@ function startDemoLoop() {
         if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
 
         // Center camera on bosonic cage (oct node centroid) at eye level
-        if (_octNodeSet && _octNodeSet.size > 0 && pos) {
+        if (_octNodeSet && _octNodeSet.size > 0 && pos && !_tournamentRunning) {
             let cx = 0, cy = 0, cz = 0, count = 0;
             for (const n of _octNodeSet) {
                 if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
@@ -2703,7 +2703,10 @@ async function demoTick() {
     if (_advanceGluons()) _solverNeeded = true;
 
     // ── Run solver if any SCs changed (unified architecture) ──
-    if (_solverNeeded) _planckSeconds++;
+    if (_solverNeeded) {
+        _planckSeconds++;
+        if (typeof _ppoDeformationThisTick !== 'undefined') _ppoDeformationThisTick = true;
+    }
     if (_solverNeeded) {
         bumpState();
         const scPairs = [];
