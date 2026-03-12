@@ -24,6 +24,7 @@ const S_COLOR_CSS = {1:'#c69bc2',2:'#c3ac74',3:'#ff8d5d',4:'#c3c467',5:'#c6b5ba'
 // ─── All mutable state — declared early to prevent TDZ errors ─────────────────
 // Any let/const used before its natural source position must live here.
 let latticeLevel = 2;
+let _nucleusOctCentered = false;
 let simHalted = false;
 let selectMode = false;
 let stateVersion = 0;

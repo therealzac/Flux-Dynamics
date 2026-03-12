@@ -295,6 +295,7 @@ const NucleusSimulator = (function(){
 
         // 1. Use current lattice slider value (set by _setDemoLattice or default)
         // Do NOT hardcode — lattice toggle buttons set the slider before calling this
+        _nucleusOctCentered = true; // center lattice around oct cage, not single node
         if(typeof updateLatticeLevel === 'function') updateLatticeLevel();
 
         // 2. Clear state

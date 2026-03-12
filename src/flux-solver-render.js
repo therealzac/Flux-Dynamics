@@ -392,18 +392,26 @@ function inferStype(va,vb){
 
 // ─── Dynamic lattice geometry ─────────────────────────────────────────────────
 let N, REST, pos, BASE_EDGES, ALL_SC, SC_BY_ID, scByVert, REPULSION_PAIRS;
-function getLattice(level){
+function getLattice(level, seeds){
     const cells=new Map(), key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
-    cells.set(key([0,0,0]),[0,0,0]);
-    const q=[[0,0,0,0]];
+    const startSeeds = seeds || [[0,0,0]];
+    const q=[];
+    for(const s of startSeeds){ const k=key(s); if(!cells.has(k)){ cells.set(k,s); q.push([...s,0]); } }
     while(q.length){
         const [cx,cy,cz,d]=q.shift(); if(d>=level-1) continue;
         for(const [dx,dy,dz] of LATTICE_OFFSETS){ const p=[cx+dx,cy+dy,cz+dz],k=key(p); if(!cells.has(k)){ cells.set(k,p); q.push([...p,d+1]); } }
     }
     return [...cells.values()];
 }
-function rebuildLatticeGeometry(level){
-    const cells=getLattice(level);
+function rebuildLatticeGeometry(level, octCentered){
+    // Oct-centered: superimpose 6 lattices, one centered at each oct vertex
+    let cells;
+    if(octCentered){
+        const seeds = UNIT_REST.slice(1,7); // 6 oct vertex positions: [±r4,0,0], [0,±r4,0], [0,0,±r4]
+        cells = getLattice(level, seeds);
+    } else {
+        cells = getLattice(level);
+    }
     restCellCenters=cells; // [0,0,0] of each cell = cell center in global coords
     const vmap=new Map(); const verts=[];
     for(const [cx,cy,cz] of cells) for(const [rx,ry,rz] of UNIT_REST){
@@ -937,7 +945,7 @@ function updateLatticeLevel(){
     document.getElementById('lattice-lv').textContent='L'+latticeLevel;
     activeSet.clear(); impliedSet.clear(); impliedBy.clear(); xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
-    rebuildLatticeGeometry(latticeLevel);
+    rebuildLatticeGeometry(latticeLevel, _nucleusOctCentered);
     _solveCache = { key: -1, len: -1, result: null }; // invalidate solve cache
     if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildScPairLookup();
