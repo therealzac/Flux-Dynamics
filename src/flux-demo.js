@@ -856,6 +856,13 @@ function _tickDemoXons(dt) {
                 xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 4);
                 continue;
             }
+            // Weak segments: full alpha so near-black color stays visible on dark bg
+            if (segCol === WEAK_FORCE_COLOR) {
+                xon.trailCol[vi * 3] = cr;
+                xon.trailCol[vi * 3 + 1] = cg;
+                xon.trailCol[vi * 3 + 2] = cb;
+                continue;
+            }
             const baseAlpha = 0.5 + 0.5 * (vi / Math.max(bodyLen, 1)) ** 0.8;
             // Flash boost: head segments get up to 40% brighter during flash
             const headProximity = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
