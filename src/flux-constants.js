@@ -18,8 +18,13 @@ const LATTICE_OFFSETS = [
 // Shortcut colors: RMS blend of their two parent base-direction colors
 //   s1=v1⊕v4  s2=v1⊕v3  s3=v1⊕v2  s4=v2⊕v3  s5=v2⊕v4  s6=v3⊕v4
 const SC_BASE_DIRS = {1:[0,3], 2:[0,2], 3:[0,1], 4:[1,2], 5:[1,3], 6:[2,3]};
-const S_COLOR   = {1:0xC69BC2,2:0xC3AC74,3:0xFF8D5D,4:0xC3C467,5:0xC6B5BA,6:0x6FCEC7};
-const S_COLOR_CSS = {1:'#c69bc2',2:'#c3ac74',3:'#ff8d5d',4:'#c3c467',5:'#c6b5ba',6:'#6fcec7'};
+// Shortcut direction colors — RGB channels sum equally (achromatic balance)
+// Opposite shortcut pairs get complementary colors:
+//   s1(v1⊕v4)=#0073FF blue    ↔ s4(v2⊕v3)=#FF8C00 orange
+//   s2(v1⊕v3)=#FF00A6 pink    ↔ s5(v2⊕v4)=#00FF59 green
+//   s3(v1⊕v2)=#BF00FF purple  ↔ s6(v3⊕v4)=#40FF00 lime
+const S_COLOR   = {1:0x0073FF,2:0xFF00A6,3:0xBF00FF,4:0xFF8C00,5:0x00FF59,6:0x40FF00};
+const S_COLOR_CSS = {1:'#0073ff',2:'#ff00a6',3:'#bf00ff',4:'#ff8c00',5:'#00ff59',6:'#40ff00'};
 
 // ─── All mutable state — declared early to prevent TDZ errors ─────────────────
 // Any let/const used before its natural source position must live here.

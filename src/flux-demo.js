@@ -840,8 +840,8 @@ function _tickDemoXons(dt) {
         }
         const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost * gluonBoost;
         xon.spark.scale.set(pulse, pulse, 1);
-        // Weak sparkles: respect the weak opacity slider
-        xon.sparkMat.opacity = isWeak ? weakOp :
+        // Weak sparkles: respect both weak and xon opacity sliders
+        xon.sparkMat.opacity = isWeak ? weakOp * sparkOp :
             Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
         // Decay highlight timer
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
@@ -1007,7 +1007,7 @@ function _tickDemoXons(dt) {
         xon.trailGeo.attributes.color.needsUpdate = true;
         // Flush weak overlay geometry + drive opacity from slider
         if (xon._weakTrailLine) {
-            xon._weakTrailLine.material.opacity = weakOp;
+            xon._weakTrailLine.material.opacity = weakOp * sparkOp;
             xon._weakTrailLine.geometry.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
             xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
             xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
@@ -1262,39 +1262,9 @@ function startDemoLoop() {
     const dpTitle = document.getElementById('dp-title');
     if (dpTitle) dpTitle.textContent = '0 Planck seconds';
 
-    // Skip visual/camera resets during tournament — preserve user's view between trials
-    if (!_tournamentRunning) {
-        // Demo 3.0 visual setup: opacity defaults
-        const spheresSlider = document.getElementById('sphere-opacity-slider');
-        if (spheresSlider) { spheresSlider.value = 3; spheresSlider.dispatchEvent(new Event('input')); }
-        const shapesSlider = document.getElementById('void-opacity-slider');
-        if (shapesSlider) { shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
-        const graphSlider = document.getElementById('graph-opacity-slider');
-        if (graphSlider) { graphSlider.value = 34; graphSlider.dispatchEvent(new Event('input')); }
-        const trailSlider = document.getElementById('trail-opacity-slider');
-        if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
+    // Camera defaults are set in flux-ui.js — don't override user preferences here.
 
-        // Center camera on bosonic cage (oct node centroid) at eye level
-        if (_octNodeSet && _octNodeSet.size > 0 && pos && !_tournamentRunning) {
-            let cx = 0, cy = 0, cz = 0, count = 0;
-            for (const n of _octNodeSet) {
-                if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
-            }
-            if (count > 0) {
-                panTarget.x = cx / count;
-                panTarget.y = cy / count;
-                panTarget.z = cz / count;
-            }
-        }
-        applyCamera();
-    }
-
-    // Default to maximum speed (uncapped)
-    const speedSlider = document.getElementById('excitation-speed-slider');
-    if (speedSlider) { speedSlider.value = 100; speedSlider.dispatchEvent(new Event('input')); }
-    // Default lifespan: visible trail length (how many of 50 stored ticks to show)
-    const lifespanSlider = document.getElementById('tracer-lifespan-slider');
-    if (lifespanSlider) { lifespanSlider.value = 50; lifespanSlider.dispatchEvent(new Event('input')); }
+    // Speed and trail lifespan defaults are set in HTML — don't override here.
     // Spawn 6 persistent xons at center node
     _initPersistentXons();
     _nucleusNodeSet = null; // reset so lazy builder re-runs on next demo
@@ -1454,19 +1424,7 @@ function _executeOpeningTick(occupied) {
         _octNodeSet = chosen.octNodes;
         _octSCIds = chosen.cageSCIds;
 
-        // Center camera on the oct centroid (never shift the lattice itself)
-        if (_octNodeSet.size > 0 && pos && !_tournamentRunning) {
-            let cx = 0, cy = 0, cz = 0, count = 0;
-            for (const n of _octNodeSet) {
-                if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
-            }
-            if (count > 0) {
-                panTarget.x = cx / count;
-                panTarget.y = cy / count;
-                panTarget.z = cz / count;
-                applyCamera();
-            }
-        }
+        // Camera position set at demo start — don't override here.
 
         // Chain-walk equator into cycle order
         const eq = chosen.equator.slice();

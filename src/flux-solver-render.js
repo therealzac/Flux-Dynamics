@@ -1040,7 +1040,9 @@ const BASE_DIR_V = [
     new THREE.Vector3(1,1,1).normalize(), new THREE.Vector3(1,-1,-1).normalize(),
     new THREE.Vector3(-1,1,-1).normalize(), new THREE.Vector3(-1,-1,1).normalize(),
 ];
-const BASE_COLORS = [0xff6b6b,0xffa94d,0x69db7c,0x74c0fc];
+// Base direction colors — chosen so RGB channels sum equally (achromatic balance)
+// v1=#00FFF2 (cyan), v2=#2600FF (blue-violet), v3=#FF000D (red), v4=#D9FF00 (yellow-green)
+const BASE_COLORS = [0x00FFF2, 0x2600FF, 0xFF000D, 0xD9FF00];
 const VOID_TET_COLOR = 0xaaaaaa;
 const VOID_OCT_COLOR = 0xffffff;
 function edgeDirIdx(i,j){
@@ -1140,6 +1142,7 @@ function updateLatticeLevel(){
     // Force full rebuild (lattice geometry changed — edge count differs)
     if(_baseLineObj){ scene.remove(_baseLineObj); _baseLineObj.geometry.dispose(); _baseLineObj=null; _baseLineMat=null; }
     rebuildVoidSpheres();
+    if (typeof buildBranes === 'function') buildBranes();
     rebuildBaseLines();
     rebuildShortcutLines();
     applySphereOpacity();
@@ -1348,6 +1351,7 @@ function startRenderLoop(){
         if(_demoActive) _tickDemoXons(dt);
         if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
+        if (typeof updateBraneHighlights === 'function') updateBraneHighlights();
         tickOctVoids();
         renderer.render(scene, camera);
     })();

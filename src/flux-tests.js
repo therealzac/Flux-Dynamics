@@ -1751,6 +1751,47 @@ function runDemo3Tests() {
         }
     });
 
+    // Rewind all the way to t=0
+    document.getElementById('btn-rewind-start')?.addEventListener('click', function() {
+        if (!_demoActive) return;
+        if (_demoReversing) stopReverse();
+        if (!_demoPaused) pauseDemo();
+        // Pop all snapshots into redo stack until we reach t=0
+        while (_btSnapshots.length > 0 && _demoTick > 0) {
+            _btSaveSnapshot();
+            _redoStack.push(_btSnapshots.pop());
+            const snap = _btSnapshots.pop();
+            if (!snap) break;
+            _btRestoreSnapshot(snap);
+        }
+        simHalted = false;
+        _bfsReset(); _btReset();
+        if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+        _tickLog.length = 0;
+        _playbackUpdateDisplay();
+        const pb = document.getElementById('btn-nucleus-pause');
+        if (pb) pb.textContent = '\u25B6';
+    });
+
+    // Fast-forward: drain redo stack instantly, then pause
+    document.getElementById('btn-forward-end')?.addEventListener('click', function() {
+        if (!_demoActive) return;
+        if (_demoReversing) stopReverse();
+        if (!_demoPaused) pauseDemo();
+        // Restore all redo snapshots instantly
+        while (_redoStack.length > 0) {
+            _btSaveSnapshot();
+            const snap = _redoStack.pop();
+            _btRestoreSnapshot(snap);
+        }
+        simHalted = false;
+        _bfsReset(); _btReset();
+        if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+        _playbackUpdateDisplay();
+        const pb = document.getElementById('btn-nucleus-pause');
+        if (pb) pb.textContent = '\u25B6';
+    });
+
     document.getElementById('btn-export-log')?.addEventListener('click', function() {
         exportTickLog();
     });
@@ -2019,28 +2060,9 @@ function _tournamentTickCheck() {
     }
 }
 
-// Start a visual trial: apply params, start demo, resolve when target tick reached.
+// Start a visual trial: no longer overrides user slider defaults.
 function _applyTournamentVisuals() {
-    // Tournament visual presets: clean view focused on xon choreography
-    const presets = {
-        'sphere-opacity-slider': 5,    // spheres: 5%
-        'void-opacity-slider': 34,     // shapes: 34%
-        'graph-opacity-slider': 34,    // graph: 34%
-        'trail-opacity-slider': 100,   // xons: 100%
-        'tracer-lifespan-slider': 34,  // lifespan: 34
-    };
-    for (const [id, val] of Object.entries(presets)) {
-        const el = document.getElementById(id);
-        if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
-    }
-    // Orbit: enable at 34% rate
-    const orbitSlider = document.getElementById('orbit-speed-slider');
-    if (orbitSlider) { orbitSlider.value = 34; orbitSlider.dispatchEvent(new Event('input')); }
-    if (typeof _autoOrbit !== 'undefined') _autoOrbit = true;
-    const orbitVal = document.getElementById('orbit-speed-val');
-    if (orbitVal) { orbitVal.textContent = '34%'; orbitVal.style.color = '#9abccc'; }
-    const orbitToggle = document.getElementById('orbit-toggle');
-    if (orbitToggle) orbitToggle.style.color = '#d4a054';
+    // Respect user's slider settings — don't override during tournament/training.
 }
 
 function _startVisualTrial(params, maxTicks) {

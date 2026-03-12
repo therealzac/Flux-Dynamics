@@ -703,6 +703,217 @@ document.getElementById('weak-opacity-slider').addEventListener('input',()=>{
     const pct=+document.getElementById('weak-opacity-slider').value;
     document.getElementById('weak-opacity-val').textContent=pct+'%';
 });
+// ═══ BRANE LAYER — Planar slices through FCC lattice ═══════════════════════
+// 6 plane families, one per shortcut type.  Each plane is spanned by a pair
+// of base directions; the plane normal IS the corresponding shortcut direction.
+// Perpendicular plane pairs automatically receive complementary SC colors.
+
+let _braneMeshes = [];   // THREE.Mesh[], one per stype
+let _braneVertMeta = [];  // per-mesh: [{nodes:[nodeIdx,...], falloff, br, bg, bb}, ...] per vertex
+
+function _cross3(a, b) {
+    return [a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x];
+}
+
+function _grahamHull2D(pts) {
+    // Returns convex hull indices in CCW order (Graham scan)
+    if (pts.length < 3) return pts.map((_, i) => i);
+    // Find bottom-most (then left-most) point
+    let p0 = 0;
+    for (let i = 1; i < pts.length; i++) {
+        if (pts[i][1] < pts[p0][1] || (pts[i][1] === pts[p0][1] && pts[i][0] < pts[p0][0])) p0 = i;
+    }
+    const anchor = pts[p0];
+    const idxs = [];
+    for (let i = 0; i < pts.length; i++) if (i !== p0) idxs.push(i);
+    // Sort by polar angle from anchor
+    idxs.sort((a, b) => {
+        const ax = pts[a][0] - anchor[0], ay = pts[a][1] - anchor[1];
+        const bx = pts[b][0] - anchor[0], by = pts[b][1] - anchor[1];
+        const cross = ax * by - ay * bx;
+        if (Math.abs(cross) > 1e-12) return -cross; // CCW first
+        // Collinear: closer first
+        return (ax*ax + ay*ay) - (bx*bx + by*by);
+    });
+    const stack = [p0];
+    for (const idx of idxs) {
+        while (stack.length > 1) {
+            const t = stack[stack.length - 1], t2 = stack[stack.length - 2];
+            const cross = (pts[t][0]-pts[t2][0])*(pts[idx][1]-pts[t2][1])
+                        - (pts[t][1]-pts[t2][1])*(pts[idx][0]-pts[t2][0]);
+            if (cross > 1e-12) break;
+            stack.pop();
+        }
+        stack.push(idx);
+    }
+    return stack;
+}
+
+function buildBranes() {
+    disposeBranes();
+    if (typeof N === 'undefined' || N === 0 || typeof REST === 'undefined') return;
+
+    const slider = document.getElementById('brane-opacity-slider');
+    // Slider 0–100 maps to 0.0%–10.0%
+    const baseOp = slider ? (+slider.value / 10) / 100 : 0.03;
+
+    for (let stype = 1; stype <= 6; stype++) {
+        const dirs = SC_BASE_DIRS[stype]; // [i, j] base direction indices
+        const va = BASE_DIR_V[dirs[0]], vb = BASE_DIR_V[dirs[1]];
+        // Plane normal = cross product of the two base directions
+        const nc = _cross3(va, vb);
+        const nm = Math.sqrt(nc[0]*nc[0] + nc[1]*nc[1] + nc[2]*nc[2]);
+        const nx = nc[0]/nm, ny = nc[1]/nm, nz = nc[2]/nm;
+
+        // Project all nodes onto normal, group by projection value
+        const projMap = new Map(); // rounded d → [nodeIdx, ...]
+        for (let k = 0; k < N; k++) {
+            const d = REST[k][0]*nx + REST[k][1]*ny + REST[k][2]*nz;
+            const key = Math.round(d * 1e4); // tolerance ~1e-4
+            if (!projMap.has(key)) projMap.set(key, []);
+            projMap.get(key).push(k);
+        }
+
+        // Build orthonormal basis in the plane
+        // u = normalize(va), w = cross(n, u)
+        const ux = va.x, uy = va.y, uz = va.z; // already normalized
+        const wx = ny*uz - nz*uy, wy = nz*ux - nx*uz, wz = nx*uy - ny*ux;
+
+        // Base color components (normalized 0–1)
+        const hex = S_COLOR[stype];
+        const br = ((hex >> 16) & 0xff) / 255;
+        const bg = ((hex >> 8) & 0xff) / 255;
+        const bb = (hex & 0xff) / 255;
+
+        // Collect all triangle vertices + vertex colors + metadata across all slices
+        const triVerts = [];
+        const triColors = [];
+        const vertMeta = []; // per-vertex: {nodes:[nodeIdx,...], br, bg, bb}
+
+        for (const [, nodeIdxs] of projMap) {
+            if (nodeIdxs.length < 3) continue;
+
+            // Project to 2D plane coordinates
+            const pts2D = [];
+            for (const ni of nodeIdxs) {
+                const px = REST[ni][0], py = REST[ni][1], pz = REST[ni][2];
+                pts2D.push([px*ux + py*uy + pz*uz, px*wx + py*wy + pz*wz]);
+            }
+
+            // Convex hull
+            const hull = _grahamHull2D(pts2D);
+            if (hull.length < 3) continue;
+
+            // Fan triangulate from centroid
+            let cx3 = 0, cy3 = 0, cz3 = 0;
+            const hullNodes = hull.map(hi => nodeIdxs[hi]);
+            for (const ni of hullNodes) {
+                cx3 += REST[ni][0]; cy3 += REST[ni][1]; cz3 += REST[ni][2];
+            }
+            cx3 /= hull.length; cy3 /= hull.length; cz3 /= hull.length;
+
+            for (let h = 0; h < hull.length; h++) {
+                const h2 = (h + 1) % hull.length;
+                const a = hullNodes[h], b = hullNodes[h2];
+
+                // Centroid vertex (associated with all hull nodes)
+                triVerts.push(cx3, cy3, cz3);
+                triColors.push(br, bg, bb);
+                vertMeta.push({nodes: hullNodes, br, bg, bb});
+                // Vertex A
+                triVerts.push(REST[a][0], REST[a][1], REST[a][2]);
+                triColors.push(br, bg, bb);
+                vertMeta.push({nodes: [a], br, bg, bb});
+                // Vertex B
+                triVerts.push(REST[b][0], REST[b][1], REST[b][2]);
+                triColors.push(br, bg, bb);
+                vertMeta.push({nodes: [b], br, bg, bb});
+            }
+        }
+
+        if (triVerts.length === 0) continue;
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(triVerts, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(triColors, 3));
+        geo.computeVertexNormals();
+
+        const mat = new THREE.MeshBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: baseOp,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 0;
+        scene.add(mesh);
+        _braneMeshes.push(mesh);
+        _braneVertMeta.push(vertMeta);
+    }
+}
+
+function updateBraneOpacity() {
+    const slider = document.getElementById('brane-opacity-slider');
+    if (!slider) return;
+    // Slider 0–100 maps to 0.0%–10.0% opacity (0.1% per tick)
+    const pct = +slider.value / 10;          // 0.0 – 10.0
+    const op = pct / 100;                    // 0.000 – 0.100
+    document.getElementById('brane-opacity-val').textContent = pct.toFixed(1) + '%';
+    for (const mesh of _braneMeshes) {
+        mesh.material.opacity = op;
+        mesh.visible = op > 0;
+    }
+}
+
+// Per-frame: compute node displacements, highlight deformed brane segments
+function updateBraneHighlights() {
+    if (typeof pos === 'undefined' || typeof REST === 'undefined' || typeof N === 'undefined') return;
+    if (_braneMeshes.length === 0) return;
+
+    const disp = new Float32Array(N);
+    for (let k = 0; k < N; k++) {
+        const dx = pos[k][0] - REST[k][0], dy = pos[k][1] - REST[k][1], dz = pos[k][2] - REST[k][2];
+        disp[k] = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    }
+
+    const DEFORM_THRESH = 0.005;
+    for (let mi = 0; mi < _braneMeshes.length; mi++) {
+        const mesh = _braneMeshes[mi];
+        const meta = _braneVertMeta[mi];
+        if (!meta) continue;
+        const colAttr = mesh.geometry.attributes.color;
+        const colArr = colAttr.array;
+
+        for (let vi = 0; vi < meta.length; vi++) {
+            const m = meta[vi];
+            let maxD = 0;
+            for (const ni of m.nodes) {
+                if (disp[ni] > maxD) maxD = disp[ni];
+            }
+            const boost = maxD > DEFORM_THRESH ? Math.min(2, 1 + maxD / DEFORM_THRESH) : 1;
+            colArr[vi * 3]     = m.br * boost;
+            colArr[vi * 3 + 1] = m.bg * boost;
+            colArr[vi * 3 + 2] = m.bb * boost;
+        }
+        colAttr.needsUpdate = true;
+    }
+}
+
+function disposeBranes() {
+    for (const mesh of _braneMeshes) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+    }
+    _braneMeshes = [];
+    _braneVertMeta = [];
+}
+
+document.getElementById('brane-opacity-slider').addEventListener('input', updateBraneOpacity);
+
 document.getElementById('btn-add-excitation').addEventListener('click',toggleExcitationPlacement);
 // Big bang button handled by V2 dropdown menu in post-load script
 document.getElementById('btn-select-mode').addEventListener('click',toggleSelectMode);

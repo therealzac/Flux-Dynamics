@@ -22,7 +22,7 @@
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
         /* Right panel shell */
-        #side-panel { position: fixed; top: 16px; right: 16px; width: 240px;
+        #side-panel { position: fixed; top: 16px; right: 16px; width: 275px;
             display: flex; flex-direction: column; gap: 0;
             font-size: 12px; letter-spacing: 0.06em; color: #8aacbf;
             user-select: none;
@@ -46,7 +46,7 @@
         #bottom-stats span { color: #8aacbf; }
 
         /* Sliders + controls */
-        #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; pointer-events: all; }
+        #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 4px; margin-bottom: 7px; pointer-events: all; }
         .ctrl-label { font-size: 11px; color: #7a9ab0; width: 52px; flex-shrink: 0;
             letter-spacing: 0.1em; text-transform: uppercase; }
         .ctrl-val { font-size: 11px; color: #9abccc; min-width: 30px; text-align: right; letter-spacing: 0.05em; }
@@ -57,6 +57,11 @@
             border-radius: 50%; background: #5090b8; border: 1px solid #80c0e0;
             cursor: pointer; transition: background 0.15s; }
         .ctrl-slider::-webkit-slider-thumb:hover { background: #70b8e8; }
+        .ctrl-step-btn { background: none; border: none; color: #5a7a90;
+            font-size: 9px; width: 12px; height: 14px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; padding: 0;
+            line-height: 1; flex-shrink: 0; user-select: none; }
+        .ctrl-step-btn:hover { color: #aadcf0; }
 
         /* Jiggle row */
         /* jiggle/big-bang styles removed */
@@ -216,6 +221,11 @@
             <span id="void-opacity-val" class="ctrl-val">13%</span>
         </div>
         <div class="ctrl-row">
+            <span class="ctrl-label">branes</span>
+            <input type="range" id="brane-opacity-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
+            <span id="brane-opacity-val" class="ctrl-val">2.0%</span>
+        </div>
+        <div class="ctrl-row">
             <span class="ctrl-label">graph</span>
             <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
             <span id="graph-opacity-val" class="ctrl-val">13%</span>
@@ -272,12 +282,16 @@
             </div>
             <div id="playback-controls" style="display:none; margin-top:4px;">
                 <div style="display:flex; gap:3px;">
+                    <button class="action-btn" id="btn-rewind-start"
+                        style="flex:0 0 auto; padding:5px 6px;" title="Rewind to t=0">|&#9664;&#9664;</button>
                     <button class="action-btn" id="btn-reverse"
                         style="flex:0 0 auto; padding:5px 6px;" title="Reverse playback">&#9664;&#9664;</button>
                     <button class="action-btn" id="btn-step-back"
                         style="flex:0 0 auto; padding:5px 6px;" title="Step back 1 tick">&#9664;|</button>
                     <button class="action-btn" id="btn-step-forward"
                         style="flex:0 0 auto; padding:5px 6px;" title="Step forward 1 tick">|&#9654;</button>
+                    <button class="action-btn" id="btn-forward-end"
+                        style="flex:0 0 auto; padding:5px 6px;" title="Fast-forward to latest">&#9654;&#9654;|</button>
                     <button class="action-btn" id="btn-export-log"
                         style="flex:1; padding:5px 6px; border-color:#aa8844; color:#ccaa66;"
                         title="Export tick log as JSON">export</button>
@@ -397,16 +411,16 @@
     <script src="src/flux-demo-backtrack.js?v=5"></script>
     <script src="src/flux-demo-planner.js?v=8"></script>
     <script src="src/flux-demo-ui.js?v=15"></script>
-    <script src="src/flux-demo.js?v=336"></script>
-    <script src="src/flux-solver-render.js?v=26"></script>
+    <script src="src/flux-demo.js?v=338"></script>
+    <script src="src/flux-solver-render.js?v=30"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=9"></script>
-    <script src="src/flux-ui.js?v=12"></script>
+    <script src="src/flux-ui.js?v=13"></script>
     <script src="src/flux-electrons.js?v=15"></script>
-    <script src="src/flux-voids.js?v=13"></script>
+    <script src="src/flux-voids.js?v=21"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=35"></script>
-    <script src="src/flux-tests.js?v=202"></script>
+    <script src="src/flux-tests.js?v=203"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -416,6 +430,7 @@
     if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildSphereMeshes();
     rebuildVoidSpheres();     // must run before edge rendering (sets v.actualized)
+    if(typeof buildBranes==='function') buildBranes();
     rebuildBaseLines();
     rebuildShortcutLines();
     applyCamera();
@@ -423,6 +438,25 @@
     applySphereOpacity();
     updateCandidates(); updateSpheres(); updateStatus();
     startRenderLoop();       // render loop (moved from flux-voids.js)
+
+    // ── Auto-inject ◂/▸ step buttons around every slider ─────────────────
+    document.querySelectorAll('.ctrl-slider').forEach(slider => {
+        const row = slider.closest('.ctrl-row') || slider.parentElement;
+        if (!row) return;
+        const mkBtn = (label, delta) => {
+            const b = document.createElement('button');
+            b.className = 'ctrl-step-btn';
+            b.textContent = label;
+            b.addEventListener('click', () => {
+                const step = +slider.step || 1;
+                slider.value = Math.min(+slider.max, Math.max(+slider.min, +slider.value + delta * step));
+                slider.dispatchEvent(new Event('input', {bubbles: true}));
+            });
+            return b;
+        };
+        slider.before(mkBtn('◂', -1));
+        slider.after(mkBtn('▸', 1));
+    });
     </script>
 </body>
 </html>

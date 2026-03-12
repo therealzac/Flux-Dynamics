@@ -265,8 +265,8 @@ function raycast(e){
 }
 
 // ─── Camera orbit / pan ───────────────────────────────────────────────────────
-let sph={theta:4.714,phi:1.058,r:7.5},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
-let panTarget={x:0,y:0,z:0};
+let sph={theta:6.2791,phi:1.0820,r:15.8867},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
+let panTarget={x:0.0000,y:-0.5774,z:0.0000};
 let isGrabMode=false;
 function applyCamera(){ camera.position.set(panTarget.x+sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),panTarget.y+sph.r*Math.cos(sph.phi),panTarget.z+sph.r*Math.sin(sph.phi)*Math.cos(sph.theta)); camera.lookAt(panTarget.x,panTarget.y,panTarget.z); }
 // DEFERRED to init block in flux-v2.html (depends on camera from flux-solver-render.js)
