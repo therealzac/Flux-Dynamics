@@ -331,9 +331,11 @@ function pauseDemo() {
     _demoPaused = true;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
 }
 function resumeDemo() {
     _demoPaused = false;
+    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     simHalted = false;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
         if (_redoStack.length > 0) {
@@ -380,6 +382,7 @@ function isDemoPaused() {
 function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
+    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     _demoReversing = false;
     if (_reverseInterval) { clearTimeout(_reverseInterval); _reverseInterval = null; }
     _tickLog.length = 0;

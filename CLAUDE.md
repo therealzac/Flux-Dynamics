@@ -1,8 +1,8 @@
 # Flux Dynamics — Claude Context Document
 
-## Git Push Policy
+## Git Push Policy — ABSOLUTE RULE
 
-**NEVER push to GitHub unless the user explicitly tells you to.** Always commit locally and wait for the user's instruction to push.
+**NEVER push to GitHub unless the user EXPLICITLY tells you to in that specific message.** Always commit locally and STOP. Wait for the user to say "push" before running `git push`. Previous instructions to push do NOT carry forward — each push requires a new, explicit instruction. This is a CARDINAL rule with zero exceptions. Even if the user said "push" for a previous commit, you must wait for them to say it again for the next one.
 
 ---
 

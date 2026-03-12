@@ -1124,13 +1124,17 @@ function buildWavefunction() {
     // 5. Material + Mesh
     const sliderEl = document.getElementById('wf-opacity-slider');
     const initOp = sliderEl ? (+sliderEl.value / 100) : 0.2;
-    const mat = new THREE.MeshBasicMaterial({
+    const solid = initOp > 0.5;
+    const mat = new THREE.MeshPhongMaterial({
         vertexColors: true,
         transparent: true,
         opacity: initOp,
         side: THREE.DoubleSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        depthWrite: solid,
+        blending: solid ? THREE.NormalBlending : THREE.AdditiveBlending,
+        emissive: 0x111111,
+        emissiveIntensity: 0.3,
+        shininess: 30,
     });
     _wfMesh = new THREE.Mesh(geo, mat);
     _wfMesh.renderOrder = 1;
@@ -1225,6 +1229,12 @@ function applyWavefunctionOpacity() {
     if (_wfMesh) {
         _wfMesh.material.opacity = op;
         _wfMesh.visible = op > 0;
+        // Above 50% opacity: switch to solid mode (occludes interior).
+        // Same pattern as sphere opacity in applySphereOpacity().
+        const solid = op > 0.5;
+        _wfMesh.material.depthWrite = solid;
+        _wfMesh.material.blending = solid ? THREE.NormalBlending : THREE.AdditiveBlending;
+        _wfMesh.material.needsUpdate = true;
     }
 }
 

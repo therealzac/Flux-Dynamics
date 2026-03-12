@@ -415,11 +415,19 @@ function rebuildLatticeGeometry(level, octCentered){
     const key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
     let cellMap;
     if(octCentered){
-        // Grow shells+2 from origin to overshoot a sphere, then sphere-trim
+        // Grow extra shells from origin to overshoot a sphere, then sphere-trim
         // to produce a lattice with true spherical symmetry around the oct centroid.
-        // shells+1 isn't enough: the cuboctahedral cell growth has thin coverage
-        // in ⟨100⟩ directions, leaving octahedral dents in the boundary.
-        cellMap = expandCells([0,0,0], shells + 2);
+        //
+        // BFS expansion with 12 LATTICE_OFFSETS produces a cuboctahedral shape.
+        // The thinnest direction (axis-aligned) grows at rate 2*r3 per step,
+        // while the thickest (vertex) grows at 2*r3*sqrt(2). Ratio = 1/sqrt(2) ≈ 0.707.
+        // To fill a sphere of circumscribed vertex radius R, the oversized lattice's
+        // inscribed vertex radius must exceed R:
+        //   (shells + extra) * rate_thin - r4 >= shells * rate_thick + r4
+        //   extra >= shells * (sqrt(2) - 1) + 2*r4/rate_thin ≈ shells * 0.414 + 2
+        // Safety margin included for discrete lattice effects.
+        const extra = Math.max(3, Math.ceil(shells * 0.5) + 2);
+        cellMap = expandCells([0,0,0], shells + extra);
     } else {
         cellMap = expandCells([0,0,0], shells);
     }
@@ -1126,7 +1134,29 @@ function rebuildBaseLines(){
 // rebuildBaseLines();
 
 // ─── Lattice level change ─────────────────────────────────────────────────────
+// Update the lattice slider's visual enabled/disabled state.
+// Also hides lattice controls entirely during RL training.
+function _updateLatticeSliderLock(){
+    const slider = document.getElementById('lattice-slider');
+    if(!slider) return;
+    const isRL = typeof _tournamentRunning !== 'undefined' && _tournamentRunning;
+    const locked = (typeof _demoActive !== 'undefined' && _demoActive && !_demoPaused) || isRL;
+    slider.disabled = locked;
+    slider.style.opacity = locked ? '0.4' : '1';
+    // Hide demo lattice toggle (L2/L3/L4 buttons) during RL training
+    const demoToggle = document.getElementById('demo-lattice-toggle');
+    if(demoToggle) demoToggle.style.display = isRL ? 'none' : '';
+}
 function updateLatticeLevel(){
+    // Lock slider during active (non-paused) demo — changing lattice resets everything
+    if(typeof _demoActive !== 'undefined' && _demoActive && !_demoPaused){
+        // Revert slider to current level
+        document.getElementById('lattice-slider').value = latticeLevel;
+        return;
+    }
+    // If demo is paused and user changes lattice, restart demo completely
+    const wasDemo = typeof _demoActive !== 'undefined' && _demoActive && _demoPaused;
+    if(wasDemo && typeof stopDemo === 'function') stopDemo();
     if(jiggleActive) toggleJiggle();
     deactivateBigBang();
     if(placingExcitation) toggleExcitationPlacement();
@@ -1135,7 +1165,10 @@ function updateLatticeLevel(){
     document.getElementById('lattice-lv').textContent='L'+latticeLevel;
     activeSet.clear(); impliedSet.clear(); impliedBy.clear(); xonImpliedSet.clear(); blockedImplied.clear();
     selectedVert=-1; hoveredVert=-1; hoveredSC=-1;
-    rebuildLatticeGeometry(latticeLevel, _nucleusOctCentered);
+    // Always use octCentered=true for spherical lattice symmetry.
+    // The oct-centered mode sphere-trims the lattice around the oct centroid,
+    // producing spherical boundary regardless of whether demo is running.
+    rebuildLatticeGeometry(latticeLevel, true);
     _solveCache = { key: -1, len: -1, result: null }; // invalidate solve cache
     if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildScPairLookup();
@@ -1152,6 +1185,15 @@ function updateLatticeLevel(){
     bumpState();
     resetTemporalK();
     updateCandidates(); updateSpheres(); updateStatus();
+    // If demo was paused and user changed lattice → restart demo at new size
+    if(wasDemo){
+        if(typeof NucleusSimulator !== 'undefined' && NucleusSimulator.simulateNucleus){
+            NucleusSimulator.simulateNucleus();
+            setTimeout(function(){
+                if(NucleusSimulator.active && typeof startDemoLoop === 'function') startDemoLoop();
+            }, 100);
+        }
+    }
 }
 
 // ── SC edge rendering — differential updates (reuse existing line objects) ──

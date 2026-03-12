@@ -497,23 +497,23 @@
     <script src="src/flux-demo-xon.js?v=4"></script>
     <script src="src/flux-demo-backtrack.js?v=5"></script>
     <script src="src/flux-demo-planner.js?v=8"></script>
-    <script src="src/flux-demo-ui.js?v=19"></script>
-    <script src="src/flux-demo.js?v=339"></script>
-    <script src="src/flux-solver-render.js?v=32"></script>
+    <script src="src/flux-demo-ui.js?v=20"></script>
+    <script src="src/flux-demo.js?v=340"></script>
+    <script src="src/flux-solver-render.js?v=35"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=9"></script>
     <script src="src/flux-ui.js?v=14"></script>
     <script src="src/flux-electrons.js?v=15"></script>
-    <script src="src/flux-voids.js?v=24"></script>
+    <script src="src/flux-voids.js?v=25"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=35"></script>
-    <script src="src/flux-tests.js?v=204"></script>
+    <script src="src/flux-tests.js?v=206"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
     // Now that code is split across files, they must run after all files load.
     if(typeof SolverProxy!=='undefined') SolverProxy.init();
-    rebuildLatticeGeometry(1);
+    rebuildLatticeGeometry(latticeLevel, true); // always oct-centered for spherical symmetry
     if(typeof SolverProxy!=='undefined') SolverProxy.initLattice();
     rebuildSphereMeshes();
     rebuildVoidSpheres();     // must run before edge rendering (sets v.actualized)

@@ -1217,6 +1217,7 @@ function startDemoLoop() {
     _demoPrevFaces = new Set();     // Demo 3.1: no previous window faces
     _demoActive = true;
     _demoPaused = false;
+    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
 
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();
