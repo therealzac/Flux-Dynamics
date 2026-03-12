@@ -698,6 +698,11 @@ document.getElementById('trail-opacity-slider').addEventListener('input',()=>{
         document.getElementById('trail-opacity-slider').value;
 });
 
+// Weak force opacity slider label update
+document.getElementById('weak-opacity-slider').addEventListener('input',()=>{
+    const pct=+document.getElementById('weak-opacity-slider').value;
+    document.getElementById('weak-opacity-val').textContent=pct+'%';
+});
 document.getElementById('btn-add-excitation').addEventListener('click',toggleExcitationPlacement);
 // Big bang button handled by V2 dropdown menu in post-load script
 document.getElementById('btn-select-mode').addEventListener('click',toggleSelectMode);

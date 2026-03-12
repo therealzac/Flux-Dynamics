@@ -160,6 +160,10 @@ function _finalCleanupXon(xon) {
     if (xon.trailLine) { scene.remove(xon.trailLine); }
     if (xon.trailGeo) xon.trailGeo.dispose();
     xon.trailLine = null; xon.trailGeo = null;
+    // Clean up weak overlay trail
+    if (xon._weakTrailLine) { scene.remove(xon._weakTrailLine); }
+    if (xon._weakTrailLine && xon._weakTrailLine.geometry) xon._weakTrailLine.geometry.dispose();
+    xon._weakTrailLine = null; xon._weakTrailPos = null; xon._weakTrailCol = null;
     xon._dying = false;
 }
 

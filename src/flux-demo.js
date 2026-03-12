@@ -726,6 +726,8 @@ function _traceMove(xon, from, to, path) {
 // Handles tween interpolation, spark flash, trail rendering, and trail decay.
 function _tickDemoXons(dt) {
     const sparkOp = (+document.getElementById('spark-opacity-slider').value) / 100;
+    const weakOpEl = document.getElementById('weak-opacity-slider');
+    const weakOp = weakOpEl ? (+weakOpEl.value) / 100 : 0.8;
     const demoStepSec = _getDemoIntervalMs() * 0.001;
 
     for (let xi = _demoXons.length - 1; xi >= 0; xi--) {
@@ -741,6 +743,7 @@ function _tickDemoXons(dt) {
                     xon._dying = false;
                     xon._dyingStartTick = null; // reset for T14
                     if (xon.trailLine) xon.trailLine.visible = false;
+                    if (xon._weakTrailLine) xon._weakTrailLine.visible = false;
                 } else {
                     _finalCleanupXon(xon);
                     _demoXons.splice(xi, 1);
@@ -771,6 +774,35 @@ function _tickDemoXons(dt) {
 
         if (!xon.alive || !xon.group) continue;
 
+        // Lazy-create a second trail overlay for weak (near-black) segments.
+        // Main trail stays AdditiveBlending (normal glow); overlay uses NormalBlending
+        // so black pixels are visible against the grey background.
+        if (xon.trailLine && !xon._weakTrailLine) {
+            const wGeo = new THREE.BufferGeometry();
+            const wPos = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+            const wCol = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+            wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
+            wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
+            const wMat = new THREE.LineBasicMaterial({
+                vertexColors: true, transparent: true, opacity: 1.0,
+                depthTest: false, blending: THREE.NormalBlending,
+            });
+            const wLine = new THREE.Line(wGeo, wMat);
+            wLine.renderOrder = 21; // between main trail (20) and spark (22)
+            scene.add(wLine);
+            xon._weakTrailLine = wLine;
+            xon._weakTrailPos = wPos;
+            xon._weakTrailCol = wCol;
+        }
+        // Ensure main trail stays AdditiveBlending always
+        if (xon.trailLine) {
+            const mat = xon.trailLine.material;
+            if (mat.blending !== THREE.AdditiveBlending) {
+                mat.blending = THREE.AdditiveBlending;
+                mat.needsUpdate = true;
+            }
+        }
+
         // ── Live xons: tween + spark + trail ──
         // Tween interpolation (cubic ease-out)
         xon.tweenT = Math.min(1, xon.tweenT + dt / demoStepSec);
@@ -796,10 +828,21 @@ function _tickDemoXons(dt) {
         const flicker = 0.85 + Math.random() * 0.3;
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
         const isGluon = xon.col === GLUON_COLOR;
+        const isWeak = xon._mode === 'weak';
         const gluonBoost = isGluon ? 4.0 : 1.0;
+        // Swap spark blending for weak xons (additive can't show black)
+        if (isWeak && xon.sparkMat.blending !== THREE.NormalBlending) {
+            xon.sparkMat.blending = THREE.NormalBlending;
+            xon.sparkMat.needsUpdate = true;
+        } else if (!isWeak && xon.sparkMat.blending !== THREE.AdditiveBlending) {
+            xon.sparkMat.blending = THREE.AdditiveBlending;
+            xon.sparkMat.needsUpdate = true;
+        }
         const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost * gluonBoost;
         xon.spark.scale.set(pulse, pulse, 1);
-        xon.sparkMat.opacity = Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
+        // Weak sparkles: respect the weak opacity slider
+        xon.sparkMat.opacity = isWeak ? weakOp :
+            Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
         // Decay highlight timer
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
@@ -839,12 +882,27 @@ function _tickDemoXons(dt) {
                     xon.trailCol[vi * 3] = 0;
                     xon.trailCol[vi * 3 + 1] = 0;
                     xon.trailCol[vi * 3 + 2] = 0;
+                    // Also hide on overlay
+                    if (xon._weakTrailPos) {
+                        xon._weakTrailPos[vi * 3] = _spx;
+                        xon._weakTrailPos[vi * 3 + 1] = _spy;
+                        xon._weakTrailPos[vi * 3 + 2] = _spz;
+                        xon._weakTrailCol[vi * 3] = 0;
+                        xon._weakTrailCol[vi * 3 + 1] = 0;
+                        xon._weakTrailCol[vi * 3 + 2] = 0;
+                    }
                     continue;
                 }
             }
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
+            // Mirror position to weak overlay trail
+            if (xon._weakTrailPos) {
+                xon._weakTrailPos[vi * 3] = np[0];
+                xon._weakTrailPos[vi * 3 + 1] = np[1];
+                xon._weakTrailPos[vi * 3 + 2] = np[2];
+            }
             const segCol = (xon.trailColHistory && xon.trailColHistory[i]) || xon.col;
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
@@ -854,14 +912,34 @@ function _tickDemoXons(dt) {
                 xon.trailCol[vi * 3] = Math.min(1, cr * 4);
                 xon.trailCol[vi * 3 + 1] = Math.min(1, cg * 4);
                 xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 4);
+                // Break overlay at gluon segments
+                if (xon._weakTrailPos) {
+                    xon._weakTrailPos[vi * 3] = NaN;
+                    xon._weakTrailPos[vi * 3 + 1] = NaN;
+                    xon._weakTrailPos[vi * 3 + 2] = NaN;
+                }
                 continue;
             }
-            // Weak segments: full alpha so near-black color stays visible on dark bg
+            // Weak segments: render on overlay line (NormalBlending), hide on main (Additive)
             if (segCol === WEAK_FORCE_COLOR) {
-                xon.trailCol[vi * 3] = cr;
-                xon.trailCol[vi * 3 + 1] = cg;
-                xon.trailCol[vi * 3 + 2] = cb;
+                // Main trail: zero out (invisible under additive = fine)
+                xon.trailCol[vi * 3] = 0;
+                xon.trailCol[vi * 3 + 1] = 0;
+                xon.trailCol[vi * 3 + 2] = 0;
+                // Overlay: full color (opacity driven by material uniform, not vertex)
+                if (xon._weakTrailCol) {
+                    xon._weakTrailCol[vi * 3] = cr;
+                    xon._weakTrailCol[vi * 3 + 1] = cg;
+                    xon._weakTrailCol[vi * 3 + 2] = cb;
+                }
                 continue;
+            }
+            // Non-weak segment: break overlay line with NaN positions
+            // (zeroed color still draws black under NormalBlending; NaN skips the segment)
+            if (xon._weakTrailPos) {
+                xon._weakTrailPos[vi * 3] = NaN;
+                xon._weakTrailPos[vi * 3 + 1] = NaN;
+                xon._weakTrailPos[vi * 3 + 2] = NaN;
             }
             const baseAlpha = 0.5 + 0.5 * (vi / Math.max(bodyLen, 1)) ** 0.8;
             // Flash boost: head segments get up to 40% brighter during flash
@@ -891,12 +969,35 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 1] = xon.group.position.y;
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
+                    const headIsWeak = headCol === WEAK_FORCE_COLOR;
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    xon.trailCol[last * 3] = hcr * sparkOp;
-                    xon.trailCol[last * 3 + 1] = hcg * sparkOp;
-                    xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+                    if (headIsWeak) {
+                        // Weak head: hide on main, show on overlay
+                        xon.trailCol[last * 3] = 0;
+                        xon.trailCol[last * 3 + 1] = 0;
+                        xon.trailCol[last * 3 + 2] = 0;
+                    } else {
+                        xon.trailCol[last * 3] = hcr * sparkOp;
+                        xon.trailCol[last * 3 + 1] = hcg * sparkOp;
+                        xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+                    }
+                    // Mirror head to overlay
+                    if (xon._weakTrailPos) {
+                        if (headIsWeak) {
+                            xon._weakTrailPos[last * 3] = xon.group.position.x;
+                            xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
+                            xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;
+                            xon._weakTrailCol[last * 3] = hcr;
+                            xon._weakTrailCol[last * 3 + 1] = hcg;
+                            xon._weakTrailCol[last * 3 + 2] = hcb;
+                        } else {
+                            xon._weakTrailPos[last * 3] = NaN;
+                            xon._weakTrailPos[last * 3 + 1] = NaN;
+                            xon._weakTrailPos[last * 3 + 2] = NaN;
+                        }
+                    }
                 }
             }
         }
@@ -904,6 +1005,13 @@ function _tickDemoXons(dt) {
         xon.trailGeo.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
         xon.trailGeo.attributes.position.needsUpdate = true;
         xon.trailGeo.attributes.color.needsUpdate = true;
+        // Flush weak overlay geometry + drive opacity from slider
+        if (xon._weakTrailLine) {
+            xon._weakTrailLine.material.opacity = weakOp;
+            xon._weakTrailLine.geometry.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
+            xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
+            xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
+        }
     }
 }
 
