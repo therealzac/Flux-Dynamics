@@ -796,7 +796,7 @@ function _tickDemoXons(dt) {
         const flicker = 0.85 + Math.random() * 0.3;
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
         const isGluon = xon.col === GLUON_COLOR;
-        const gluonBoost = isGluon ? 2.0 : 1.0;
+        const gluonBoost = isGluon ? 4.0 : 1.0;
         const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost * gluonBoost;
         xon.spark.scale.set(pulse, pulse, 1);
         xon.sparkMat.opacity = Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
@@ -849,11 +849,11 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Gluon segments: 2x brightness, no alpha fade (stand out from everything)
+            // Gluon segments: 4x brightness, no alpha fade (stand out from everything)
             if (segCol === GLUON_COLOR) {
-                xon.trailCol[vi * 3] = Math.min(1, cr * 2);
-                xon.trailCol[vi * 3 + 1] = Math.min(1, cg * 2);
-                xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 2);
+                xon.trailCol[vi * 3] = Math.min(1, cr * 4);
+                xon.trailCol[vi * 3 + 1] = Math.min(1, cg * 4);
+                xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 4);
                 continue;
             }
             const baseAlpha = 0.5 + 0.5 * (vi / Math.max(bodyLen, 1)) ** 0.8;

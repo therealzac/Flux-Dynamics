@@ -257,7 +257,7 @@ const QUARK_TOPOLOGY = {
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.
 // Used when a xon breaks confinement and enters the 'weak' mode.
-const WEAK_FORCE_COLOR = 0x333344; // dark charcoal — visually suppressed but still visible
+const WEAK_FORCE_COLOR = 0x667788; // muted steel — reads as "dark" against bright quarks but visible on black bg
 
 const XON_TRAIL_LENGTH = 250;
 
