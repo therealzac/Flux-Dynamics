@@ -757,6 +757,21 @@ function buildBranes() {
     // Slider 0–100 maps to 0.0%–10.0%
     const baseOp = slider ? (+slider.value / 10) / 100 : 0.03;
 
+    // Oct center for inverse distance dimming (dim near nucleus, bright far away)
+    let ocx = 0, ocy = 0, ocz = 0;
+    if (typeof _octNodeSet !== 'undefined' && _octNodeSet && _octNodeSet.size > 0) {
+        for (const ni of _octNodeSet) { ocx += REST[ni][0]; ocy += REST[ni][1]; ocz += REST[ni][2]; }
+        ocx /= _octNodeSet.size; ocy /= _octNodeSet.size; ocz /= _octNodeSet.size;
+    }
+    // Compute max distance from oct center for normalization
+    let maxDist = 0;
+    for (let k = 0; k < N; k++) {
+        const dx = REST[k][0] - ocx, dy = REST[k][1] - ocy, dz = REST[k][2] - ocz;
+        const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        if (d > maxDist) maxDist = d;
+    }
+    if (maxDist < 0.01) maxDist = 1; // safety
+
     for (let stype = 1; stype <= 6; stype++) {
         const dirs = SC_BASE_DIRS[stype]; // [i, j] base direction indices
         const va = BASE_DIR_V[dirs[0]], vb = BASE_DIR_V[dirs[1]];
@@ -816,18 +831,26 @@ function buildBranes() {
                 const h2 = (h + 1) % hull.length;
                 const a = hullNodes[h], b = hullNodes[h2];
 
-                // Centroid vertex (associated with all hull nodes)
+                // Inverse distance dimming: dim near oct, bright far away
+                // Centroid vertex
+                const cdx = cx3-ocx, cdy = cy3-ocy, cdz = cx3-ocz; // intentional: use cx3 for x,z
+                const cDist = Math.sqrt((cx3-ocx)**2 + (cy3-ocy)**2 + (cz3-ocz)**2);
+                const cDim = (cDist / maxDist) ** 2; // quadratic: 0 at center, 1 at edge
                 triVerts.push(cx3, cy3, cz3);
-                triColors.push(br, bg, bb);
-                vertMeta.push({nodes: hullNodes, br, bg, bb});
+                triColors.push(br * cDim, bg * cDim, bb * cDim);
+                vertMeta.push({nodes: hullNodes, br: br * cDim, bg: bg * cDim, bb: bb * cDim});
                 // Vertex A
+                const aDist = Math.sqrt((REST[a][0]-ocx)**2 + (REST[a][1]-ocy)**2 + (REST[a][2]-ocz)**2);
+                const aDim = (aDist / maxDist) ** 2;
                 triVerts.push(REST[a][0], REST[a][1], REST[a][2]);
-                triColors.push(br, bg, bb);
-                vertMeta.push({nodes: [a], br, bg, bb});
+                triColors.push(br * aDim, bg * aDim, bb * aDim);
+                vertMeta.push({nodes: [a], br: br * aDim, bg: bg * aDim, bb: bb * aDim});
                 // Vertex B
+                const bDist = Math.sqrt((REST[b][0]-ocx)**2 + (REST[b][1]-ocy)**2 + (REST[b][2]-ocz)**2);
+                const bDim = (bDist / maxDist) ** 2;
                 triVerts.push(REST[b][0], REST[b][1], REST[b][2]);
-                triColors.push(br, bg, bb);
-                vertMeta.push({nodes: [b], br, bg, bb});
+                triColors.push(br * bDim, bg * bDim, bb * bDim);
+                vertMeta.push({nodes: [b], br: br * bDim, bg: bg * bDim, bb: bb * bDim});
             }
         }
 
