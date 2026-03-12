@@ -415,10 +415,11 @@ function rebuildLatticeGeometry(level, octCentered){
     const key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
     let cellMap;
     if(octCentered){
-        // Grow shells+1 from origin, build vertices, then trim outermost nodes
-        // that are farther from the oct centroid than a balanced radius.
-        // This enforces equal hop-distance from every oct vertex to the boundary.
-        cellMap = expandCells([0,0,0], shells + 1);
+        // Grow shells+2 from origin to overshoot a sphere, then sphere-trim
+        // to produce a lattice with true spherical symmetry around the oct centroid.
+        // shells+1 isn't enough: the cuboctahedral cell growth has thin coverage
+        // in ⟨100⟩ directions, leaving octahedral dents in the boundary.
+        cellMap = expandCells([0,0,0], shells + 2);
     } else {
         cellMap = expandCells([0,0,0], shells);
     }

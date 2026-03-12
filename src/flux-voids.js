@@ -942,13 +942,8 @@ document.getElementById('brane-opacity-slider').addEventListener('input', update
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 let _wfMesh = null;
-let _wfVertSph = [];       // per-vertex {theta, phi}
-let _wfCenter = [0,0,0];
-let _wfPoleAxis = null;    // THREE.Vector3
-let _wfXHat = null;        // THREE.Vector3
-let _wfYHat = null;        // THREE.Vector3
-let _wfAdaptiveMin = 0;
-let _wfAdaptiveMax = 1;
+let _wfVertNodeIdx = [];   // per-vertex: lattice node index (for pos[] lookup)
+let _wfAdaptiveMax = 0.001; // smoothed max displacement (EMA)
 
 // ── 3D Convex Hull (incremental algorithm) ──
 function _convexHull3D(points) {
@@ -1085,63 +1080,23 @@ function buildWavefunction() {
     }
     if (boundaryIndices.length < 4) return;
 
-    // 3. Build harmonic frame from oct geometry
-    // Poles = nodes in _octNodeSet NOT in _octEquatorCycle
-    let pole0 = -1, pole1 = -1;
-    const equatorSet = new Set(_octEquatorCycle || []);
-    for (const ni of _octNodeSet) {
-        if (!equatorSet.has(ni)) {
-            if (pole0 < 0) pole0 = ni; else pole1 = ni;
-        }
-    }
-    if (pole0 < 0 || pole1 < 0) {
-        // Fallback: find the farthest-apart pair in _octNodeSet
-        const octArr = [..._octNodeSet];
-        let bestD = 0;
-        for (let i = 0; i < octArr.length; i++) {
-            for (let j = i+1; j < octArr.length; j++) {
-                const dx = REST[octArr[i]][0]-REST[octArr[j]][0];
-                const dy = REST[octArr[i]][1]-REST[octArr[j]][1];
-                const dz = REST[octArr[i]][2]-REST[octArr[j]][2];
-                const d = dx*dx+dy*dy+dz*dz;
-                if (d > bestD) { bestD = d; pole0 = octArr[i]; pole1 = octArr[j]; }
-            }
-        }
-    }
-
-    // z-hat = pole axis (spin axis)
-    const zx = REST[pole1][0]-REST[pole0][0];
-    const zy = REST[pole1][1]-REST[pole0][1];
-    const zz = REST[pole1][2]-REST[pole0][2];
-    const zlen = Math.sqrt(zx*zx+zy*zy+zz*zz);
-    _wfPoleAxis = new THREE.Vector3(zx/zlen, zy/zlen, zz/zlen);
-
-    // x-hat = equator node direction, projected perpendicular to z-hat
-    let eqNode = (_octEquatorCycle && _octEquatorCycle.length > 0) ? _octEquatorCycle[0] : [..._octNodeSet].find(n => n !== pole0 && n !== pole1);
-    let ex = REST[eqNode][0]-cx, ey = REST[eqNode][1]-cy, ez = REST[eqNode][2]-cz;
-    const edot = ex*_wfPoleAxis.x + ey*_wfPoleAxis.y + ez*_wfPoleAxis.z;
-    ex -= edot*_wfPoleAxis.x; ey -= edot*_wfPoleAxis.y; ez -= edot*_wfPoleAxis.z;
-    const elen = Math.sqrt(ex*ex+ey*ey+ez*ez);
-    _wfXHat = new THREE.Vector3(ex/elen, ey/elen, ez/elen);
-
-    // y-hat = cross(z-hat, x-hat)
-    _wfYHat = new THREE.Vector3().crossVectors(_wfPoleAxis, _wfXHat).normalize();
-
-    // 4. Convex hull of boundary nodes
+    // 3. Convex hull of boundary nodes
     const hullTriangles = _convexHull3D(boundaryPositions);
     if (hullTriangles.length === 0) return;
 
-    // 5. Build BufferGeometry
+    // 4. Build BufferGeometry
     // Unique vertex indices used in hull (subset of boundaryIndices)
     const usedSet = new Set();
     for (const tri of hullTriangles) for (const idx of tri) usedSet.add(idx);
 
-    // Remap: boundary index → geometry vertex index
+    // Remap: boundary index → geometry vertex index, track lattice node indices
     const vertMap = new Map();
     const verts = [];
+    _wfVertNodeIdx = [];
     for (const bi of usedSet) {
         vertMap.set(bi, verts.length);
         verts.push(boundaryPositions[bi]);
+        _wfVertNodeIdx.push(boundaryIndices[bi]); // lattice node index
     }
 
     const positions = new Float32Array(verts.length * 3);
@@ -1166,23 +1121,7 @@ function buildWavefunction() {
     colors.fill(0.2); // initial blue-ish
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-    // 6. Pre-compute spherical coordinates for each vertex
-    _wfVertSph = [];
-    for (let i = 0; i < verts.length; i++) {
-        const dx = verts[i][0] - cx;
-        const dy = verts[i][1] - cy;
-        const dz = verts[i][2] - cz;
-        // Project onto harmonic frame
-        const lz = dx*_wfPoleAxis.x + dy*_wfPoleAxis.y + dz*_wfPoleAxis.z;
-        const lx = dx*_wfXHat.x + dy*_wfXHat.y + dz*_wfXHat.z;
-        const ly = dx*_wfYHat.x + dy*_wfYHat.y + dz*_wfYHat.z;
-        const r = Math.sqrt(lx*lx + ly*ly + lz*lz);
-        const theta = r > 1e-10 ? Math.acos(Math.max(-1, Math.min(1, lz / r))) : 0;
-        const phi = Math.atan2(ly, lx);
-        _wfVertSph.push({theta, phi});
-    }
-
-    // 7. Material + Mesh
+    // 5. Material + Mesh
     const sliderEl = document.getElementById('wf-opacity-slider');
     const initOp = sliderEl ? (+sliderEl.value / 100) : 0.2;
     const mat = new THREE.MeshBasicMaterial({
@@ -1199,120 +1138,49 @@ function buildWavefunction() {
     scene.add(_wfMesh);
 
     // Reset adaptive scaling
-    _wfAdaptiveMin = 0;
-    _wfAdaptiveMax = 1;
+    _wfAdaptiveMax = 0.001;
 }
-
-// ── Real Spherical Harmonics (normalization constants) ──
-const _Y00  = 0.28209479;  // 1/(2√π)
-const _Y10  = 0.48860251;  // √(3/(4π))
-const _Y11  = 0.48860251;  // √(3/(4π))
-const _Y20  = 0.31539157;  // √(5/(16π))
-const _Y21  = 1.09254843;  // √(15/(4π))
-const _Y22  = 0.54627422;  // √(15/(16π))
 
 function updateWavefunction() {
     if (!_wfMesh || !_wfMesh.visible) return;
-    if (!_wfVertSph || _wfVertSph.length === 0) return;
+    if (!_wfVertNodeIdx || _wfVertNodeIdx.length === 0) return;
 
-    // ── Compute harmonic coefficients from simulation state ──
-    let c00 = 0.5, c10 = 0, c11 = 0, c1m1 = 0;
-    let c20 = 0, c21 = 0, c22 = 0;
-
-    const demoActive = typeof _demoActive !== 'undefined' && _demoActive;
-    const xons = typeof _demoXons !== 'undefined' ? _demoXons : [];
-
-    if (demoActive && xons.length > 0 && _wfPoleAxis) {
-        const cx = _wfCenter[0], cy = _wfCenter[1], cz = _wfCenter[2];
-
-        // Dipole from xon positions
-        let aliveCount = 0;
-        for (const x of xons) {
-            if (!x.alive || x.node == null || !pos[x.node]) continue;
-            aliveCount++;
-            const dx = pos[x.node][0] - cx;
-            const dy = pos[x.node][1] - cy;
-            const dz = pos[x.node][2] - cz;
-            // Project onto harmonic axes
-            c10  += dx*_wfPoleAxis.x + dy*_wfPoleAxis.y + dz*_wfPoleAxis.z;
-            c11  += dx*_wfXHat.x + dy*_wfXHat.y + dz*_wfXHat.z;
-            c1m1 += dx*_wfYHat.x + dy*_wfYHat.y + dz*_wfYHat.z;
-        }
-        if (aliveCount > 0) {
-            const norm = aliveCount * 2.0;  // normalization scale
-            c10 /= norm; c11 /= norm; c1m1 /= norm;
-        }
-
-        // Quadrupole from active SC directions
-        let scCount = 0;
-        const allActive = new Set();
-        if (typeof activeSet !== 'undefined') for (const id of activeSet) allActive.add(id);
-        if (typeof electronImpliedSet !== 'undefined') for (const id of electronImpliedSet) allActive.add(id);
-
-        for (const scId of allActive) {
-            const sc = SC_BY_ID[scId];
-            if (!sc || !pos[sc.a] || !pos[sc.b]) continue;
-            scCount++;
-            // SC midpoint direction from center
-            const mx = (pos[sc.a][0]+pos[sc.b][0])/2 - cx;
-            const my = (pos[sc.a][1]+pos[sc.b][1])/2 - cy;
-            const mz = (pos[sc.a][2]+pos[sc.b][2])/2 - cz;
-            const mr = Math.sqrt(mx*mx+my*my+mz*mz);
-            if (mr < 1e-10) continue;
-            // Project onto harmonic frame
-            const cosTheta = (mx*_wfPoleAxis.x+my*_wfPoleAxis.y+mz*_wfPoleAxis.z)/mr;
-            const sinTheta = Math.sqrt(Math.max(0, 1 - cosTheta*cosTheta));
-            const projX = (mx*_wfXHat.x+my*_wfXHat.y+mz*_wfXHat.z)/mr;
-            const projY = (mx*_wfYHat.x+my*_wfYHat.y+mz*_wfYHat.z)/mr;
-            const phi = Math.atan2(projY, projX);
-
-            c20 += (3*cosTheta*cosTheta - 1) / 2;
-            c21 += sinTheta * cosTheta * Math.cos(phi);
-            c22 += sinTheta * sinTheta * Math.cos(2*phi);
-        }
-        if (scCount > 0) {
-            c20 /= scCount; c21 /= scCount; c22 /= scCount;
-            // Scale quadrupole contribution
-            c20 *= 0.6; c21 *= 0.4; c22 *= 0.4;
-        }
-    }
-
-    // ── Evaluate Y_lm at each vertex ──
+    const posAttr = _wfMesh.geometry.getAttribute('position');
+    const posArr = posAttr.array;
     const colAttr = _wfMesh.geometry.getAttribute('color');
     const colArr = colAttr.array;
-    let frameMin = Infinity, frameMax = -Infinity;
+    const nv = _wfVertNodeIdx.length;
 
-    // Pre-compute amplitudes
-    const nv = _wfVertSph.length;
-    const amps = new Float32Array(nv);
+    // ── Update vertex positions from solver & compute displacement ──
+    let frameMax = 0;
+    const disps = new Float32Array(nv);
     for (let i = 0; i < nv; i++) {
-        const {theta, phi} = _wfVertSph[i];
-        const cosT = Math.cos(theta), sinT = Math.sin(theta);
+        const ni = _wfVertNodeIdx[i];
+        if (!pos[ni] || !REST[ni]) continue;
 
-        const amp = c00 * _Y00
-            + c10  * _Y10  * cosT
-            + c11  * _Y11  * sinT * Math.cos(phi)
-            + c1m1 * _Y11  * sinT * Math.sin(phi)
-            + c20  * _Y20  * (3*cosT*cosT - 1)
-            + c21  * _Y21  * sinT * cosT * Math.cos(phi)
-            + c22  * _Y22  * sinT * sinT * Math.cos(2*phi);
+        // Move vertex to current solver position
+        posArr[i*3]     = pos[ni][0];
+        posArr[i*3 + 1] = pos[ni][1];
+        posArr[i*3 + 2] = pos[ni][2];
 
-        amps[i] = amp;
-        if (amp < frameMin) frameMin = amp;
-        if (amp > frameMax) frameMax = amp;
+        // Displacement from rest
+        const dx = pos[ni][0] - REST[ni][0];
+        const dy = pos[ni][1] - REST[ni][1];
+        const dz = pos[ni][2] - REST[ni][2];
+        const disp = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        disps[i] = disp;
+        if (disp > frameMax) frameMax = disp;
     }
+    posAttr.needsUpdate = true;
+    _wfMesh.geometry.computeVertexNormals();
 
-    // Adaptive scaling with EMA smoothing
-    if (frameMin < frameMax) {
-        _wfAdaptiveMin = _wfAdaptiveMin * 0.95 + frameMin * 0.05;
-        _wfAdaptiveMax = _wfAdaptiveMax * 0.95 + frameMax * 0.05;
-    }
-    const range = _wfAdaptiveMax - _wfAdaptiveMin;
-    const invRange = range > 1e-8 ? 1 / range : 1;
+    // Adaptive max with EMA smoothing (prevents flicker)
+    _wfAdaptiveMax = Math.max(0.001, _wfAdaptiveMax * 0.95 + frameMax * 0.05);
+    const invMax = 1 / _wfAdaptiveMax;
 
-    // Color map: cool→warm (blue→cyan→green→yellow→red)
+    // ── Color by displacement: cool→warm ──
     for (let i = 0; i < nv; i++) {
-        let t = (amps[i] - _wfAdaptiveMin) * invRange;
+        let t = disps[i] * invMax;
         t = Math.max(0, Math.min(1, t));
 
         let r, g, b;
@@ -1344,9 +1212,8 @@ function disposeWavefunction() {
         _wfMesh.material.dispose();
         _wfMesh = null;
     }
-    _wfVertSph = [];
-    _wfAdaptiveMin = 0;
-    _wfAdaptiveMax = 1;
+    _wfVertNodeIdx = [];
+    _wfAdaptiveMax = 0.001;
 }
 
 function applyWavefunctionOpacity() {
