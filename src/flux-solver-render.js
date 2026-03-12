@@ -392,32 +392,76 @@ function inferStype(va,vb){
 
 // ─── Dynamic lattice geometry ─────────────────────────────────────────────────
 let N, REST, pos, BASE_EDGES, ALL_SC, SC_BY_ID, scByVert, REPULSION_PAIRS;
-function getLattice(level, seeds){
-    const cells=new Map(), key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
-    const startSeeds = seeds || [[0,0,0]];
-    const q=[];
-    for(const s of startSeeds){ const k=key(s); if(!cells.has(k)){ cells.set(k,s); q.push([...s,0]); } }
-    while(q.length){
-        const [cx,cy,cz,d]=q.shift(); if(d>=level-1) continue;
-        for(const [dx,dy,dz] of LATTICE_OFFSETS){ const p=[cx+dx,cy+dy,cz+dz],k=key(p); if(!cells.has(k)){ cells.set(k,p); q.push([...p,d+1]); } }
+// Expand `shells` layers of FCC cells outward from a single center point.
+function expandCells(center, shells){
+    const key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
+    const cells=new Map(); cells.set(key(center), center);
+    let frontier = [center];
+    for(let s=0; s<shells; s++){
+        const next=[];
+        for(const [cx,cy,cz] of frontier){
+            for(const [dx,dy,dz] of LATTICE_OFFSETS){
+                const p=[cx+dx,cy+dy,cz+dz], k=key(p);
+                if(!cells.has(k)){ cells.set(k,p); next.push(p); }
+            }
+        }
+        frontier=next;
     }
-    return [...cells.values()];
+    return cells; // Map<key, [x,y,z]>
 }
+
 function rebuildLatticeGeometry(level, octCentered){
-    // Oct-centered: superimpose 6 lattices, one centered at each oct vertex
-    let cells;
+    const shells = level - 1;
+    const key=([x,y,z])=>`${Math.round(x*1000)},${Math.round(y*1000)},${Math.round(z*1000)}`;
+    let cellMap;
     if(octCentered){
-        const seeds = UNIT_REST.slice(1,7); // 6 oct vertex positions: [±r4,0,0], [0,±r4,0], [0,0,±r4]
-        cells = getLattice(level, seeds);
+        // Grow shells+1 from origin, build vertices, then trim outermost nodes
+        // that are farther from the oct centroid than a balanced radius.
+        // This enforces equal hop-distance from every oct vertex to the boundary.
+        cellMap = expandCells([0,0,0], shells + 1);
     } else {
-        cells = getLattice(level);
+        cellMap = expandCells([0,0,0], shells);
     }
+    const cells = [...cellMap.values()];
     restCellCenters=cells; // [0,0,0] of each cell = cell center in global coords
     const vmap=new Map(); const verts=[];
     for(const [cx,cy,cz] of cells) for(const [rx,ry,rz] of UNIT_REST){
         const x=cx+rx,y=cy+ry,z=cz+rz;
         const k=`${Math.round(x*10000)},${Math.round(y*10000)},${Math.round(z*10000)}`;
         if(!vmap.has(k)){ vmap.set(k,verts.length); verts.push([x,y,z]); }
+    }
+    // For oct-centered mode: sphere-trim vertices around the oct centroid.
+    // The oct centroid is at [0, -r3, 0]. Remove overgrown vertices beyond
+    // the max distance that the base lattice would have produced.
+    if(octCentered){
+        const baseCells = expandCells([0,0,0], shells);
+        const baseVerts = new Set();
+        const octCy = -r3;
+        let maxR2 = 0;
+        for(const [cx,cy,cz] of baseCells.values()) for(const [rx,ry,rz] of UNIT_REST){
+            const x=cx+rx, y=cy+ry, z=cz+rz;
+            const dy = y - octCy;
+            maxR2 = Math.max(maxR2, x*x + dy*dy + z*z);
+        }
+        const cutoff = maxR2 * 1.001; // tiny float margin
+        const trimmed = [], trimMap = new Map();
+        for(let i = 0; i < verts.length; i++){
+            const [x,y,z] = verts[i];
+            const dy = y - octCy;
+            if(x*x + dy*dy + z*z <= cutoff){
+                const newIdx = trimmed.length;
+                trimMap.set(i, newIdx);
+                trimmed.push(verts[i]);
+            }
+        }
+        // Rebuild vmap with trimmed indices
+        vmap.clear();
+        for(let i = 0; i < trimmed.length; i++){
+            const [x,y,z] = trimmed[i];
+            vmap.set(`${Math.round(x*10000)},${Math.round(y*10000)},${Math.round(z*10000)}`, i);
+        }
+        verts.length = 0;
+        for(const v of trimmed) verts.push(v);
     }
     N=verts.length; REST=verts; pos=verts.map(v=>[...v]);
     // O(N) edge detection via known delta vectors — replaces O(N²) brute-force.
@@ -565,6 +609,18 @@ function _solveIDBOpen() {
     });
 }
 
+// Fingerprint the lattice geometry so we can detect stale caches.
+// Uses first 8 REST positions — any shift/rebuild changes these.
+function _solveLatticeFingerprint() {
+    if (!REST || REST.length === 0) return '';
+    const n = Math.min(8, REST.length);
+    let fp = '' + N + ':';
+    for (let i = 0; i < n; i++) {
+        fp += REST[i][0].toFixed(6) + ',' + REST[i][1].toFixed(6) + ',' + REST[i][2].toFixed(6) + ';';
+    }
+    return fp;
+}
+
 // Load cache for a given lattice level from IndexedDB
 async function _solveIDBLoad(level) {
     if (!_solveIDBReady) await _solveIDBOpen();
@@ -576,15 +632,34 @@ async function _solveIDBLoad(level) {
             const req = store.get('L' + level);
             req.onsuccess = () => {
                 const data = req.result;
-                if (data && Array.isArray(data)) {
+                if (data && typeof data === 'object' && data.fingerprint) {
+                    // New format: { fingerprint, entries }
+                    const currentFP = _solveLatticeFingerprint();
+                    if (data.fingerprint !== currentFP) {
+                        console.log('[SolverCache] Lattice geometry changed — discarding stale IDB cache for L' + level);
+                        // Delete the stale entry
+                        try {
+                            const dtx = _solveIDB.transaction(_SOLVE_IDB_STORE, 'readwrite');
+                            dtx.objectStore(_SOLVE_IDB_STORE).delete('L' + level);
+                        } catch (e) { /* non-critical */ }
+                        resolve();
+                        return;
+                    }
                     let loaded = 0;
-                    for (const [key, val] of data) {
+                    for (const [key, val] of data.entries) {
                         if (!_solveLRU.has(key) && _solveLRU.size < _SOLVE_CACHE_MAX) {
                             _solveLRU.set(key, val);
                             loaded++;
                         }
                     }
                     if (loaded) console.log('[SolverCache] Loaded ' + loaded + ' entries from IndexedDB for L' + level);
+                } else if (data && Array.isArray(data)) {
+                    // Legacy format (no fingerprint) — discard it
+                    console.log('[SolverCache] Legacy cache without fingerprint — discarding for L' + level);
+                    try {
+                        const dtx = _solveIDB.transaction(_SOLVE_IDB_STORE, 'readwrite');
+                        dtx.objectStore(_SOLVE_IDB_STORE).delete('L' + level);
+                    } catch (e) { /* non-critical */ }
                 }
                 resolve();
             };
@@ -601,7 +676,7 @@ function _solveIDBSave() {
     try {
         const tx = _solveIDB.transaction(_SOLVE_IDB_STORE, 'readwrite');
         const store = tx.objectStore(_SOLVE_IDB_STORE);
-        store.put(entries, 'L' + level);
+        store.put({ fingerprint: _solveLatticeFingerprint(), entries: entries }, 'L' + level);
     } catch (e) { /* non-critical */ }
 }
 

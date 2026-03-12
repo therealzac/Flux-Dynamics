@@ -1459,6 +1459,49 @@ function runDemo3Tests() {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-OctSymmetry: No oct node is closer to a boundary than any other.
+    // A boundary node has fewer than 8 base neighbors (interior nodes have 8).
+    // For each oct node, find minimum hop distance to nearest boundary node.
+    // All 6 oct nodes must have the same minimum distance.
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (_octNodeSet && _octNodeSet.size === 6 && baseNeighbors && baseNeighbors.length > 0) {
+        // Find boundary nodes: nodes with < 8 base neighbors
+        const boundaryNodes = new Set();
+        for (let i = 0; i < N; i++) {
+            if (baseNeighbors[i].length < 8) boundaryNodes.add(i);
+        }
+        // BFS from each oct node to find min hops to nearest boundary
+        function hopsToNearestBoundary(startNode) {
+            if (boundaryNodes.has(startNode)) return 0;
+            const visited = new Set([startNode]);
+            let frontier = [startNode], dist = 0;
+            while (frontier.length > 0) {
+                dist++;
+                const next = [];
+                for (const n of frontier) {
+                    for (const nb of baseNeighbors[n]) {
+                        if (!visited.has(nb.node)) {
+                            if (boundaryNodes.has(nb.node)) return dist;
+                            visited.add(nb.node);
+                            next.push(nb.node);
+                        }
+                    }
+                }
+                frontier = next;
+            }
+            return Infinity;
+        }
+        const octNodes = [..._octNodeSet];
+        const distances = octNodes.map(n => hopsToNearestBoundary(n));
+        const allEqual = distances.every(d => d === distances[0]);
+        assert('T-OctSymmetry Lattice boundary equidistant from all oct nodes',
+            allEqual,
+            `oct node boundary distances: [${distances.join(', ')}] (nodes: [${octNodes.join(', ')}])`);
+    } else {
+        skip('T-OctSymmetry Lattice boundary equidistant from all oct nodes', 'no oct data');
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // T-RLStrategicInference: strategic model returns finite scores
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     if (typeof _rlAvailable !== 'undefined' && _rlAvailable && typeof createStrategicModel === 'function') {

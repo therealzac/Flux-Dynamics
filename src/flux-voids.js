@@ -610,7 +610,7 @@ function applyStateFromJSON(data){
         latticeLevel = targetLevel;
         document.getElementById('lattice-slider').value = latticeLevel;
         document.getElementById('lattice-lv').textContent = 'L'+latticeLevel;
-        rebuildLatticeGeometry(latticeLevel);
+        rebuildLatticeGeometry(latticeLevel, _nucleusOctCentered);
         rebuildScPairLookup();
         rebuildSphereMeshes();
         rebuildBaseLines();

@@ -1330,6 +1330,20 @@ function _executeOpeningTick(occupied) {
         _octNodeSet = chosen.octNodes;
         _octSCIds = chosen.cageSCIds;
 
+        // Center camera on the oct centroid (never shift the lattice itself)
+        if (_octNodeSet.size > 0 && pos && !_tournamentRunning) {
+            let cx = 0, cy = 0, cz = 0, count = 0;
+            for (const n of _octNodeSet) {
+                if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
+            }
+            if (count > 0) {
+                panTarget.x = cx / count;
+                panTarget.y = cy / count;
+                panTarget.z = cz / count;
+                applyCamera();
+            }
+        }
+
         // Chain-walk equator into cycle order
         const eq = chosen.equator.slice();
         const ordered = [eq[0]], used = new Set([0]), scCycle = [];
