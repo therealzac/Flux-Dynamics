@@ -877,6 +877,10 @@ async function initRL() {
 const _ppoMetricsHistory = [];
 const _PPO_METRICS_MAX = 100;
 
+// Weight delta tracking (for delta flash visualization)
+let _prevWeightSnapshots = null; // Map: layerKey → Float32Array
+let _weightUpdateCount = 0;
+
 function _ppoRecordMetrics(metrics) {
     const safe = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
     _ppoMetricsHistory.push({
@@ -1002,7 +1006,52 @@ function _drawPolicyHeatmap() {
 }
 
 // ── Weight Distribution Histograms ──
-function _drawWeightDistributions() {
+// Snapshot all weight layers from a model as {key, data, rows, cols} array
+function _snapshotModelWeights(model, prefix) {
+    if (!model) return [];
+    const layers = [];
+    for (const netName of ['actor', 'critic']) {
+        const net = model[netName];
+        if (!net) continue;
+        for (const wName of ['w1', 'b1', 'w2', 'b2', 'w3', 'b3']) {
+            const v = net[wName];
+            if (!v || !(v instanceof tf.Tensor)) continue;
+            const shape = v.shape;
+            const key = `${prefix}_${netName}_${wName}`;
+            layers.push({
+                key, name: `${wName}`,
+                net: netName,
+                data: v.dataSync().slice(), // copy
+                rows: shape.length === 2 ? shape[0] : 1,
+                cols: shape.length === 2 ? shape[1] : shape[0],
+                isBias: wName.startsWith('b'),
+            });
+        }
+    }
+    return layers;
+}
+
+// Delta-flash color: t ∈ [0,1] → black → orange → white
+function _deltaColor(t) {
+    t = Math.min(1, Math.max(0, t));
+    if (t < 0.5) {
+        // black → orange
+        const s = t * 2;
+        return [Math.floor(255 * s), Math.floor(140 * s), 0];
+    } else {
+        // orange → white
+        const s = (t - 0.5) * 2;
+        return [255, Math.floor(140 + 115 * s), Math.floor(255 * s)];
+    }
+}
+
+// Initial weights color: t ∈ [0,1] → dark blue → white
+function _absColor(t) {
+    t = Math.min(1, Math.max(0, t));
+    return [Math.floor(40 + 215 * t), Math.floor(80 + 175 * t), Math.floor(180 + 75 * t)];
+}
+
+function _drawWeightDeltas() {
     const canvas = document.getElementById('rl-weights-canvas');
     if (!canvas || canvas.style.display === 'none') return;
     const ctx = canvas.getContext('2d');
@@ -1011,69 +1060,186 @@ function _drawWeightDistributions() {
     ctx.fillStyle = '#0a1018';
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = '#66ffaa';
-    ctx.font = '9px monospace';
-    ctx.fillText('WEIGHT DISTRIBUTIONS', 4, 10);
-
+    // Gather current weight snapshots from both models
     const models = [];
-    if (_ppoStrategicAC || _rlStrategicModel) models.push({ name: 'strat', model: _ppoStrategicAC || _rlStrategicModel, color: '#4488cc' });
-    if (_ppoTacticalAC || _rlModel) models.push({ name: 'tact', model: _ppoTacticalAC || _rlModel, color: '#44cc88' });
+    if (_ppoStrategicAC || _rlStrategicModel)
+        models.push({ prefix: 'strat', label: 'strategic', model: _ppoStrategicAC || _rlStrategicModel, color: '#4488cc' });
+    if (_ppoTacticalAC || _rlModel)
+        models.push({ prefix: 'tact', label: 'tactical', model: _ppoTacticalAC || _rlModel, color: '#44cc88' });
 
-    let offsetY = 16;
-    const BINS = 30;
-    const histW = 120, histH = 24;
+    if (models.length === 0) return;
 
-    for (const { name, model, color } of models) {
-        try {
-            const vars = model.getVars();
-            const allWeights = tf.tidy(() => {
-                const tensors = Object.values(vars).filter(v => v instanceof tf.Tensor);
-                if (tensors.length === 0) return new Float32Array(0);
-                const flat = tensors.map(t => t.flatten());
-                return tf.concat(flat).dataSync();
-            });
+    // Snapshot all layers
+    const currentSnapshots = new Map();
+    const allLayers = []; // {key, name, net, data, rows, cols, isBias, modelLabel, modelColor}
+    for (const { prefix, label, model, color } of models) {
+        const layers = _snapshotModelWeights(model, prefix);
+        for (const l of layers) {
+            currentSnapshots.set(l.key, l.data);
+            l.modelLabel = label;
+            l.modelColor = color;
+            allLayers.push(l);
+        }
+    }
 
-            if (allWeights.length === 0) continue;
+    const hasPrev = _prevWeightSnapshots !== null;
+    const isDelta = hasPrev;
 
-            // Compute histogram
-            let minW = Infinity, maxW = -Infinity;
-            for (let i = 0; i < allWeights.length; i++) {
-                if (allWeights[i] < minW) minW = allWeights[i];
-                if (allWeights[i] > maxW) maxW = allWeights[i];
+    // Compute deltas and global max
+    let globalMaxDelta = 0;
+    const layerDeltas = new Map(); // key → Float32Array of deltas
+    for (const l of allLayers) {
+        const curr = l.data;
+        if (isDelta) {
+            const prev = _prevWeightSnapshots.get(l.key);
+            if (prev && prev.length === curr.length) {
+                const delta = new Float32Array(curr.length);
+                for (let i = 0; i < curr.length; i++) {
+                    delta[i] = Math.abs(curr[i] - prev[i]);
+                    if (delta[i] > globalMaxDelta) globalMaxDelta = delta[i];
+                }
+                layerDeltas.set(l.key, delta);
+            } else {
+                // Shape mismatch — treat as absolute
+                const abs = new Float32Array(curr.length);
+                for (let i = 0; i < curr.length; i++) {
+                    abs[i] = Math.abs(curr[i]);
+                    if (abs[i] > globalMaxDelta) globalMaxDelta = abs[i];
+                }
+                layerDeltas.set(l.key, abs);
             }
-            const range = maxW - minW || 1;
-            const bins = new Float32Array(BINS);
-            for (let i = 0; i < allWeights.length; i++) {
-                const idx = Math.min(BINS - 1, Math.floor((allWeights[i] - minW) / range * BINS));
-                bins[idx]++;
+        } else {
+            // First time: show absolute values
+            const abs = new Float32Array(curr.length);
+            let maxAbs = 0;
+            for (let i = 0; i < curr.length; i++) {
+                abs[i] = Math.abs(curr[i]);
+                if (abs[i] > maxAbs) maxAbs = abs[i];
             }
-            const maxBin = Math.max(...bins) || 1;
+            if (maxAbs > globalMaxDelta) globalMaxDelta = maxAbs;
+            layerDeltas.set(l.key, abs);
+        }
+    }
+    if (globalMaxDelta === 0) globalMaxDelta = 1;
 
-            // Draw label
-            ctx.fillStyle = color;
-            ctx.font = '7px monospace';
-            ctx.fillText(`${name} (${allWeights.length}w)`, 4, offsetY + 8);
-            ctx.fillStyle = '#556677';
-            ctx.fillText(`[${minW.toFixed(2)}, ${maxW.toFixed(2)}]`, 4, offsetY + 16);
+    // Store for next update
+    _prevWeightSnapshots = currentSnapshots;
+    _weightUpdateCount++;
 
-            // Draw histogram bars
-            const barW = histW / BINS;
-            for (let i = 0; i < BINS; i++) {
-                const h = (bins[i] / maxBin) * histH;
-                const intensity = bins[i] / maxBin;
-                ctx.fillStyle = color + Math.floor(40 + intensity * 200).toString(16).padStart(2, '0');
-                ctx.fillRect(130 + i * barW, offsetY + histH - h, barW - 0.5, h);
+    // ── RENDER ──
+    // Title
+    ctx.fillStyle = isDelta ? '#ff9944' : '#6699cc';
+    ctx.font = '9px monospace';
+    const titleText = isDelta
+        ? `WEIGHT DELTAS (update #${_weightUpdateCount})`
+        : `INITIAL WEIGHTS (update #${_weightUpdateCount})`;
+    ctx.fillText(titleText, 4, 10);
+
+    // Max delta indicator
+    ctx.fillStyle = '#889999';
+    ctx.font = '7px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(isDelta ? `max Δ: ${globalMaxDelta.toFixed(5)}` : `max |w|: ${globalMaxDelta.toFixed(3)}`, W - 4, 10);
+    ctx.textAlign = 'left';
+
+    const colorFn = isDelta ? _deltaColor : _absColor;
+
+    // Group layers by model+net for row layout
+    // Order: strategic actor, strategic critic, tactical actor, tactical critic
+    const groups = [];
+    for (const { prefix, label, color } of models) {
+        for (const netName of ['actor', 'critic']) {
+            const groupLayers = allLayers.filter(l => l.key.startsWith(prefix + '_' + netName));
+            if (groupLayers.length > 0) {
+                groups.push({ label: `${label} ${netName}`, color, layers: groupLayers });
             }
+        }
+    }
 
-            // Axis line
-            ctx.strokeStyle = '#334455';
-            ctx.beginPath();
-            ctx.moveTo(130, offsetY + histH);
-            ctx.lineTo(130 + histW, offsetY + histH);
-            ctx.stroke();
+    let curY = 18;
+    const ROW_HEIGHT = 40; // max height per layer row
+    const GAP = 4;
+    const LEFT_MARGIN = 4;
+    const LABEL_WIDTH = 76;
 
-            offsetY += histH + 8;
-        } catch(e) { /* model not ready */ }
+    for (const group of groups) {
+        // Row label
+        ctx.fillStyle = group.color;
+        ctx.font = '7px monospace';
+        ctx.fillText(group.label, LEFT_MARGIN, curY + 7);
+
+        // Lay out weight matrices + bias strips across the row
+        let curX = LABEL_WIDTH;
+        const tileMaxH = ROW_HEIGHT - 4;
+
+        for (const layer of group.layers) {
+            const deltas = layerDeltas.get(layer.key);
+            if (!deltas) continue;
+
+            if (layer.isBias) {
+                // Bias: thin vertical strip, 3px wide
+                const biasH = Math.min(tileMaxH, layer.cols);
+                const scaleY = biasH <= layer.cols ? 1 : Math.floor(tileMaxH / layer.cols);
+                const drawH = layer.cols * scaleY;
+                const drawW = 3;
+
+                if (curX + drawW + 2 > W) continue;
+
+                for (let i = 0; i < layer.cols; i++) {
+                    const t = deltas[i] / globalMaxDelta;
+                    const [r, g, b] = colorFn(t);
+                    ctx.fillStyle = `rgb(${r},${g},${b})`;
+                    ctx.fillRect(curX, curY + i * scaleY, drawW, scaleY);
+                }
+
+                // Dim label
+                ctx.fillStyle = '#445566';
+                ctx.font = '5px monospace';
+                ctx.fillText(layer.name, curX, curY + drawH + 6);
+
+                curX += drawW + GAP;
+            } else {
+                // Weight matrix: heatmap tile
+                // Scale to fit: max height = tileMaxH, max width = proportional
+                const scaleY = Math.max(1, Math.min(2, Math.floor(tileMaxH / layer.rows)));
+                const scaleX = Math.max(1, Math.min(2, Math.floor((W - curX - 20) / (layer.cols * 3)))); // leave room
+                const drawH = layer.rows * scaleY;
+                const drawW = layer.cols * scaleX;
+
+                if (curX + drawW + 2 > W || drawW < 2) continue;
+
+                // Use ImageData for fast pixel rendering
+                const imgData = ctx.createImageData(drawW, drawH);
+                const pixels = imgData.data;
+                for (let r = 0; r < layer.rows; r++) {
+                    for (let c = 0; c < layer.cols; c++) {
+                        const idx = r * layer.cols + c;
+                        const t = deltas[idx] / globalMaxDelta;
+                        const [cr, cg, cb] = colorFn(t);
+                        // Fill scaleX × scaleY block
+                        for (let dy = 0; dy < scaleY; dy++) {
+                            for (let dx = 0; dx < scaleX; dx++) {
+                                const px = ((r * scaleY + dy) * drawW + c * scaleX + dx) * 4;
+                                pixels[px]     = cr;
+                                pixels[px + 1] = cg;
+                                pixels[px + 2] = cb;
+                                pixels[px + 3] = 255;
+                            }
+                        }
+                    }
+                }
+                ctx.putImageData(imgData, curX, curY);
+
+                // Dim label with dimensions
+                ctx.fillStyle = '#445566';
+                ctx.font = '5px monospace';
+                ctx.fillText(`${layer.name} ${layer.rows}×${layer.cols}`, curX, curY + drawH + 6);
+
+                curX += drawW + GAP;
+            }
+        }
+
+        curY += ROW_HEIGHT + 8;
     }
 }
 
@@ -1146,6 +1312,6 @@ function _drawTrainingMetrics() {
 // ── Master dashboard update (called from training loop) ──
 function _updateTensorDashboard() {
     _drawPolicyHeatmap();
-    _drawWeightDistributions();
+    _drawWeightDeltas();
     _drawTrainingMetrics();
 }
