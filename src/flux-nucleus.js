@@ -209,6 +209,8 @@ const NucleusSimulator = (function(){
         document.getElementById('nucleus-info').style.display = 'block';
         document.getElementById('nucleus-metrics').style.display = 'block';
         document.getElementById('btn-nucleus-pause').style.display = '';
+        const _pbCtrl = document.getElementById('playback-controls');
+        if (_pbCtrl) _pbCtrl.style.display = '';
         // Show the new deuteron panel (left side)
         const dp = document.getElementById('deuteron-panel');
         if(dp) dp.style.display = 'block';
@@ -241,6 +243,8 @@ const NucleusSimulator = (function(){
         document.getElementById('nucleus-info').style.display = 'none';
         document.getElementById('nucleus-metrics').style.display = 'none';
         document.getElementById('btn-nucleus-pause').style.display = 'none';
+        const _pbCtrl2 = document.getElementById('playback-controls');
+        if (_pbCtrl2) _pbCtrl2.style.display = 'none';
         document.getElementById('nucleus-status').textContent = 'ready';
         const ts = document.getElementById('tournament-status');
         if(ts) ts.style.display = 'none';

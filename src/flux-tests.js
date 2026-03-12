@@ -1028,6 +1028,35 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T83: Snapshot stack integrity (rewind foundation) ──
+    // Verifies _btSnapshots entries have monotonically increasing tick values
+    // and the last entry's tick equals _demoTick - 1. This validates the
+    // snapshot stack that the rewind/playback feature depends on.
+    {
+      id: 'T83', name: 'Snapshot stack integrity',
+      convergence: true,
+      check(tick, g) {
+        if (tick < 20) return null;
+        if (g.ok === true) return null; // already verified
+        if (!_btSnapshots || _btSnapshots.length < 2) return null;
+        // Check monotonicity
+        for (let i = 1; i < _btSnapshots.length; i++) {
+          if (_btSnapshots[i].tick <= _btSnapshots[i - 1].tick) {
+            return `snapshot[${i}].tick=${_btSnapshots[i].tick} <= snapshot[${i-1}].tick=${_btSnapshots[i-1].tick}`;
+          }
+        }
+        // Check last snapshot tick matches _demoTick - 1
+        const last = _btSnapshots[_btSnapshots.length - 1];
+        if (last.tick !== _demoTick - 1) {
+          return `last snapshot tick=${last.tick} != _demoTick-1=${_demoTick - 1}`;
+        }
+        // All good — promote to green
+        g.ok = true; g.msg = '';
+        if (typeof _liveGuardRender === 'function') _liveGuardRender();
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1046,6 +1075,17 @@ for (const entry of LIVE_GUARD_REGISTRY) {
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
 let _liveGuardDumped = false;  // only dump once per failure
+
+// Reset guard state for rewind — re-enter grace period so replayed ticks
+// don't immediately halt on divergent choreography.
+function _liveGuardResetForRewind() {
+    for (const entry of LIVE_GUARD_REGISTRY) {
+        _liveGuards[entry.id] = { ok: null, msg: 'grace period', failed: false, ...(entry.init || {}) };
+    }
+    _liveGuardFailTick = null;
+    _liveGuardDumped = false;
+    if (typeof _liveGuardRender === 'function') _liveGuardRender();
+}
 
 // ══════════════════════════════════════════════════════════════════
 // Generic dispatcher — iterates LIVE_GUARD_REGISTRY and calls each
@@ -1385,16 +1425,16 @@ function runDemo3Tests() {
     // Play/pause button — pauses/resumes the demo tick interval
     document.getElementById('btn-nucleus-pause')?.addEventListener('click', function(){
         if (typeof isDemoPaused === 'function' && _demoActive) {
+            // Cancel reverse playback if active
+            if (_demoReversing) stopReverse();
             if (!isDemoPaused()) {
                 pauseDemo();
-                this.textContent = '▶';
+                this.textContent = '\u25B6';
                 this.title = 'Resume simulation';
-                document.getElementById('nucleus-status').textContent = 'paused';
             } else {
                 resumeDemo();
-                this.textContent = '⏸';
+                this.textContent = '\u23F8';
                 this.title = 'Pause simulation';
-                document.getElementById('nucleus-status').textContent = 'running';
             }
         } else if (excitationClockTimer) {
             stopExcitationClock();
@@ -1407,6 +1447,38 @@ function runDemo3Tests() {
             this.title = 'Pause simulation';
             document.getElementById('nucleus-status').textContent = 'running';
         }
+    });
+
+    // ── Playback controls ──
+    document.getElementById('btn-step-back')?.addEventListener('click', function() {
+        if (!_demoActive) return;
+        if (_demoReversing) stopReverse();
+        if (!_demoPaused) pauseDemo();
+        _playbackStepBack();
+        const pb = document.getElementById('btn-nucleus-pause');
+        if (pb) pb.textContent = '\u25B6';
+    });
+
+    document.getElementById('btn-step-forward')?.addEventListener('click', function() {
+        if (!_demoActive) return;
+        if (_demoReversing) stopReverse();
+        if (!_demoPaused) pauseDemo();
+        _playbackStepForward();
+        const pb = document.getElementById('btn-nucleus-pause');
+        if (pb) pb.textContent = '\u25B6';
+    });
+
+    document.getElementById('btn-reverse')?.addEventListener('click', function() {
+        if (!_demoActive) return;
+        if (_demoReversing) {
+            stopReverse();
+        } else {
+            startReverse();
+        }
+    });
+
+    document.getElementById('btn-export-log')?.addEventListener('click', function() {
+        exportTickLog();
     });
 
     // Stop/clear button

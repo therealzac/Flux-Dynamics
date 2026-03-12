@@ -264,6 +264,19 @@
                     style="flex:0 0 auto; padding:5px 8px; border-color:#44aa77; color:#66ddaa; display:none;"
                     title="Pause/resume simulation">⏸</button>
             </div>
+            <div id="playback-controls" style="display:none; margin-top:4px;">
+                <div style="display:flex; gap:3px;">
+                    <button class="action-btn" id="btn-reverse"
+                        style="flex:0 0 auto; padding:5px 6px;" title="Reverse playback">&#9664;&#9664;</button>
+                    <button class="action-btn" id="btn-step-back"
+                        style="flex:0 0 auto; padding:5px 6px;" title="Step back 1 tick">&#9664;|</button>
+                    <button class="action-btn" id="btn-step-forward"
+                        style="flex:0 0 auto; padding:5px 6px;" title="Step forward 1 tick">|&#9654;</button>
+                    <button class="action-btn" id="btn-export-log"
+                        style="flex:1; padding:5px 6px; border-color:#aa8844; color:#ccaa66;"
+                        title="Export tick log as JSON">export</button>
+                </div>
+            </div>
             <div id="nucleus-status" style="font-size:7px; color:#5a7a4a; margin-top:3px;
                 text-align:center; min-height:10px; line-height:1.3;">ready</div>
             <!-- tournament button/status/playback removed -->
@@ -342,20 +355,20 @@
     <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="src/flux-constants.js?v=6"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=4"></script>
+    <script src="src/flux-demo-state.js?v=7"></script>
     <script src="src/flux-demo-xon.js?v=1"></script>
     <script src="src/flux-demo-backtrack.js?v=3"></script>
     <script src="src/flux-demo-planner.js?v=3"></script>
-    <script src="src/flux-demo-ui.js?v=2"></script>
-    <script src="src/flux-demo.js?v=314"></script>
+    <script src="src/flux-demo-ui.js?v=8"></script>
+    <script src="src/flux-demo.js?v=318"></script>
     <script src="src/flux-solver-render.js?v=20"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-ui.js?v=11"></script>
     <script src="src/flux-electrons.js?v=12"></script>
     <script src="src/flux-voids.js?v=12"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
-    <script src="src/flux-nucleus.js?v=31"></script>
-    <script src="src/flux-tests.js?v=180"></script>
+    <script src="src/flux-nucleus.js?v=32"></script>
+    <script src="src/flux-tests.js?v=182"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

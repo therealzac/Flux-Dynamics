@@ -4,6 +4,11 @@
 let _demoActive = false;
 let _demoInterval = null;
 let _demoPaused = false;  // true when user has paused via pause button
+let _demoReversing = false;    // true during reverse playback
+let _reverseInterval = null;   // setInterval ID for reverse playback
+let _tickLog = [];             // lightweight per-tick log for export
+let _tickLogLastGuards = {};   // last full guard state for delta encoding
+let _redoStack = [];           // snapshots saved during rewind for instant step-forward
 // T45 bounce guard — prevents A→B→A oscillation for oct AND weak xons.
 // Only tet/idle_tet xons are exempt (actualized hadronic patterns like fork: a→b→a→c→a).
 // Bounces are only allowed in actualized hadronic patterns that require them.

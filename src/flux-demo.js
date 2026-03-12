@@ -1056,6 +1056,11 @@ function startDemoLoop() {
     _planckSeconds = 0;
     _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
+    _tickLog.length = 0;
+    _tickLogLastGuards = {};
+    _redoStack.length = 0;
+    _demoReversing = false;
+    if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
     _demoTetAssignments = 0;
     _demoPauliViolations = 0;
     _demoSpreadViolations = 0;
@@ -1253,10 +1258,14 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons: free to move, become weak when they step off oct
+        // Remaining 2 xons: move to above-center neighbors, become oct
         for (let i = 4; i < 6; i++) {
             const xon = _demoXons[i];
             if (xon._mode === 'oct_formation') {
+                const aboveIdx = i - 4; // 0 and 1
+                if (aboveIdx < aboveY.length) {
+                    _executeOctMove(xon, { node: aboveY[aboveIdx].node, dirIdx: aboveY[aboveIdx].dirIdx, _needsMaterialise: false, _scId: undefined });
+                }
                 xon._mode = 'oct';
                 xon._pendingWeakEjection = true;
             }
@@ -2954,6 +2963,43 @@ async function demoTick() {
     updateDemoPanel();
     updateStatus();
     updateXonPanel();
+
+    // Tick log entry (lightweight, for export)
+    // Guards use delta encoding: full snapshot on first tick, then only changes
+    if (!_testRunning) {
+        const currentGuards = Object.fromEntries(
+            Object.entries(_liveGuards || {}).map(([k, g]) => [k, g.ok])
+        );
+        let guardEntry;
+        if (_tickLog.length === 0) {
+            // First tick: store full guard state
+            guardEntry = currentGuards;
+            _tickLogLastGuards = currentGuards;
+        } else {
+            // Delta: only keys that changed
+            const delta = {};
+            let changed = false;
+            for (const [k, v] of Object.entries(currentGuards)) {
+                if (_tickLogLastGuards[k] !== v) { delta[k] = v; changed = true; }
+            }
+            guardEntry = changed ? delta : null; // null = no changes
+            _tickLogLastGuards = currentGuards;
+        }
+        _tickLog.push({
+            tick: _demoTick - 1,
+            planck: _planckSeconds,
+            xons: _demoXons.filter(x => x.alive).map(x => ({
+                node: x.node, mode: x._mode,
+                quark: x._quarkType || null,
+                face: x._assignedFace || null,
+                step: x._loopStep
+            })),
+            activeSCs: [...activeSet],
+            xonImplied: [...xonImpliedSet],
+            moves: _moveTrace.map(t => ({ xi: t.xonIdx, from: t.from, to: t.to, path: t.path })),
+            guards: guardEntry
+        });
+    }
 
     // Tournament hook: check if trial has reached its target tick
     if (typeof _tournamentTickCheck === 'function') _tournamentTickCheck();

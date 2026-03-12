@@ -298,12 +298,41 @@ function pauseDemo() {
 }
 function resumeDemo() {
     _demoPaused = false;
+    simHalted = false;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
-        const intervalMs = _getDemoIntervalMs();
-        if (intervalMs === 0) {
-            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        if (_redoStack.length > 0) {
+            // Drain redo stack at playback speed (instant restore, no solver)
+            const intervalMs = Math.max(4, _getDemoIntervalMs());
+            _demoInterval = setInterval(() => {
+                if (_demoPaused || !_demoActive) {
+                    clearInterval(_demoInterval); _demoInterval = null;
+                    return;
+                }
+                if (_redoStack.length > 0) {
+                    const snap = _redoStack.pop();
+                    _btRestoreSnapshot(snap);
+                    simHalted = false;
+                    _playbackUpdateDisplay();
+                } else {
+                    // Redo exhausted — switch to live execution
+                    clearInterval(_demoInterval); _demoInterval = null;
+                    _bfsReset(); _btReset();
+                    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+                    const liveMs = _getDemoIntervalMs();
+                    if (liveMs === 0) {
+                        _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+                    } else {
+                        _demoInterval = setInterval(demoTick, liveMs);
+                    }
+                }
+            }, intervalMs);
         } else {
-            _demoInterval = setInterval(demoTick, intervalMs);
+            const intervalMs = _getDemoIntervalMs();
+            if (intervalMs === 0) {
+                _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+            } else {
+                _demoInterval = setInterval(demoTick, intervalMs);
+            }
         }
     }
 }
@@ -314,7 +343,13 @@ function isDemoPaused() {
 function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
+    _demoReversing = false;
+    if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
+    _tickLog.length = 0;
+    _redoStack.length = 0;
     _openingPhase = false;
+    const pbEl = document.getElementById('playback-controls');
+    if (pbEl) pbEl.style.display = 'none';
     if (typeof _liveGuardsActive !== 'undefined') _liveGuardsActive = false;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
@@ -355,4 +390,163 @@ function stopDemo() {
     // Restore panel title
     const dpTitle = document.querySelector('#deuteron-panel > div:first-child');
     if (dpTitle) dpTitle.textContent = 'DEUTERON';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// PLAYBACK CONTROLS — rewind, step, reverse, export
+// ══════════════════════════════════════════════════════════════════════════
+
+// Step back one tick by restoring the previous snapshot.
+// Snapshot {tick: N} = state before tick N ran = state after tick N-1 completed.
+// Pop it and restore → _demoTick becomes N, undoing tick N's effects.
+// When user steps forward, demoTick() pushes a fresh snapshot for tick N.
+function _playbackStepBack() {
+    if (_tickInProgress || _btSnapshots.length < 1) return false;
+    if (_demoTick <= 0) return false;
+    // Save current state to redo stack before restoring (for instant step-forward)
+    _btSaveSnapshot();
+    const redoSnap = _btSnapshots.pop(); // the one we just saved = current state
+    _redoStack.push(redoSnap);
+    // Now pop the actual previous state
+    const snap = _btSnapshots.pop();
+    _btRestoreSnapshot(snap);
+    // Clear halt flag — rewind should always allow forward replay
+    simHalted = false;
+    // Clear backtracker BFS state so forward replay starts clean
+    _bfsReset();
+    _btReset();
+    // Reset live guards to grace period — replayed choreography may diverge
+    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+    // Also trim the tick log to match
+    while (_tickLog.length > 0 && _tickLog[_tickLog.length - 1].tick >= _demoTick) {
+        _tickLog.pop();
+    }
+    _playbackUpdateDisplay();
+    return true;
+}
+
+// Step forward one tick — instant from redo stack if available, else re-execute.
+async function _playbackStepForward() {
+    if (_tickInProgress || !_demoActive) return;
+    simHalted = false;
+    if (_redoStack.length > 0) {
+        // Instant restore from redo stack (no solver, no choreography)
+        const redoSnap = _redoStack.pop();
+        _btRestoreSnapshot(redoSnap);
+        simHalted = false;
+        _playbackUpdateDisplay();
+        return;
+    }
+    // No redo available — re-execute tick (slower path)
+    const wasPaused = _demoPaused;
+    _demoPaused = false;
+    await demoTick();
+    if (wasPaused) _demoPaused = true;
+    _playbackUpdateDisplay();
+}
+
+// Begin reverse playback at current speed.
+function startReverse() {
+    if (_demoReversing) return;
+    pauseDemo();
+    _demoReversing = true;
+    const intervalMs = Math.max(4, _getDemoIntervalMs());
+    // Throttle visual updates during reverse: restore state every tick but only
+    // rebuild 3D scene at ~30fps max to avoid expensive rebuildShortcutLines calls
+    let _lastVisualUpdate = 0;
+    const VISUAL_INTERVAL = 33; // ~30fps
+    _reverseInterval = setInterval(() => {
+        if (_btSnapshots.length < 1 || _demoTick <= 0) {
+            stopReverse();
+            return;
+        }
+        // Save current state to redo stack before restoring
+        _btSaveSnapshot();
+        _redoStack.push(_btSnapshots.pop());
+        // Restore previous state
+        const snap = _btSnapshots.pop();
+        _btRestoreSnapshot(snap);
+        simHalted = false;
+        _bfsReset();
+        _btReset();
+        if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+        while (_tickLog.length > 0 && _tickLog[_tickLog.length - 1].tick >= _demoTick) {
+            _tickLog.pop();
+        }
+        // Only update visuals at throttled rate
+        const now = performance.now();
+        if (now - _lastVisualUpdate >= VISUAL_INTERVAL) {
+            _playbackUpdateDisplay();
+            _lastVisualUpdate = now;
+        }
+    }, intervalMs);
+    _updatePlaybackButtons();
+}
+
+// Stop reverse playback.
+function stopReverse() {
+    _demoReversing = false;
+    if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
+    _demoPaused = true;
+    // Final visual sync so display matches current state
+    _playbackUpdateDisplay();
+    _updatePlaybackButtons();
+}
+
+// Refresh display after a manual step (back or forward).
+// Snapshot already contains pos[], activeSet, impliedSet, xonImpliedSet —
+// NO solver or detectImplied() needed. Just update 3D scene from restored state.
+function _playbackUpdateDisplay() {
+    // Tick counter
+    const el = document.getElementById('nucleus-status');
+    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>`;
+    const dpT = document.getElementById('dp-title');
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
+    // Apply restored solver positions to the 3D scene (no re-solve needed)
+    if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
+    // Rebuild state + SC lines + void spheres from restored SC sets
+    if (typeof bumpState === 'function') bumpState();
+    if (typeof rebuildShortcutLines === 'function') rebuildShortcutLines();
+    if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
+    if (typeof updateSpheres === 'function') updateSpheres();
+    if (typeof updateStatus === 'function') updateStatus();
+    updateDemoPanel();
+    updateXonPanel();
+}
+
+// Sync playback button visual states.
+function _updatePlaybackButtons() {
+    const revBtn = document.getElementById('btn-reverse');
+    const pauseBtn = document.getElementById('btn-nucleus-pause');
+    if (revBtn) {
+        revBtn.style.borderColor = _demoReversing ? '#ff8844' : '#6688aa';
+        revBtn.style.color = _demoReversing ? '#ffaa66' : '#88aacc';
+    }
+    if (pauseBtn) {
+        pauseBtn.textContent = (_demoPaused && !_demoReversing) ? '\u25B6' : '\u23F8';
+    }
+}
+
+// Export tick log as downloadable JSON.
+function exportTickLog() {
+    if (_tickLog.length === 0) {
+        console.warn('[export] No tick log data to export');
+        return;
+    }
+    const data = {
+        version: 2,
+        exported: new Date().toISOString(),
+        totalTicks: _tickLog.length,
+        format: { guards: 'delta — tick 0 has full state, subsequent ticks have only changed keys (null = no change)' },
+        params: JSON.parse(JSON.stringify(_choreoParams)),
+        log: _tickLog
+    };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `flux-log-${_tickLog.length}ticks-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    console.log(`[export] Downloaded ${_tickLog.length} tick log entries`);
 }
