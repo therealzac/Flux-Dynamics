@@ -5,7 +5,7 @@ const ELECTRON_COLORS_CSS=['#ffee44','#44ffcc','#ff44aa','#44aaff','#ffaa44','#a
 let excitations=[], electronNextId=0, placingExcitation=false;
 let _deferUIUpdates = false, _uiDirty = false; // batch UI updates during tick
 const ELECTRON_ALPHA=3.0, TRAIL_LENGTH=24;
-let ELECTRON_STEP_MS=30;  // fastest default — tournament needs throughput
+let ELECTRON_STEP_MS=0;  // 0 = uncapped (MAX speed), matches slider default of 100
 let _severanceCount = 0;
 
 // scPairToId hoisted to early block (line ~315) to avoid TDZ in computeVoidNeighbors

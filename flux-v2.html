@@ -207,45 +207,46 @@
         <!-- Opacity sliders — always visible -->
         <div class="ctrl-row">
             <span class="ctrl-label">spheres</span>
-            <input type="range" id="sphere-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
-            <span id="sphere-opacity-val" class="ctrl-val">50%</span>
+            <input type="range" id="sphere-opacity-slider" class="ctrl-slider" min="1" max="100" value="5" step="1">
+            <span id="sphere-opacity-val" class="ctrl-val">5%</span>
         </div>
         <div class="ctrl-row">
             <span class="ctrl-label">shapes</span>
-            <input type="range" id="void-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
-            <span id="void-opacity-val" class="ctrl-val">50%</span>
+            <input type="range" id="void-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
+            <span id="void-opacity-val" class="ctrl-val">13%</span>
         </div>
         <div class="ctrl-row">
             <span class="ctrl-label">graph</span>
-            <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
-            <span id="graph-opacity-val" class="ctrl-val">50%</span>
+            <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
+            <span id="graph-opacity-val" class="ctrl-val">13%</span>
         </div>
         <div class="ctrl-row">
             <span class="ctrl-label">xons</span>
-            <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="50" step="1">
-            <span id="trail-opacity-val" class="ctrl-val">50%</span>
+            <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
+            <span id="trail-opacity-val" class="ctrl-val">100%</span>
         </div>
         <!-- spark slider hidden: unified with xons slider -->
         <input type="range" id="spark-opacity-slider" style="display:none" min="0" max="100" value="100" step="1">
+        <!-- spark synced from xons slider; keep at 100 -->
         <div class="ctrl-row">
             <span class="ctrl-label">weak</span>
-            <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="80" step="1">
-            <span id="weak-opacity-val" class="ctrl-val">80%</span>
+            <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="34" step="1">
+            <span id="weak-opacity-val" class="ctrl-val">34%</span>
         </div>
         <div class="ctrl-row">
             <span class="ctrl-label">speed</span>
             <input type="range" id="excitation-speed-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
-            <span id="excitation-speed-val" class="ctrl-val">30ms</span>
+            <span id="excitation-speed-val" class="ctrl-val">MAX</span>
         </div>
         <div class="ctrl-row">
             <span class="ctrl-label">trails</span>
-            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="50" step="1">
-            <span id="tracer-lifespan-val" class="ctrl-val">50</span>
+            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="250" step="1">
+            <span id="tracer-lifespan-val" class="ctrl-val">250</span>
         </div>
         <div class="ctrl-row" style="margin-top:2px;">
             <span class="ctrl-label" id="orbit-toggle" style="cursor:pointer; user-select:none; color:#6a8aaa;"
                   title="Click to toggle auto-orbit">orbit</span>
-            <input type="range" id="orbit-speed-slider" class="ctrl-slider" min="0" max="100" value="25" step="1">
+            <input type="range" id="orbit-speed-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
             <span id="orbit-speed-val" class="ctrl-val" style="color:#555;">off</span>
         </div>
         <!-- ═══ NUCLEUS SIMULATOR PANEL (primary V2 interface) ═══ -->
@@ -389,23 +390,23 @@
     <div id="toast"></div>
     <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-    <script src="src/flux-constants.js?v=7"></script>
+    <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
     <script src="src/flux-demo-state.js?v=13"></script>
     <script src="src/flux-demo-xon.js?v=4"></script>
     <script src="src/flux-demo-backtrack.js?v=5"></script>
     <script src="src/flux-demo-planner.js?v=8"></script>
     <script src="src/flux-demo-ui.js?v=15"></script>
-    <script src="src/flux-demo.js?v=335"></script>
-    <script src="src/flux-solver-render.js?v=25"></script>
+    <script src="src/flux-demo.js?v=336"></script>
+    <script src="src/flux-solver-render.js?v=26"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=9"></script>
-    <script src="src/flux-ui.js?v=11"></script>
-    <script src="src/flux-electrons.js?v=14"></script>
+    <script src="src/flux-ui.js?v=12"></script>
+    <script src="src/flux-electrons.js?v=15"></script>
     <script src="src/flux-voids.js?v=13"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
-    <script src="src/flux-nucleus.js?v=34"></script>
-    <script src="src/flux-tests.js?v=201"></script>
+    <script src="src/flux-nucleus.js?v=35"></script>
+    <script src="src/flux-tests.js?v=202"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

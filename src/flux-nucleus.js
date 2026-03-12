@@ -222,16 +222,7 @@ const NucleusSimulator = (function(){
 
         // (pattern demo button removed — demo is the simulate button now)
 
-        // Visual defaults for nucleus mode: translucent spheres + graph + shapes
-        const sphereSlider = document.getElementById('sphere-opacity-slider');
-        if(sphereSlider){ sphereSlider.value = 5; sphereSlider.dispatchEvent(new Event('input')); }
-        const graphSlider = document.getElementById('graph-opacity-slider');
-        if(graphSlider){ graphSlider.value = 5; graphSlider.dispatchEvent(new Event('input')); }
-        const shapesSlider = document.getElementById('void-opacity-slider');
-        if(shapesSlider){ shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
-        // Speed default = slowest (600ms interval) for detailed observation
-        const speedSlider = document.getElementById('excitation-speed-slider');
-        if(speedSlider){ speedSlider.value = 1; speedSlider.dispatchEvent(new Event('input')); }
+        // Slider defaults are set in HTML — don't override user preferences here.
     }
 
     // ── Exit nucleus UI mode ──
@@ -255,13 +246,7 @@ const NucleusSimulator = (function(){
         const bs = document.getElementById('bottom-stats');
         if(bs) { document.body.appendChild(bs); bs.classList.remove('inline'); }
         if (_demoActive) stopDemo();
-        // Restore visual defaults
-        const sphereSlider = document.getElementById('sphere-opacity-slider');
-        if(sphereSlider){ sphereSlider.value = 50; sphereSlider.dispatchEvent(new Event('input')); }
-        const graphSlider = document.getElementById('graph-opacity-slider');
-        if(graphSlider){ graphSlider.value = 50; graphSlider.dispatchEvent(new Event('input')); }
-        const speedSlider = document.getElementById('excitation-speed-slider');
-        if(speedSlider){ speedSlider.value = 100; speedSlider.dispatchEvent(new Event('input')); }
+        // Slider defaults are set in HTML — don't override user preferences on exit.
     }
 
     // ── Populate model selector from RULE_REGISTRY ──
