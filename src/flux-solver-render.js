@@ -485,7 +485,11 @@ function rebuildLatticeGeometry(level, octCentered){
     _solvePx = new Float64Array(N * 3);
     _solveCiCap = BASE_EDGES.length + ALL_SC.length;
     _solveCi = new Uint32Array(_solveCiCap * 2);
-    _solveCacheClear(); // invalidate cache on lattice rebuild
+    // Save current cache before switching levels, then load cache for new level
+    if (_solveIDBDirty) _solveIDBSave();
+    _solveCacheClear();
+    _solveCacheLevel = level;
+    _solveIDBLoad(level); // async — entries trickle in, cache misses until loaded
     // BFS 2-color the BASE_EDGES graph for void duality visualisation
     computeVoidTypes();
     // Find 4-neighbor sets for each void; stored as indices into REST/pos
@@ -532,9 +536,84 @@ function computeVoidTypes(){
 // ─── PBD solver ───────────────────────────────────────────────────────────────
 // LRU cache: each unique SC configuration has exactly one sphere packing
 // solution, so memoizing by canonical SC-ID key eliminates ~90% of solves.
+// Persisted to IndexedDB so the cache survives page refreshes.
 const _SOLVE_CACHE_MAX = 128;
 const _solveLRU = new Map(); // key → { p: [...], converged: bool }
 let _solveCacheHits = 0;
+let _solveCacheLevel = -1; // lattice level the cache was loaded for
+
+// ── IndexedDB persistence for solver cache ──
+const _SOLVE_IDB_NAME = 'flux_solver_cache';
+const _SOLVE_IDB_VERSION = 1;
+const _SOLVE_IDB_STORE = 'solutions';
+let _solveIDB = null;
+let _solveIDBReady = false;
+let _solveIDBDirty = false; // set when new entries added, triggers async save
+let _solveIDBSaveTimer = null;
+
+function _solveIDBOpen() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open(_SOLVE_IDB_NAME, _SOLVE_IDB_VERSION);
+        req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(_SOLVE_IDB_STORE)) {
+                db.createObjectStore(_SOLVE_IDB_STORE);
+            }
+        };
+        req.onsuccess = (e) => { _solveIDB = e.target.result; _solveIDBReady = true; resolve(); };
+        req.onerror = () => { console.warn('[SolverCache] IndexedDB unavailable'); resolve(); };
+    });
+}
+
+// Load cache for a given lattice level from IndexedDB
+async function _solveIDBLoad(level) {
+    if (!_solveIDBReady) await _solveIDBOpen();
+    if (!_solveIDB) return;
+    return new Promise((resolve) => {
+        try {
+            const tx = _solveIDB.transaction(_SOLVE_IDB_STORE, 'readonly');
+            const store = tx.objectStore(_SOLVE_IDB_STORE);
+            const req = store.get('L' + level);
+            req.onsuccess = () => {
+                const data = req.result;
+                if (data && Array.isArray(data)) {
+                    let loaded = 0;
+                    for (const [key, val] of data) {
+                        if (!_solveLRU.has(key) && _solveLRU.size < _SOLVE_CACHE_MAX) {
+                            _solveLRU.set(key, val);
+                            loaded++;
+                        }
+                    }
+                    if (loaded) console.log('[SolverCache] Loaded ' + loaded + ' entries from IndexedDB for L' + level);
+                }
+                resolve();
+            };
+            req.onerror = () => resolve();
+        } catch (e) { resolve(); }
+    });
+}
+
+// Save current cache to IndexedDB (debounced, async, non-blocking)
+function _solveIDBSave() {
+    if (!_solveIDB || _solveCacheLevel < 0) return;
+    const entries = Array.from(_solveLRU.entries());
+    const level = _solveCacheLevel;
+    try {
+        const tx = _solveIDB.transaction(_SOLVE_IDB_STORE, 'readwrite');
+        const store = tx.objectStore(_SOLVE_IDB_STORE);
+        store.put(entries, 'L' + level);
+    } catch (e) { /* non-critical */ }
+}
+
+function _solveIDBScheduleSave() {
+    if (_solveIDBSaveTimer) return;
+    _solveIDBSaveTimer = setTimeout(() => {
+        _solveIDBSaveTimer = null;
+        _solveIDBSave();
+        _solveIDBDirty = false;
+    }, 2000); // batch saves every 2s
+}
+
 function _solveCacheKey(sortedSC) {
     // Build canonical key from sorted [a,b] pairs (deterministic for same SC config)
     let k = '';
@@ -545,6 +624,10 @@ function _solveCacheKey(sortedSC) {
     return k;
 }
 function _solveCacheClear() { _solveLRU.clear(); }
+// Eagerly open IndexedDB so it's ready by the time the first lattice builds
+_solveIDBOpen();
+// Save cache on page unload so no entries are lost
+window.addEventListener('beforeunload', () => { if (_solveIDBDirty) _solveIDBSave(); });
 // Pre-allocated solver buffers (initialized in buildLattice, reused per call)
 let _solvePx = null;   // Float64Array(N*3)
 let _solveCi = null;   // Uint32Array — constraint index buffer
@@ -638,6 +721,11 @@ function _solve(scPairs,iters=5000,noBailout=false){
     _solveLRU.set(cacheKey, cacheResult);
     if (_solveLRU.size > _SOLVE_CACHE_MAX) {
         _solveLRU.delete(_solveLRU.keys().next().value); // evict LRU
+    }
+    // Schedule async save to IndexedDB
+    if (!_solveIDBDirty) {
+        _solveIDBDirty = true;
+        _solveIDBScheduleSave();
     }
     const _dt = performance.now() - _t0;
     _solveTotalMs += _dt;

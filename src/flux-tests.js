@@ -1884,11 +1884,8 @@ function _startVisualTrial(params, maxTicks) {
         // Start the demo — it will run visually using the normal animation loop
         startDemoLoop();
 
-        // Apply tournament visual presets only on the FIRST trial — preserve user's view after that
-        if (!_tournamentVisualsApplied) {
-            _applyTournamentVisuals();
-            _tournamentVisualsApplied = true;
-        }
+        // Tournament no longer overrides visual settings — preserve user's view
+        _tournamentVisualsApplied = true;
 
         // Restore trial label (simulateNucleus overwrites rule-title)
         const titleEl = document.getElementById('rule-title');

@@ -1145,7 +1145,7 @@ function startDemoLoop() {
         const shapesSlider = document.getElementById('void-opacity-slider');
         if (shapesSlider) { shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
         const graphSlider = document.getElementById('graph-opacity-slider');
-        if (graphSlider) { graphSlider.value = 21; graphSlider.dispatchEvent(new Event('input')); }
+        if (graphSlider) { graphSlider.value = 34; graphSlider.dispatchEvent(new Event('input')); }
         const trailSlider = document.getElementById('trail-opacity-slider');
         if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
 

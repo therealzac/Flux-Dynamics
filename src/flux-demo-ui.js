@@ -340,9 +340,9 @@ function resumeDemo() {
                     return;
                 }
                 if (_redoStack.length > 0) {
+                    _btSaveSnapshot(); // save current state BEFORE restore so rewind can reach it
                     const snap = _redoStack.pop();
                     _btRestoreSnapshot(snap);
-                    _btSaveSnapshot(); // rebuild snapshot stack for future rewind
                     simHalted = false;
                     _playbackUpdateDisplay();
                 } else {
@@ -376,7 +376,7 @@ function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
     _demoReversing = false;
-    if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
+    if (_reverseInterval) { clearTimeout(_reverseInterval); _reverseInterval = null; }
     _tickLog.length = 0;
     _redoStack.length = 0;
     _openingPhase = false;
@@ -463,9 +463,9 @@ async function _playbackStepForward() {
     simHalted = false;
     if (_redoStack.length > 0) {
         // Instant restore from redo stack (no solver, no choreography)
+        _btSaveSnapshot(); // save current state BEFORE restore so rewind can reach it
         const redoSnap = _redoStack.pop();
         _btRestoreSnapshot(redoSnap);
-        _btSaveSnapshot(); // rebuild snapshot stack for future rewind
         simHalted = false;
         _playbackUpdateDisplay();
         return;
@@ -478,17 +478,17 @@ async function _playbackStepForward() {
     _playbackUpdateDisplay();
 }
 
-// Begin reverse playback at current speed.
+// Begin reverse playback at current speed (responsive to slider changes).
 function startReverse() {
     if (_demoReversing) return;
     pauseDemo();
     _demoReversing = true;
-    const intervalMs = Math.max(4, _getDemoIntervalMs());
     // Throttle visual updates during reverse: restore state every tick but only
     // rebuild 3D scene at ~30fps max to avoid expensive rebuildShortcutLines calls
     let _lastVisualUpdate = 0;
     const VISUAL_INTERVAL = 33; // ~30fps
-    _reverseInterval = setInterval(() => {
+    function _reverseStep() {
+        if (!_demoReversing) return;
         if (_btSnapshots.length < 1 || _demoTick <= 0) {
             stopReverse();
             return;
@@ -512,14 +512,19 @@ function startReverse() {
             _playbackUpdateDisplay();
             _lastVisualUpdate = now;
         }
-    }, intervalMs);
+        // Re-read slider each step so speed changes take effect immediately
+        const nextMs = Math.max(4, _getDemoIntervalMs());
+        _reverseInterval = setTimeout(_reverseStep, nextMs);
+    }
+    const intervalMs = Math.max(4, _getDemoIntervalMs());
+    _reverseInterval = setTimeout(_reverseStep, intervalMs);
     _updatePlaybackButtons();
 }
 
 // Stop reverse playback.
 function stopReverse() {
     _demoReversing = false;
-    if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
+    if (_reverseInterval) { clearTimeout(_reverseInterval); _reverseInterval = null; }
     _demoPaused = true;
     // Final visual sync so display matches current state
     _playbackUpdateDisplay();
