@@ -2976,6 +2976,8 @@ async function demoTick() {
     if (_rewindRequested) {
         _rewindRequested = false;
         _btActive = true;
+        // Signal RL reward: penalize moves that trigger backtracks
+        if (typeof _ppoBacktracksThisTick !== 'undefined') _ppoBacktracksThisTick++;
 
         // Extract exclusions and accumulate in persistent ledger.
         // Track whether any GENUINELY NEW exclusions were added — if not, this

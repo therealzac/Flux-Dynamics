@@ -316,6 +316,7 @@ let _ppoPrevAvgCV = null;
 let _ppoTetCompletionsThisTick = 0;
 let _ppoGuardFailedThisTick = false;
 let _ppoDeformationThisTick = false;
+let _ppoBacktracksThisTick = 0;  // number of backtrack retries this tick
 
 function _ppoComputeAvgCV() {
     if (typeof _demoVisits === 'undefined' || !_demoVisits) return 1;
@@ -351,6 +352,12 @@ function computeTickReward() {
     // Guard failure penalty
     if (_ppoGuardFailedThisTick) reward -= 1.0;
 
+    // Backtracker penalty: each retry means the NN chose a move that violated
+    // a constraint (Pauli, teleportation, unactivated SC, etc.)
+    if (_ppoBacktracksThisTick > 0) {
+        reward -= 0.5 * _ppoBacktracksThisTick;
+    }
+
     // Deformation reward: encourage 1:1 tick-to-Planck ratio
     if (_ppoDeformationThisTick) {
         reward += PPO_DEFORMATION_BONUS;
@@ -371,6 +378,7 @@ function computeTickReward() {
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
     _ppoDeformationThisTick = false;
+    _ppoBacktracksThisTick = 0;
 
     return reward;
 }
@@ -380,6 +388,7 @@ function resetTickRewardState() {
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
     _ppoDeformationThisTick = false;
+    _ppoBacktracksThisTick = 0;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
