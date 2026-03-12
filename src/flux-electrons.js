@@ -113,6 +113,9 @@ function excitationMaterialiseSC(e, scId, isBridge){
 // thresholds. Uses a SINGLE solver call (no detectImplied) and never
 // leaves side effects — safe to call in lookahead.
 let _cmqCallCount = 0, _cmqCpuCount = 0, _cmqCacheHits = 0, _cmqTotalMs = 0;
+// CMQ result cache: keyed by stateVersion + scId, cleared on SC set changes
+let _cmqResultCache = new Map();
+let _cmqResultCacheVersion = -1;
 function canMaterialiseQuick(scId){
     _cmqCallCount++;
     if(activeSet.has(scId)||impliedSet.has(scId)||xonImpliedSet.has(scId)) return true;
@@ -125,21 +128,29 @@ function canMaterialiseQuick(scId){
         const _SC_IDEAL=2/Math.sqrt(3); // 1.1547
         if(Math.abs(_dist-1)>0.05 && Math.abs(_dist-_SC_IDEAL)>0.10) return false;
     }
-    // Check GPU batch cache first (avoids redundant CPU solve)
+    // CMQ result cache: same SC config + same candidate → same pass/fail
+    if (_cmqResultCacheVersion !== stateVersion) {
+        _cmqResultCache.clear();
+        _cmqResultCacheVersion = stateVersion;
+    }
+    if (_cmqResultCache.has(scId)) {
+        _cmqCacheHits++;
+        return _cmqResultCache.get(scId);
+    }
+    // Check GPU batch cache (avoids redundant CPU solve)
     if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
         const cached = SolverProxy.getBatchResult(scId);
-        if (cached) { _cmqCacheHits++; }
-        if (cached) return cached.pass;
+        if (cached) { _cmqCacheHits++; _cmqResultCache.set(scId, cached.pass); return cached.pass; }
     }
-    // Build constraint pairs with the candidate SC added (cached base pairs)
+    // Build constraint pairs: push/pop avoids spread-copy (safe: _solve copies input)
     _cmqCpuCount++;
     const _cmqT0 = performance.now();
     const basePairs = _getBasePairs();
     const sc=SC_BY_ID[scId];
-    const pairs = [...basePairs, [sc.a, sc.b]];
-    // Scale iterations with lattice size so L3+ converges sufficiently
+    basePairs.push([sc.a, sc.b]);
     const cmqIters = Math.max(500, Math.ceil(N * 5));
-    const {p}=_solve(pairs, cmqIters);
+    const {p}=_solve(basePairs, cmqIters);
+    basePairs.pop();
     _cmqTotalMs += performance.now() - _cmqT0;
     // Don't bail on !converged — solver may not reach 1e-9 on L3+
     // but positions can still be within strain tolerance. Let strain check decide.
@@ -152,13 +163,14 @@ function canMaterialiseQuick(scId){
         if(err>worst) worst=err; sum+=err;
         edgeLenSum+=d;
     }
-    if(worst>ROLLBACK_TOL || sum/BASE_EDGES.length>AVG_TOL) return false;
+    if(worst>ROLLBACK_TOL || sum/BASE_EDGES.length>AVG_TOL) { _cmqResultCache.set(scId, false); return false; }
     // Kepler density check: reject if adding this SC would push density beyond 0.01%
     const lAvg=edgeLenSum/BASE_EDGES.length;
     const idealDens=computeIdealDensity();
     const actualDens=idealDens/(lAvg*lAvg*lAvg);
     const densDev=Math.abs(actualDens*100 - idealDens*100);
-    if(densDev > 0.01) return false;
+    if(densDev > 0.01) { _cmqResultCache.set(scId, false); return false; }
+    _cmqResultCache.set(scId, true);
     return true;
 }
 

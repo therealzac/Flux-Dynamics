@@ -61,8 +61,10 @@ function _maxBipartiteAssignment(plans, blocked) {
     const order = plans.map((_, i) => i);
     order.sort((a, b) => plans[a].candidates.length - plans[b].candidates.length);
 
+    const visited = new Set();
     for (const i of order) {
-        augment(i, new Set());
+        visited.clear();
+        augment(i, visited);
     }
 
     // Apply results

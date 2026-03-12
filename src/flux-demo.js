@@ -374,17 +374,30 @@ function _updateDirBalance(xon, from, to) {
 // ── Locality filter: only return SCs whose endpoints are approximately unit-length apart ──
 // This prevents non-local SC candidates from entering ANY decision path.
 // Threshold 0.50: rejects teleportation-range (d > 1.5) but allows pre-solver SC edges (~1.15).
+// Cached per (node, stateVersion) to avoid redundant filtering + sqrt calls.
+let _localScCache = null;
+let _localScCacheVersion = -1;
 function _localScNeighbors(node) {
+    // Invalidate cache when SC sets change
+    if (_localScCacheVersion !== stateVersion) {
+        _localScCache = new Array(N || 0);
+        _localScCacheVersion = stateVersion;
+    }
+    if (_localScCache[node]) return _localScCache[node];
     const scs = scByVert[node] || [];
     const pa = pos[node];
-    if (!pa) return scs; // pos not ready yet (pre-lattice)
-    return scs.filter(sc => {
+    if (!pa) return scs;
+    // Squared distance check: |d - 1| <= 0.50 ⟺ d² ∈ [0.25, 2.25]
+    const result = scs.filter(sc => {
         const other = sc.a === node ? sc.b : sc.a;
         const pb = pos[other];
         if (!pb) return false;
         const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
-        return Math.abs(Math.sqrt(dx*dx + dy*dy + dz*dz) - 1) <= 0.50;
+        const d2 = dx*dx + dy*dy + dz*dz;
+        return d2 >= 0.25 && d2 <= 2.25;
     });
+    _localScCache[node] = result;
+    return result;
 }
 
 // ── Oct-distance helper: sort neighbors by proximity to nearest oct node ──
@@ -2977,10 +2990,12 @@ async function demoTick() {
         else if (m === 'weak') x._modeStats.weak++;
     }
 
-    // Update UI — every tick (un-throttled)
-    updateDemoPanel();
-    updateStatus();
-    updateXonPanel();
+    // Update UI — throttled to every 4th tick (panels show cumulative stats)
+    if (_demoTick % 4 === 0) {
+        updateDemoPanel();
+        updateStatus();
+        updateXonPanel();
+    }
 
     // Tick log entry (lightweight, for export)
     // Guards use delta encoding: full snapshot on first tick, then only changes

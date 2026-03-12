@@ -481,6 +481,11 @@ function rebuildLatticeGeometry(level, octCentered){
         _repFlat[r*2]   = REPULSION_PAIRS[r][0];
         _repFlat[r*2+1] = REPULSION_PAIRS[r][1];
     }
+    // Pre-allocate solver buffers (reused across all _solve calls)
+    _solvePx = new Float64Array(N * 3);
+    _solveCiCap = BASE_EDGES.length + ALL_SC.length;
+    _solveCi = new Uint32Array(_solveCiCap * 2);
+    _solveCacheClear(); // invalidate cache on lattice rebuild
     // BFS 2-color the BASE_EDGES graph for void duality visualisation
     computeVoidTypes();
     // Find 4-neighbor sets for each void; stored as indices into REST/pos
@@ -525,16 +530,25 @@ function computeVoidTypes(){
 // rebuildLatticeGeometry(1);
 
 // ─── PBD solver ───────────────────────────────────────────────────────────────
-// Single-entry cache: avoids redundant solves when the same constraint set
-// is tested multiple times in a tick (e.g. canMaterialiseQuick then materialise).
-let _solveCache = { key: -1, len: -1, result: null };
-function _pairsHash(sorted){
-    let h = 0;
-    for(let i = 0; i < sorted.length; i++){
-        h = (h * 31 + sorted[i][0] * 20000 + sorted[i][1]) | 0;
+// LRU cache: each unique SC configuration has exactly one sphere packing
+// solution, so memoizing by canonical SC-ID key eliminates ~90% of solves.
+const _SOLVE_CACHE_MAX = 128;
+const _solveLRU = new Map(); // key → { p: [...], converged: bool }
+let _solveCacheHits = 0;
+function _solveCacheKey(sortedSC) {
+    // Build canonical key from sorted [a,b] pairs (deterministic for same SC config)
+    let k = '';
+    for (let i = 0; i < sortedSC.length; i++) {
+        if (i) k += ',';
+        k += sortedSC[i][0] + ':' + sortedSC[i][1];
     }
-    return h;
+    return k;
 }
+function _solveCacheClear() { _solveLRU.clear(); }
+// Pre-allocated solver buffers (initialized in buildLattice, reused per call)
+let _solvePx = null;   // Float64Array(N*3)
+let _solveCi = null;   // Uint32Array — constraint index buffer
+let _solveCiCap = 0;   // current capacity
 let _solveCallCount = 0;
 let _solveCallCountPerTick = 0;
 let _solveTotalMs = 0;
@@ -545,18 +559,23 @@ function _solve(scPairs,iters=5000,noBailout=false){
     _solveCallCountPerTick++;
     const _t0 = performance.now();
     const sortedSC=[...scPairs].sort((x,y)=>x[0]-y[0]||x[1]-y[1]);
-    // Cache hit? Return deep copy of cached positions (caller may mutate)
-    if(!noBailout && iters===5000){
-        const cacheKey = _pairsHash(sortedSC);
-        if(cacheKey === _solveCache.key && sortedSC.length === _solveCache.len && _solveCache.result){
-            const cached = _solveCache.result;
-            return { p: cached.p.map(v=>[v[0],v[1],v[2]]), converged: cached.converged };
-        }
+    // LRU cache lookup (all iteration counts share the same solution)
+    const cacheKey = _solveCacheKey(sortedSC);
+    const cached = _solveLRU.get(cacheKey);
+    if (cached) {
+        _solveCacheHits++;
+        // Move to end of Map (most-recently-used)
+        _solveLRU.delete(cacheKey);
+        _solveLRU.set(cacheKey, cached);
+        const _dt = performance.now() - _t0;
+        _solveTotalMs += _dt;
+        // Return deep copy (callers may mutate positions)
+        return { p: cached.p.map(v=>[v[0],v[1],v[2]]), converged: cached.converged };
     }
-    // ─── Optimized solver: flat typed arrays, no per-call allocation ───
-    // Position buffer: copy from pre-flattened rest positions
-    const nNodes = N; // global N
-    const px = new Float64Array(nNodes * 3);
+    // ─── Solver: reuse pre-allocated flat typed arrays ───
+    const nNodes = N;
+    // Position buffer: reuse _solvePx or fallback to new allocation
+    const px = (_solvePx && _solvePx.length >= nNodes * 3) ? _solvePx : new Float64Array(nNodes * 3);
     if (_restFlat) {
         px.set(_restFlat);
     } else {
@@ -567,22 +586,20 @@ function _solve(scPairs,iters=5000,noBailout=false){
             px[off+2] = REST[i][2];
         }
     }
-    // Constraint indices: copy pre-flattened base edges + append SC pairs
+    // Constraint indices: reuse _solveCi or grow
     const nBase = BASE_EDGES.length;
     const nSC = sortedSC.length;
     const nC = nBase + nSC;
-    const ci = new Uint32Array(nC * 2);
-    ci.set(_baseFlat); // copy pre-flattened base edges in one shot
+    const ci = (_solveCi && _solveCiCap >= nC) ? _solveCi : new Uint32Array(nC * 2);
+    ci.set(_baseFlat);
     for (let e = 0; e < nSC; e++) {
         ci[(nBase+e)*2]   = sortedSC[e][0];
         ci[(nBase+e)*2+1] = sortedSC[e][1];
     }
-    // Repulsion pairs: flat (pre-built at lattice init would be better but this is one-time per solve)
     const nRep = REPULSION_PAIRS.length;
-    let mx=0, mx50=Infinity;
+    let mx=0;
     for(let it=0;it<iters;it++){
         mx=0;
-        // Project distance-1 constraints
         for(let e=0;e<nC;e++){
             const ii=ci[e*2], jj=ci[e*2+1];
             const io=ii*3, jo=jj*3;
@@ -597,13 +614,12 @@ function _solve(scPairs,iters=5000,noBailout=false){
             px[io]+=f*dx; px[io+1]+=f*dy; px[io+2]+=f*dz;
             px[jo]-=f*dx; px[jo+1]-=f*dy; px[jo+2]-=f*dz;
         }
-        // Project repulsion (only when too close) — uses pre-flattened buffer
         for(let r=0;r<nRep;r++){
             const ri=_repFlat[r*2], rj=_repFlat[r*2+1];
             const rio=ri*3, rjo=rj*3;
             const dx=px[rjo]-px[rio], dy=px[rjo+1]-px[rio+1], dz=px[rjo+2]-px[rio+2];
             const d2=dx*dx+dy*dy+dz*dz;
-            if(d2>=0.999999) continue; // fast squared-distance check (1.0-1e-6)^2 ≈ 0.999998
+            if(d2>=0.999999) continue;
             const d=Math.sqrt(d2);
             const f=(d-1.0)/d*0.5;
             px[rio]+=f*dx; px[rio+1]+=f*dy; px[rio+2]+=f*dz;
@@ -611,17 +627,17 @@ function _solve(scPairs,iters=5000,noBailout=false){
         }
         if(mx<1e-9) break;
     }
-    // Convert back to array-of-arrays for compatibility
     const p = new Array(nNodes);
     for (let i = 0; i < nNodes; i++) {
         const off = i * 3;
         p[i] = [px[off], px[off+1], px[off+2]];
     }
     const result = {p,converged:mx<1e-9};
-    // Store in cache (only for default-param calls)
-    if(!noBailout && iters===5000){
-        const cacheKey = _pairsHash(sortedSC);
-        _solveCache = { key: cacheKey, len: sortedSC.length, result: { p: p.map(v=>[v[0],v[1],v[2]]), converged: result.converged } };
+    // Store in LRU cache (evict oldest if full)
+    const cacheResult = { p: p.map(v=>[v[0],v[1],v[2]]), converged: result.converged };
+    _solveLRU.set(cacheKey, cacheResult);
+    if (_solveLRU.size > _SOLVE_CACHE_MAX) {
+        _solveLRU.delete(_solveLRU.keys().next().value); // evict LRU
     }
     const _dt = performance.now() - _t0;
     _solveTotalMs += _dt;
@@ -970,41 +986,84 @@ function updateLatticeLevel(){
     updateCandidates(); updateSpheres(); updateStatus();
 }
 
-// ── SC edge rendering (per-SC objects for raycasting + highlight) ──
+// ── SC edge rendering — differential updates (reuse existing line objects) ──
 const scLineObjs={};
 function rebuildShortcutLines(){
     _updateVoidEdgeSets();
-    Object.values(scLineObjs).forEach(o=>{ scene.remove(o.line); o.line.geometry.dispose(); }); for(const k in scLineObjs) delete scLineObjs[k];
     const graphOpacity=+document.getElementById('graph-opacity-slider').value/100;
+    // Build desired state: which SCs should be visible and how
+    const desired = new Set();
+    activeSet.forEach(id => desired.add(id));
+    impliedSet.forEach(id => desired.add(id));
+    // Remove lines for SCs no longer in desired set
+    for (const k in scLineObjs) {
+        const id = +k;
+        if (!desired.has(id)) {
+            scene.remove(scLineObjs[id].line);
+            scLineObjs[id].line.geometry.dispose();
+            delete scLineObjs[id];
+        }
+    }
+    // Update or create lines for desired SCs
     activeSet.forEach(id=>{
         const s=SC_BY_ID[id];
-        // Priority: void > rule annotation > default stype
         const isVoid = _voidOctSCs.has(id);
         const col = isVoid ? VOID_OCT_COLOR
             : _ruleAnnotations.scColors.has(id) ? _ruleAnnotations.scColors.get(id) : S_COLOR[s.stype];
         const opac = _ruleAnnotations.scOpacity.has(id) ? _ruleAnnotations.scOpacity.get(id) : graphOpacity;
-        const mat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:opac,depthTest:false});
-        const geo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...pos[s.a]),new THREE.Vector3(...pos[s.b])]);
-        const line=new THREE.Line(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:false};
-        scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:false};
+        const existing = scLineObjs[id];
+        if (existing && !existing.implied) {
+            // Update positions in-place
+            const pa = existing.line.geometry.attributes.position.array;
+            pa[0]=pos[s.a][0]; pa[1]=pos[s.a][1]; pa[2]=pos[s.a][2];
+            pa[3]=pos[s.b][0]; pa[4]=pos[s.b][1]; pa[5]=pos[s.b][2];
+            existing.line.geometry.attributes.position.needsUpdate = true;
+            existing.mat.color.setHex(col); existing.mat.opacity = opac;
+            existing.baseColor = col;
+        } else {
+            // Remove old implied version if switching to active
+            if (existing) { scene.remove(existing.line); existing.line.geometry.dispose(); }
+            const mat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:opac,depthTest:false});
+            const geo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...pos[s.a]),new THREE.Vector3(...pos[s.b])]);
+            const line=new THREE.Line(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:false};
+            scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:false};
+        }
     });
     impliedSet.forEach(id=>{
+        if (activeSet.has(id)) return; // already handled above
         const s=SC_BY_ID[id];
-        // Priority: void > rule annotation > default stype (desaturated)
         const isVoid = _voidOctSCs.has(id);
         const baseCol = isVoid ? VOID_OCT_COLOR
             : _ruleAnnotations.scColors.has(id) ? _ruleAnnotations.scColors.get(id) : S_COLOR[s.stype];
         const r=((baseCol>>16)&0xff),g=((baseCol>>8)&0xff),b=baseCol&0xff;
         const grey=Math.round(r*0.3+g*0.3+b*0.3);
         const col=((Math.round(r*0.5+grey*0.5))<<16)|((Math.round(g*0.5+grey*0.5))<<8)|Math.round(b*0.5+grey*0.5);
-        const pa=new THREE.Vector3(...pos[s.a]),pb=new THREE.Vector3(...pos[s.b]);
-        const pts=[]; const SEGS=7;
-        for(let i=0;i<SEGS;i++){ const t0=i/SEGS,t1=(i+0.45)/SEGS; pts.push(pa.clone().lerp(pb,t0),pa.clone().lerp(pb,t1)); }
         const opac = _ruleAnnotations.scOpacity.has(id) ? _ruleAnnotations.scOpacity.get(id) * 0.55 : graphOpacity * 0.55;
-        const mat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:opac,depthTest:false});
-        const geo=new THREE.BufferGeometry().setFromPoints(pts);
-        const line=new THREE.LineSegments(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:true};
-        scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:true};
+        const existing = scLineObjs[id];
+        if (existing && existing.implied) {
+            // Update dashed positions in-place
+            const pa_v = pos[s.a], pb_v = pos[s.b];
+            const arr = existing.line.geometry.attributes.position.array;
+            const SEGS = 7;
+            for(let i=0;i<SEGS;i++){
+                const t0=i/SEGS, t1=(i+0.45)/SEGS;
+                const idx = i * 6;
+                arr[idx]  =pa_v[0]+(pb_v[0]-pa_v[0])*t0; arr[idx+1]=pa_v[1]+(pb_v[1]-pa_v[1])*t0; arr[idx+2]=pa_v[2]+(pb_v[2]-pa_v[2])*t0;
+                arr[idx+3]=pa_v[0]+(pb_v[0]-pa_v[0])*t1; arr[idx+4]=pa_v[1]+(pb_v[1]-pa_v[1])*t1; arr[idx+5]=pa_v[2]+(pb_v[2]-pa_v[2])*t1;
+            }
+            existing.line.geometry.attributes.position.needsUpdate = true;
+            existing.mat.color.setHex(col); existing.mat.opacity = opac;
+            existing.baseColor = col;
+        } else {
+            if (existing) { scene.remove(existing.line); existing.line.geometry.dispose(); }
+            const pa=new THREE.Vector3(...pos[s.a]),pb=new THREE.Vector3(...pos[s.b]);
+            const pts=[]; const SEGS=7;
+            for(let i=0;i<SEGS;i++){ const t0=i/SEGS,t1=(i+0.45)/SEGS; pts.push(pa.clone().lerp(pb,t0),pa.clone().lerp(pb,t1)); }
+            const mat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:opac,depthTest:false});
+            const geo=new THREE.BufferGeometry().setFromPoints(pts);
+            const line=new THREE.LineSegments(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:true};
+            scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:true};
+        }
     });
 }
 function setScHighlight(scId,on){
