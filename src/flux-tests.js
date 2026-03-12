@@ -2276,12 +2276,29 @@ async function _runTournament() {
                 _liveGuardDumped = false;
             }
 
-            // Run one tick
-            await new Promise(resolve => {
-                demoTick();
-                // Yield to event loop for rendering
-                setTimeout(resolve, 0);
-            });
+            // Pause support: wait while paused, yielding to let UI respond
+            if (_demoPaused && _tournamentRunning) {
+                // First pause frame: sync visuals so user can see current state
+                if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
+                if (typeof bumpState === 'function') bumpState();
+                if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
+                if (typeof updateSpheres === 'function') updateSpheres();
+                if (typeof updateDemoPanel === 'function') updateDemoPanel();
+                if (typeof updateXonPanel === 'function') updateXonPanel();
+                while (_demoPaused && _tournamentRunning) {
+                    await new Promise(r => setTimeout(r, 50));
+                }
+            }
+            if (!_tournamentRunning) break;
+
+            // Temporarily clear _demoPaused so demoTick() doesn't early-return
+            const wasPaused = _demoPaused;
+            if (wasPaused) _demoPaused = false;
+            demoTick();
+            if (wasPaused) _demoPaused = true;
+
+            // Yield every tick so the browser can repaint (user sees each tick)
+            await new Promise(r => setTimeout(r, 0));
 
             // Compute reward for this tick
             const reward = computeTickReward();
