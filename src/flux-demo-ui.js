@@ -392,6 +392,8 @@ function stopDemo() {
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
     const ds = document.getElementById('demo-status');
     if (ds) ds.style.display = 'none';
+    // Dispose wavefunction surface
+    if (typeof disposeWavefunction === 'function') disposeWavefunction();
     // Clean up Demo 3.0 xons and gluons
     _cleanupDemo3();
     // Clean up tet SCs from xonImpliedSet + oct SCs from activeSet

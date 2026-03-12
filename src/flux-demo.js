@@ -1509,6 +1509,9 @@ function _executeOpeningTick(occupied) {
 
         console.log(`[opening] Oct discovered: equator=[${ordered}], pole=${chosen.pole}, ${adjTets.length} tets`);
 
+        // Build wavefunction surface now that oct is known
+        if (typeof buildWavefunction === 'function') buildWavefunction();
+
         // ── Merry-go-round: equatorial xons rotate one position via cage SCs ──
         // This establishes the matter/antimatter winding direction (CW = matter).
         const eqXonMap = new Map();

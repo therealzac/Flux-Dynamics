@@ -1143,6 +1143,7 @@ function updateLatticeLevel(){
     if(_baseLineObj){ scene.remove(_baseLineObj); _baseLineObj.geometry.dispose(); _baseLineObj=null; _baseLineMat=null; }
     rebuildVoidSpheres();
     if (typeof buildBranes === 'function') buildBranes();
+    if (typeof buildWavefunction === 'function') buildWavefunction();
     rebuildBaseLines();
     rebuildShortcutLines();
     applySphereOpacity();
@@ -1352,6 +1353,7 @@ function startRenderLoop(){
         if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
         if (typeof updateBraneHighlights === 'function') updateBraneHighlights();
+        if (typeof updateWavefunction === 'function') updateWavefunction();
         tickOctVoids();
         renderer.render(scene, camera);
     })();
