@@ -58,7 +58,7 @@ function updateDemoPanel() {
     for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f].total);
     const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
     const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
-    const cv = mean > 0 ? (stddev / mean) : 0;
+    const cv = mean > 0 ? (stddev / mean) : 1; // no visits = worst evenness, not best
     const evenness = Math.max(0, 1 - cv);
 
     // Find max for bar normalization
