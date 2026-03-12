@@ -1,5 +1,11 @@
 # Flux Dynamics — Claude Context Document
 
+## Git Push Policy
+
+**NEVER push to GitHub unless the user explicitly tells you to.** Always commit locally and wait for the user's instruction to push.
+
+---
+
 ## Test-First Development Doctrine
 
 **Critical: All features implemented must have a robust test built before implementation can begin.**

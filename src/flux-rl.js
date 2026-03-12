@@ -458,7 +458,7 @@ function ppoUpdate(actorCritic, optimizer, buffer, lastValue) {
                 let _batchPLoss = 0, _batchVLoss = 0, _batchEntropy = 0;
                 const { value: loss, grads } = tf.variableGrads(() => {
                     const { logits, value } = actorCritic.forward(statesTensor, maskTensor);
-                    const values = value.squeeze();
+                    const values = value.reshape([-1]); // [bSize] — safe even when bSize=1 (squeeze would produce scalar)
 
                     // Log probabilities for taken actions
                     const allLogProbs = tf.logSoftmax(logits, 1);
