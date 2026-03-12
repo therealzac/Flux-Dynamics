@@ -107,7 +107,7 @@ let _octNodeSet = null;              // Set of oct-void node indices (set by sim
 let _octSCIds = [];                  // Oct void SC ids (4 equatorial cage SCs)
 let _octVoidIdx = -1;               // Void index of the nucleus oct (hadronic center)
 let _octSeedCenter = -1;            // Center node (all xons start here)
-let _openingPhase = false;           // true during 2-tick opening choreography (ticks 0-1)
+// _openingPhase declared in flux-demo-state.js
 let _octEquatorCycle = [];           // 4 equatorial nodes in cycle order (for merry-go-round)
 let _octCageSCCycle = [];            // 4 cage SC IDs in matching cycle order
 let _octAntipodal = new Map();       // node → antipodal oct node (diagonal pairs)

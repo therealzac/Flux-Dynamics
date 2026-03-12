@@ -27,7 +27,7 @@ const LIVE_GUARD_GRACE = 0;
 
 // T80: Base direction polarity — xons may only move in the positive vector direction
 // on base edges. Shortcut edges are bidirectional (exempt). Default: disabled.
-const _T80_BASE_POLARITY = true;
+const _T80_BASE_POLARITY = false;
 
 // Oct capacity: hard maximum of 6 oct-mode xons at any time.
 const OCT_CAPACITY_MAX = 6;
@@ -927,6 +927,55 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // ── T81: Matter/antimatter winding direction ──
+    // Once the merry-go-round establishes a winding direction at opening tick 1,
+    // all subsequent equator traversals must follow the same direction.
+    // CW = cycle order (i→i+1), CCW = reverse (i+1→i).
+    { id: 'T81', name: 'Equator winding direction locked',
+      projected(states) {
+        if (!_octWindingDirection || !_octEquatorCycle || _octEquatorCycle.length !== 4) return null;
+        const eqIdx = new Map();
+        _octEquatorCycle.forEach((n, i) => eqIdx.set(n, i));
+        for (const { xon, toNode } of states) {
+          if (!xon.alive || toNode === xon.node) continue;
+          const fi = eqIdx.get(xon.node), ti = eqIdx.get(toNode);
+          if (fi === undefined || ti === undefined) continue;
+          const isCW = (ti === (fi + 1) % 4);
+          const isCCW = (fi === (ti + 1) % 4);
+          if (!isCW && !isCCW) continue; // not adjacent equator nodes
+          if (isCW && _octWindingDirection === 'CCW') {
+            return `projected: ${xon.node}→${toNode} is CW but winding is CCW`;
+          }
+          if (isCCW && _octWindingDirection === 'CW') {
+            return `projected: ${xon.node}→${toNode} is CCW but winding is CW`;
+          }
+        }
+        return null;
+      },
+      check(tick, g, ctx) {
+        if (!_octWindingDirection || !_octEquatorCycle || _octEquatorCycle.length !== 4) return null;
+        if (!ctx.prev) return null;
+        const eqIdx = new Map();
+        _octEquatorCycle.forEach((n, i) => eqIdx.set(n, i));
+        for (const { xon, node: fromNode } of ctx.prev) {
+          if (!xon.alive) continue;
+          const toNode = xon.node;
+          if (toNode === fromNode) continue;
+          const fi = eqIdx.get(fromNode), ti = eqIdx.get(toNode);
+          if (fi === undefined || ti === undefined) continue;
+          const isCW = (ti === (fi + 1) % 4);
+          const isCCW = (fi === (ti + 1) % 4);
+          if (!isCW && !isCCW) continue; // not adjacent equator nodes
+          if (isCW && _octWindingDirection === 'CCW') {
+            return `tick ${tick}: xon moved ${fromNode}→${toNode} is CW but winding is CCW`;
+          }
+          if (isCCW && _octWindingDirection === 'CW') {
+            return `tick ${tick}: xon moved ${fromNode}→${toNode} is CCW but winding is CW`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1056,20 +1105,8 @@ function _liveGuardCheck() {
         if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
             _liveGuardFailTick = tick; // record first failure tick
         }
-        // ── TOURNAMENT MODE: don't backtrack or halt — just record failure ──
-        // The fitness evaluator checks _liveGuards.failed at trial end.
-        // Halting mid-trial would kill the demo loop and block the GA.
-        if (_tournamentRunning) {
-            // Reset failed state so the trial can keep running and accumulate
-            // more data for fitness scoring (coverage, ratios, etc.)
-            for (const entry of LIVE_GUARD_REGISTRY) {
-                const g = _liveGuards[entry.id];
-                if (g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
-            }
-            _liveGuardFailTick = null;
-            _liveGuardDumped = false;
-            return; // skip backtracker/halt entirely
-        }
+        // Tournament mode: guards enforced identically to demo mode.
+        // No bypass — failures trigger backtracker/halt same as demo.
         // ── BACKTRACKING: all failures trigger rewind instead of halt ──
         const canBacktrack = typeof _rewindRequested !== 'undefined'
             && typeof _btSnapshots !== 'undefined'

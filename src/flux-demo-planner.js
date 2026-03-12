@@ -1,0 +1,1037 @@
+// flux-demo-planner.js — Move planner: bipartite matching, lookahead, face scoring, tet assignment
+
+// Maximum bipartite matching for oct xon move assignment (Kuhn's algorithm).
+// Finds an augmenting path of arbitrary depth so that the maximum number of
+// xons get a valid destination. This prevents deadlocks that greedy assignment misses.
+//   plans: array of { xon, candidates: [{node, ...}], assigned: null }
+//   blocked: Set of nodes reserved by higher-priority moves (tet)
+function _maxBipartiteAssignment(plans, blocked) {
+    const n = plans.length;
+    const assignment = new Array(n).fill(null); // plan index → candidate
+    const claimed = new Map(); // dest node → plan index
+
+    // Augmenting path search: try to assign plans[idx] to a free candidate.
+    // If candidate is already taken by plans[other], recursively try to
+    // reassign plans[other] to a different candidate (arbitrary depth).
+    function augment(idx, visited) {
+        for (const c of plans[idx].candidates) {
+            if (blocked.has(c.node)) continue;
+            if (visited.has(c.node)) continue;
+            visited.add(c.node);
+
+            const existing = claimed.get(c.node);
+            if (existing === undefined || augment(existing, visited)) {
+                assignment[idx] = c;
+                claimed.set(c.node, idx);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Most constrained first: try xons with fewest candidates first
+    const order = plans.map((_, i) => i);
+    order.sort((a, b) => plans[a].candidates.length - plans[b].candidates.length);
+
+    for (const i of order) {
+        augment(i, new Set());
+    }
+
+    // Apply results
+    for (let i = 0; i < n; i++) {
+        plans[i].assigned = assignment[i];
+    }
+}
+
+// ── 6-Step Awareness System (bookended fermionic loop) ──
+// Every xon must know its next 6 valid steps before committing a move.
+// This covers: entry step + 4-hop tet loop + exit step.
+// The lookahead uses PROJECTED occupation (where neighbors will be after
+// their 1st moves) to account for cooperative multi-agent dynamics.
+//
+// Two lookahead modes:
+// 1. Generic graph traversal (_lookahead) — for oct xons with flexible movement
+// 2. Loop-shape-aware (_lookaheadTetPath) — for tet/idle_tet xons following
+//    their specific fermionic loop (fork, lollipop, ham CW/CCW).
+//    This simulates the xon stepping through its ACTUAL sequence, tracking
+//    self-occupation to handle revisited nodes (fork: a→b→a→c→a).
+//
+// Lookahead depth reads from _choreoParams.lookahead (GA-tunable)
+
+// Generic graph lookahead for oct xons (flexible movement).
+// Validates against: T19 (Pauli), T26 (SC activation), T27 (connectivity),
+// T29 (white trails only on oct nodes).
+function _lookahead(node, occupied, depth, _visited, _selfXon) {
+    if (depth <= 0) return true;
+    if (!_visited) _visited = new Set();
+    _visited.add(node);
+
+    // Base-edge neighbors
+    const nbs = baseNeighbors[node] || [];
+    for (const nb of nbs) {
+        if (_visited.has(nb.node)) continue;
+        // Prefer oct nodes for normal movement
+        if (_octNodeSet && !_octNodeSet.has(nb.node)) continue;
+        if (occupied.get(nb.node) || 0) {
+            // Occupied node = ANNIHILATION OPPORTUNITY (valid terminal move).
+            return true;
+        }
+        if (_lookahead(nb.node, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
+    }
+    // Active SC neighbors — T26: only traverse activated SCs
+    const scs = _localScNeighbors(node);
+    for (const sc of scs) {
+        const other = sc.a === node ? sc.b : sc.a;
+        if (_visited.has(other)) continue;
+        // Prefer oct nodes for normal movement
+        if (_octNodeSet && !_octNodeSet.has(other)) continue;
+        if (_annihilationEnabled && (occupied.get(other) || 0)) return true; // annihilation opportunity
+        // T26: SC must be activated
+        if (!(activeSet.has(sc.id) || impliedSet.has(sc.id) || xonImpliedSet.has(sc.id))) continue;
+        if (_lookahead(other, occupied, depth - 1, new Set(_visited), _selfXon)) return true;
+    }
+    // WEAK FORCE FALLBACK: if all oct-restricted paths fail, a free base neighbor
+    // CLOSE TO the oct cage is a valid escape via the weak force.
+    // Only consider neighbors within 2 hops of an oct node (prevents flashlight).
+    for (const nb of nbs) {
+        if (_visited.has(nb.node)) continue;
+        if (!(occupied.get(nb.node) || 0)) {
+            // Structural guard check: reject if move would violate ANY active test
+            if (_selfXon && _moveViolatesGuards(_selfXon, node, nb.node)) continue;
+            // Hard filter: only nucleus nodes allowed
+            _ensureNucleusNodeSet();
+            if (_nucleusNodeSet && !_nucleusNodeSet.has(nb.node)) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Loop-shape-aware COOPERATIVE lookahead for tet/idle_tet xons.
+// Simulates ALL tet/idle_tet xons advancing simultaneously through their loops.
+// At each timestep, checks if our xon's destination collides with any other
+// tet xon's projected position (Pauli exclusion lookahead).
+// Oct xons are ignored — the planner will move them.
+//
+// `selfXon` is the xon being checked (excluded from "others" simulation).
+// If null, falls back to static occupation check.
+function _lookaheadTetPath(loopSeq, fromStep, occupied, depth, selfXon) {
+    // Build list of other tet/idle_tet xons with their loop state
+    const others = [];
+    if (selfXon) {
+        for (const x of _demoXons) {
+            if (!x.alive || x === selfXon) continue;
+            if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._loopSeq) {
+                others.push({
+                    step: x._loopStep >= 4 ? 0 : x._loopStep,
+                    seq: x._loopSeq,
+                    node: x.node,
+                    face: x._assignedFace,
+                    col: x.col,
+                });
+            }
+        }
+    }
+
+    let myStep = fromStep >= 4 ? 0 : fromStep;
+    let myNode = loopSeq[myStep];
+    const myColor = selfXon ? selfXon.col : 0;
+    const myFace = selfXon ? selfXon._assignedFace : null;
+
+    for (let i = 0; i < depth; i++) {
+        // Advance our xon
+        myStep++;
+        if (myStep > 4) myStep = 1;
+        const myNextNode = loopSeq[myStep];
+        if (myStep >= 4) myStep = 0;
+
+        // ── T26: SC activation check ──
+        // Every edge in the loop must have either a base edge or an active SC.
+        const pid = pairId(myNode, myNextNode);
+        const scId = scPairToId.get(pid);
+        if (scId !== undefined) {
+            const hasBaseEdge = (baseNeighbors[myNode] || []).some(nb => nb.node === myNextNode);
+            if (!hasBaseEdge) {
+                // SC-only edge: must be activated
+                if (!xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                    return false; // T26 violation — path uses unactivated SC
+                }
+            }
+        }
+
+        // ── T27: Connectivity check ──
+        // Verify nodes are actually connected (base edge or SC)
+        const hasBase = (baseNeighbors[myNode] || []).some(nb => nb.node === myNextNode);
+        if (!hasBase && scId === undefined) {
+            return false; // T27 violation — no edge exists between these nodes
+        }
+
+        // Advance all other tet xons simultaneously
+        for (const o of others) {
+            o.step++;
+            if (o.step > 4) o.step = 1;
+            o.node = o.seq[o.step];
+            if (o.step >= 4) o.step = 0;
+        }
+
+        // ── T19: Pauli check — collision with another tet xon ──
+        const tetCollision = others.some(o => o.node === myNextNode);
+        if (tetCollision) {
+            // Collision = ANNIHILATION OPPORTUNITY.
+            // Same-node collisions are resolved via gluon storage (pair annihilation).
+            // Annihilation is a legitimate tool — it always happens in pairs and
+            // genesis restores xons on oct edges. This is a valid terminal state.
+            return true;
+        }
+
+        myNode = myNextNode;
+    }
+    return true; // path clears all guard checks for projected timesteps
+}
+
+// Unified lookahead dispatcher: uses loop-shape-aware check for tet/idle_tet,
+// generic graph traversal for oct.
+function _lookaheadForXon(xon, node, occupied, depth) {
+    if ((xon._mode === 'tet' || xon._mode === 'idle_tet') && xon._loopSeq) {
+        // Find which step in the loop corresponds to `node`
+        let currentStep = -1;
+        for (let i = 0; i <= 4; i++) {
+            if (xon._loopSeq[i] === node) { currentStep = i; break; }
+        }
+        if (currentStep === -1) return _lookahead(node, occupied, depth); // fallback
+        if (currentStep >= 4) currentStep = 0;
+        return _lookaheadTetPath(xon._loopSeq, currentStep, occupied, depth, xon);
+    }
+    return _lookahead(node, occupied, depth);
+}
+
+// Compute the projected occupation map after all planned moves execute.
+// Returns a Map<node, count> of where xons will be.
+function _projectOccupation(tetPlans, octPlans) {
+    const result = new Map();
+    for (const xon of _demoXons) {
+        if (!xon.alive) continue;
+        let futureNode = xon.node;
+        // Check tet plans
+        const tp = tetPlans.find(p => p.xon === xon && p.approved);
+        if (tp) { futureNode = tp.toNode; }
+        // Check oct plans (assigned or idleTet)
+        const op = octPlans ? octPlans.find(p => p.xon === xon) : null;
+        if (op) {
+            if (op.assigned) futureNode = op.assigned.node;
+            else if (op.idleTet && xon._loopSeq) {
+                const nextStep = xon._loopStep >= 4 ? 1 : xon._loopStep + 1;
+                futureNode = xon._loopSeq[nextStep] || xon.node;
+            }
+        }
+        _occAdd(result, futureNode);
+    }
+    return result;
+}
+
+// ── Cooperative 2-Step Awareness ──
+// After all planning, verify every xon has a valid 2nd move by projecting
+// where ALL xons will be after their 1st moves (neighbors' choices).
+// For tet/idle_tet xons: 2nd move is deterministic (next loop step) — check THAT node.
+// For oct xons: 2nd move is flexible — check that ANY neighbor is reachable.
+// Returns array of stuck xon info. Iteratively fixes conflicts.
+
+function _getXonFutureNode(xon, tetPlans, octPlans) {
+    let futureNode = xon.node;
+    const tp = tetPlans.find(p => p.xon === xon && p.approved);
+    if (tp) return tp.toNode;
+    const op = octPlans ? octPlans.find(p => p.xon === xon) : null;
+    if (op && op.assigned) return op.assigned.node;
+    if (op && op.idleTet && xon._loopSeq) {
+        const nextStep = xon._loopStep >= 4 ? 1 : xon._loopStep + 1;
+        return xon._loopSeq[nextStep] || xon.node;
+    }
+    return futureNode;
+}
+
+function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
+    // Remove self from projected so we don't block ourselves
+    _occDel(projected, futureNode);
+
+    let has2nd = false;
+    const futureMode = xon._mode; // mode after 1st move
+
+    if (futureMode === 'tet' || futureMode === 'idle_tet') {
+        // Loop-shape-aware: check the full remaining loop path, not just 1 step.
+        // Uses the xon's actual loop sequence (fork, lollipop, ham CW/CCW).
+        if (xon._loopSeq) {
+            const tp = tetPlans.find(p => p.xon === xon && p.approved);
+            let stepAfter1st;
+            if (tp) {
+                const effective = xon._loopStep >= 4 ? 0 : xon._loopStep;
+                stepAfter1st = effective + 1;
+            } else {
+                stepAfter1st = (xon._loopStep >= 4 ? 0 : xon._loopStep) + 1;
+            }
+            if (stepAfter1st >= 4) stepAfter1st = 0;
+            // Check remaining loop path for _choreoParams.lookahead - 1 steps (we already used 1)
+            has2nd = _lookaheadTetPath(xon._loopSeq, stepAfter1st, projected, _choreoParams.lookahead - 1, xon);
+        }
+    } else {
+        // Oct mode: any reachable neighbor is a valid 2nd move
+        has2nd = _lookahead(futureNode, projected, 1);
+    }
+
+    _occAdd(projected, futureNode);
+    return has2nd;
+}
+
+// ── Single-Move Guard Check ──
+// Checks backtracker exclusion only. Projected guards were removed (redundant
+// with post-move check() and caused false-positive poisoning of unrelated xons).
+function _moveViolatesGuards(xon, fromNode, toNode) {
+    if (_btActive) {
+        const xonIdx = _demoXons.indexOf(xon);
+        if (_btIsMoveExcluded(xonIdx, toNode)) return true;
+    }
+    return false;
+}
+
+// ── Detailed guard violation checker (for decision ledger logging) ──
+// Returns an array of {reason} objects explaining why a move is blocked,
+// or empty array if the move is allowed. Only checks backtracker exclusion.
+function _moveViolatesGuardsDetailed(xon, fromNode, toNode) {
+    const reasons = [];
+    if (_btActive) {
+        const xonIdx = _demoXons.indexOf(xon);
+        if (_btIsMoveExcluded(xonIdx, toNode)) {
+            reasons.push({ reason: 'backtracker-excluded' });
+        }
+    }
+    return reasons;
+}
+
+// ── Decision Ledger Logger ──
+// Logs a complete decision ledger for a weak xon showing every base neighbor
+// and why it was accepted or rejected. Includes backtracker context.
+function _logWeakDecisionLedger(xon, occupied) {
+    const xi = _demoXons.indexOf(xon);
+    const allNbs = baseNeighbors[xon.node] || [];
+    const btLabel = _btActive ? ` [BT retry #${typeof _btRetryCount !== 'undefined' ? _btRetryCount : '?'}]` : ' [FIRST attempt]';
+    const lines = [`[DECISION LEDGER] tick=${_demoTick} X${xi} at node ${xon.node} (${xon._mode})${btLabel} — ${allNbs.length} neighbors:`];
+    let anyOpen = false;
+    for (const nb of allNbs) {
+        const checks = [];
+        let blocked = false;
+        // Occupancy
+        const occ = occupied.get(nb.node) || 0;
+        if (occ > 0) { checks.push(`OCCUPIED(${occ})`); blocked = true; }
+        else checks.push('free');
+        // Swap blocked
+        if (_swapBlocked(xon.node, nb.node)) { checks.push('SWAP-BLOCKED'); blocked = true; }
+        // Guard violations (detailed — shows backtracker-excluded and specific guards)
+        const guardViolations = _moveViolatesGuardsDetailed(xon, xon.node, nb.node);
+        if (guardViolations.length > 0) {
+            for (const v of guardViolations) { checks.push(`GUARD:${v.reason}`); }
+            blocked = true;
+        }
+        if (!blocked) anyOpen = true;
+        // Node classification
+        const tags = [];
+        if (_octNodeSet && _octNodeSet.has(nb.node)) tags.push('oct');
+        if (_purelyTetNodes && _purelyTetNodes.has(nb.node)) tags.push('pureTet');
+        if (_nucleusNodeSet && _nucleusNodeSet.has(nb.node)) tags.push('nucleus');
+        if (_ejectionTargetNodes && _ejectionTargetNodes.has(nb.node)) tags.push('ejTarget');
+        const tagStr = tags.length ? ` [${tags.join(',')}]` : '';
+        const status = blocked ? '\u2717' : '\u2713';
+        lines.push(`  ${status} node ${nb.node}${tagStr}: ${checks.join(', ')}`);
+    }
+    lines.push(anyOpen ? `  \u2192 HAS viable moves` : `  \u2192 ALL BLOCKED \u2014 xon will be stuck!`);
+    console.error(lines.join('\n'));
+}
+
+// _validateProjectedGuards: Removed — projected guards were redundant with
+// post-move check() and caused false-positive poisoning of unrelated xons' moves.
+
+// _verifyPlan: Removed — backtracker handles downstream violations
+// function _verifyPlan(tetPlans, octPlans) { ... }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Demand-driven face scoring — nucleus-as-one-system approach
+// Scores a (xon, face) pair. Returns {face, quarkType, score} or null.
+// Pure function, no side effects. Used as edge weight in global bipartite matching.
+//
+// Priority order (per spec §6):
+//   1. Quark type selection (hadronic ratio deficit — weighted 10×)
+//   2. Xonic movement balance (which directions the loop would exercise)
+//   3. Vacancy (is another xon already on this face?)
+// Reachability is pass/fail only (return null if unreachable).
+// Anti-phase and coverage deficit are subsumed by xonic balance.
+// ═══════════════════════════════════════════════════════════════════════
+function _scoreFaceOpportunity(xon, face, occupied) {
+    if (!_nucleusTetFaceData || !_nucleusTetFaceData[face]) return null;
+    const fd = _nucleusTetFaceData[face];
+
+    // REACHABILITY (pass/fail): xon must be on a face oct node or 1 hop away
+    const faceOctNodes = [];
+    for (const n of fd.cycle) {
+        if (_octNodeSet && _octNodeSet.has(n)) faceOctNodes.push(n);
+    }
+    const onFace = faceOctNodes.includes(xon.node);
+    if (!onFace) {
+        let nearFace = false;
+        for (const nb of (baseNeighbors[xon.node] || [])) {
+            if (faceOctNodes.includes(nb.node)) { nearFace = true; break; }
+        }
+        if (!nearFace) return null; // unreachable this tick
+    }
+
+    let score = 0;
+
+    // 1. QUARK TYPE SELECTION (hadronic ratio deficit — weighted 10×)
+    // PRNG jitter diversifies type assignment across backtracker retries
+    // (seed incorporates retry count so each attempt gets different sequence).
+    const isProtonFace = A_SET.has(face);
+    const primaryType = isProtonFace ? 'pu' : 'nd';
+    const secondaryType = isProtonFace ? 'pd' : 'nu';
+    const primaryDeficit = _ratioTracker.deficit(primaryType);
+    const secondaryDeficit = _ratioTracker.deficit(secondaryType);
+    const jitter = (_sRng() - 0.5) * 0.15;
+    let quarkType;
+    if (secondaryDeficit > primaryDeficit + _choreoParams.ratioThreshold + jitter) {
+        quarkType = secondaryType;
+        score += secondaryDeficit * _choreoParams.ratioDeficitWeight * 10;
+    } else {
+        quarkType = primaryType;
+        score += Math.max(0, primaryDeficit) * _choreoParams.ratioDeficitWeight * 10;
+    }
+
+    // 2. XONIC MOVEMENT BALANCE: score by how much the loop's directions
+    //    help balance this xon's 10-direction counters.
+    //    A tet loop traverses 4 edges (5-node sequence). Compute direction
+    //    indices for those edges and sum the balance deficits.
+    if (fd.cycle && fd.cycle.length === 4) {
+        // Get the loop sequence for the chosen quark type
+        const loopSeq = LOOP_SEQUENCES[quarkType] ? LOOP_SEQUENCES[quarkType](fd.cycle) : null;
+        if (loopSeq && loopSeq.length === 5) {
+            const loopDirs = [];
+            for (let s = 0; s < 4; s++) {
+                const d = _identifyMoveDir(loopSeq[s], loopSeq[s + 1]);
+                if (d >= 0) loopDirs.push(d);
+            }
+            score += _dirBalanceScoreMulti(xon, loopDirs);
+        }
+    }
+
+    // 3. VACANCY: penalize if another xon is already executing a loop on this face
+    for (const x of _demoXons) {
+        if (!x.alive || x === xon) continue;
+        if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._assignedFace === face) {
+            score -= _choreoParams.faceOccupiedPenalty;
+            break;
+        }
+    }
+
+    return { face, quarkType, score, onFace };
+}
+
+// Get scored oct-mode candidates for a xon. Returns array sorted by momentum score (desc).
+// `blocked` is an optional Set of additional nodes to treat as occupied (for coordinated planning).
+function _getOctCandidates(xon, occupied, blocked) {
+    if (!xon.alive) return [];
+    if (xon._mode !== 'oct' && xon._mode !== 'weak') return [];
+
+    // Weak xons: T60-ejected must move AWAY from oct cage; others navigate freely
+    if (xon._mode === 'weak') {
+        const candidates = [];
+        const isEjected = !!xon._t60Ejected;
+        for (const nb of _localBaseNeighbors(xon.node)) {
+            if ((occupied.get(nb.node) || 0) > 0) continue;
+            if (blocked && blocked.has(nb.node)) continue;
+            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            // T61: ejected weak xons must NOT target oct nodes (must eject away)
+            if (isEjected && _octNodeSet && _octNodeSet.has(nb.node)) continue;
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: undefined, _needsMaterialise: false });
+        }
+        return candidates;
+    }
+
+    // Pending-weak xons: give ALL base neighbors (they need to step OFF the oct)
+    if (xon._pendingWeakEjection) {
+        const candidates = [];
+        for (const nb of baseNeighbors[xon.node]) {
+            if (occupied.has(nb.node)) continue;
+            if (blocked && blocked.has(nb.node)) continue;
+            if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+            // Prefer non-oct destinations (score bonus for stepping off cage)
+            const offCageBonus = (_octNodeSet && _octNodeSet.has(nb.node)) ? 0 : 10;
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: offCageBonus, _needsMaterialise: false, _scId: undefined });
+        }
+        return candidates;
+    }
+
+    // Constrain oct movement to cage nodes only.
+    if (!_octNodeSet) return [];
+
+    // Off-cage xons get no candidates here; the fallback _startIdleTetLoop handles them.
+    const onCage = _octNodeSet.has(xon.node);
+    if (!onCage) return [];
+
+    // Get neighbors: base edges + SC edges (filtered to oct cage, excluding antipodal)
+    const antipodal = _octAntipodal.get(xon.node);
+    const allOctNeighbors = [];
+    for (const nb of baseNeighbors[xon.node]) {
+        if (_octNodeSet.has(nb.node) && nb.node !== antipodal) {
+            allOctNeighbors.push({ node: nb.node, dirIdx: nb.dirIdx });
+        }
+    }
+    const scs = _localScNeighbors(xon.node);
+    for (const sc of scs) {
+        const other = sc.a === xon.node ? sc.b : sc.a;
+        if (_octNodeSet.has(other) && other !== antipodal && !allOctNeighbors.find(n => n.node === other)) {
+            const scId = sc.id;
+            const alreadyActive = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
+            // Use stype-based direction index (4-9) for xonic movement balance
+            const scDirIdx = _STYPE_TO_DIR[sc.stype] !== undefined ? _STYPE_TO_DIR[sc.stype] : 4;
+            allOctNeighbors.push({
+                node: other, dirIdx: scDirIdx,
+                _scId: scId, _needsMaterialise: !alreadyActive
+            });
+        }
+    }
+
+    if (allOctNeighbors.length === 0) return [];
+
+    // Score candidates by xonic movement balance (least-used direction = highest score)
+    const candidates = [];
+    for (const nb of allOctNeighbors) {
+        if (occupied.has(nb.node)) continue; // Pauli: already occupied
+        if (blocked && blocked.has(nb.node)) continue; // Pauli: reserved by another planned move
+        // No bouncing: don't go back to the node we just came from
+        if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
+        const balScore = _dirBalanceScore(xon, nb.dirIdx);
+        candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: balScore, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
+    }
+
+    // 2-step awareness SCORING — penalize candidates that appear to lack a
+    // 2nd move. This is a heuristic using partial occupation (oct xons removed).
+    // The AUTHORITATIVE hard check happens in the cooperative post-plan
+    // verification, which uses full projected state (neighbors' 1st moves).
+    const tmpOcc = new Map(occupied);
+    if (blocked) for (const n of blocked) _occAdd(tmpOcc, n);
+    for (const c of candidates) {
+        _occAdd(tmpOcc, c.node);
+        if (!_lookahead(c.node, tmpOcc, 1)) {
+            c.score -= _choreoParams.octDeadEndPenalty; // strong penalty — but NOT eliminated, since other
+                           // oct xons may vacate and open up 2nd-move paths
+        }
+        _occDel(tmpOcc, c.node);
+    }
+
+    // Sort by score descending (prefer xonic balance + 2-step awareness)
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates;
+}
+
+// Execute an oct move to a specific target. Handles vacuum negotiation.
+// Returns true if the move succeeded, false if vacuum rejected.
+function _executeOctMove(xon, target) {
+    // Reject self-moves (target is current node) — these are no-ops that corrupt prevNode
+    if (target.node === xon.node) return false;
+    // T45: anti-bounce guard — reject move back to prevNode for oct/weak xons
+    if (_T45_BOUNCE_GUARD && (xon._mode === 'oct' || xon._mode === 'weak') && target.node === xon.prevNode && xon.prevNode !== xon.node) {
+        return false;
+    }
+    // Re-check SC activation at execution time (may have changed since planning)
+    if (target._scId !== undefined) {
+        const stillActive = activeSet.has(target._scId) || impliedSet.has(target._scId) || xonImpliedSet.has(target._scId);
+        const hasBase = (baseNeighbors[xon.node] || []).some(nb => nb.node === target.node);
+        if (!stillActive && !hasBase) {
+            // SC was deactivated since planning — need materialization now
+            target._needsMaterialise = true;
+        }
+    }
+    // Vacuum negotiation: if target SC is inactive, try to materialise
+    if (target._needsMaterialise && target._scId !== undefined) {
+        let materialised = false;
+        if (canMaterialiseQuick(target._scId)) {
+            activeSet.add(target._scId);
+            stateVersion++; // invalidate cache
+            materialised = true;
+        } else if (excitationSeverForRoom(target._scId)) {
+            if (canMaterialiseQuick(target._scId)) {
+                activeSet.add(target._scId);
+                stateVersion++; // invalidate cache
+                materialised = true;
+            }
+        }
+        if (!materialised) return false; // vacuum rejected
+        xon._solverNeeded = true;
+    }
+
+    // Record direction history for T16 momentum test
+    if (pos[xon.node] && pos[target.node]) {
+        const dx = pos[target.node][0] - pos[xon.node][0];
+        const dy = pos[target.node][1] - pos[xon.node][1];
+        const dz = pos[target.node][2] - pos[xon.node][2];
+        const len = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+        xon._dirHistory.push([dx/len, dy/len, dz/len]);
+        if (xon._dirHistory.length > 200) xon._dirHistory.splice(0, 100);
+    }
+
+    // Move
+    const fromNode = xon.node;
+    xon.prevNode = xon.node;
+    xon.node = target.node;
+    // Proxy may have blocked (e.g. already moved this tick) — verify
+    if (xon.node !== target.node) return false;
+    xon._lastDir = target.dirIdx;
+
+    // Update xonic movement balance counters
+    _updateDirBalance(xon, fromNode, target.node);
+
+    // Push trail history + per-segment color, start tween
+    _trailPush(xon, target.node, xon.col);
+    xon.tweenT = 0;
+    if (_flashEnabled) xon.flashT = 1.0;
+    return true;
+}
+
+// Legacy wrapper — used by collision scatter in PASS 1.5
+function _advanceOctXon(xon, occupied) {
+    const candidates = _getOctCandidates(xon, occupied);
+    if (candidates.length === 0) return false;
+    // Try candidates in order; skip those needing materialisation that fails
+    for (const c of candidates) {
+        if (_executeOctMove(xon, c)) return true;
+    }
+    return false;
+}
+
+// ── Traversal Lock ──────────────────────────────────────────────
+// Returns a Set of SC IDs that xons are currently sitting on (prevNode→node).
+// These SCs MUST NOT be removed from any set until the next tick.
+// Call this before any SC deletion to check if the SC is locked.
+function _traversalLockedSCs(excludeXon) {
+    // EDGE-ONLY lock: only the SC on the edge a xon just traversed (prevNode↔node).
+    // Physics: "if I used a shortcut on my last turn, it must exist on this turn."
+    // No face-level lock — xons negotiate with the vacuum before each hop.
+    const locked = new Set();
+    for (const xon of _demoXons) {
+        if (!xon.alive || xon.prevNode == null) continue;
+        if (xon === excludeXon) continue;
+        const pid = pairId(xon.prevNode, xon.node);
+        const scId = scPairToId.get(pid);
+        if (scId !== undefined) locked.add(scId);
+    }
+    return locked;
+}
+
+// Promote impliedSet-only face SCs into xonImpliedSet so they persist.
+// impliedSet is ephemeral (rebuilt each solver tick). When a xon is assigned
+// to a face, the SCs it will traverse must be in a persistent set.
+function _promoteFaceSCs(face, xon) {
+    const fd = _nucleusTetFaceData[face];
+    if (!fd) return;
+    const xi = xon ? _demoXons.indexOf(xon) : -1;
+    for (const scId of fd.scIds) {
+        if (impliedSet.has(scId) && !xonImpliedSet.has(scId) && !activeSet.has(scId)) {
+            xonImpliedSet.add(scId);
+            _scAttribution.set(scId, { reason: 'faceAssign', xonIdx: xi, face, tick: _demoTick });
+            stateVersion++;
+        }
+    }
+}
+
+// Transition xon from oct mode to tet mode (assigned to actualize a face)
+function _assignXonToTet(xon, face, quarkType) {
+    const fd = _nucleusTetFaceData[face];
+    if (!fd) return;
+    _demoTetAssignments++;  // track for hit rate
+    _promoteFaceSCs(face, xon);
+
+    let seq = LOOP_SEQUENCES[quarkType](fd.cycle);
+    const col = QUARK_COLORS[quarkType];
+    const cycle = fd.cycle; // [a, b, c, d]
+
+    // If xon is already at seq[0], use the sequence as-is.
+    // If xon is at a different oct node on this face, rotate the cycle
+    // so the xon starts from where it already is (no teleportation / Pauli safe).
+    if (xon.node !== seq[0]) {
+        const octNodesOnFace = cycle.filter(n => _octNodeSet.has(n));
+        const currentIdx = octNodesOnFace.indexOf(xon.node);
+        if (currentIdx >= 0) {
+            // Rotate cycle so xon's current node is in position 0
+            const a = cycle[0], b = cycle[1], c = cycle[2], d = cycle[3];
+            let rotated;
+            if (xon.node === a) rotated = [a, b, c, d];
+            else if (xon.node === c) rotated = [c, b, a, d]; // swap a↔c
+            else if (xon.node === d) rotated = [d, b, c, a]; // swap a↔d
+            else rotated = cycle; // fallback
+            seq = LOOP_SEQUENCES[quarkType](rotated);
+        } else {
+            // Xon is NOT on this face — walk ONE HOP toward nearest face oct node.
+            const faceOctNodes = new Set(octNodesOnFace);
+            const target = _walkToFace(xon, faceOctNodes);
+            if (target !== null) {
+                // Reached a face node in one hop — rotate cycle
+                const a = cycle[0], b = cycle[1], c = cycle[2], d = cycle[3];
+                let rotated;
+                if (target === a) rotated = [a, b, c, d];
+                else if (target === c) rotated = [c, b, a, d];
+                else if (target === d) rotated = [d, b, c, a];
+                else rotated = cycle;
+                seq = LOOP_SEQUENCES[quarkType](rotated);
+            } else {
+                // Didn't reach face in one hop — abort assignment (no teleportation).
+                // Xon stays in oct mode; assignment will retry next window.
+                return;
+            }
+        }
+    }
+
+    _clearModeProps(xon);
+    xon._mode = 'tet';
+    xon._assignedFace = face;
+    xon._quarkType = quarkType;
+    xon._loopType = LOOP_TYPE_NAMES[quarkType];
+    xon._loopSeq = seq;
+    xon._loopStep = 0;
+    xon.col = col;
+
+    // Update spark color
+    if (xon.sparkMat) xon.sparkMat.color.setHex(col);
+
+    // Safety: if xon isn't at seq[0], abort instead of teleporting (T27)
+    if (xon.node !== seq[0]) {
+        _clearModeProps(xon);
+        xon._mode = 'oct';
+        xon._assignedFace = null;
+        xon._quarkType = null;
+        xon._loopType = null;
+        xon._loopSeq = null;
+        xon._loopStep = 0;
+        xon.col = 0xffffff;
+        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+        return;
+    }
+}
+
+// Walk xon ONE HOP toward nearest node in targetNodes via connected edges (BFS).
+// Returns the target node if xon is already there, or the first step if it moved.
+// Returns null if no path exists. ONE HOP PER TICK — no teleportation (T27).
+function _walkToFace(xon, targetNodes) {
+    if (targetNodes.has(xon.node)) return xon.node;
+    if (xon._movedThisTick) return null; // one hop per tick — no double-move (T27)
+
+    // Build occupied set (exclude self)
+    const occupiedNodes = new Set();
+    for (const x of _demoXons) {
+        if (x !== xon && x.alive) occupiedNodes.add(x.node);
+    }
+
+    // BFS from xon.node to nearest target, only via base edges + active SCs
+    // Exclude antipodal oct node hops (diagonal traversal)
+    const visited = new Set([xon.node]);
+    const parent = new Map();
+    const queue = [xon.node];
+    let found = null;
+
+    while (queue.length > 0 && !found) {
+        const curr = queue.shift();
+        const currAntipodal = _octAntipodal.get(curr);
+        const nbs = baseNeighbors[curr] || [];
+        for (const nb of nbs) {
+            if (visited.has(nb.node)) continue;
+            if (!_octNodeSet.has(nb.node)) continue;
+            if (nb.node === currAntipodal) continue; // no diagonal hops
+            visited.add(nb.node);
+            parent.set(nb.node, curr);
+            // Pauli: only accept unoccupied target nodes (T19)
+            if (targetNodes.has(nb.node) && !occupiedNodes.has(nb.node)) { found = nb.node; break; }
+            if (occupiedNodes.has(nb.node)) continue;
+            queue.push(nb.node);
+        }
+        if (found) break;
+        const scs = _localScNeighbors(curr);
+        for (const sc of scs) {
+            if (!activeSet.has(sc.id) && !impliedSet.has(sc.id) && !xonImpliedSet.has(sc.id)) continue;
+            const neighbor = sc.a === curr ? sc.b : sc.a;
+            if (visited.has(neighbor)) continue;
+            if (!_octNodeSet.has(neighbor)) continue;
+            if (neighbor === currAntipodal) continue; // no diagonal hops
+            visited.add(neighbor);
+            parent.set(neighbor, curr);
+            // Pauli: only accept unoccupied target nodes (T19)
+            if (targetNodes.has(neighbor) && !occupiedNodes.has(neighbor)) { found = neighbor; break; }
+            if (occupiedNodes.has(neighbor)) continue;
+            queue.push(neighbor);
+        }
+    }
+
+    if (!found) return null;
+
+    // Reconstruct path
+    const path = [];
+    let n = found;
+    while (n !== xon.node) { path.push(n); n = parent.get(n); }
+    path.reverse();
+
+    // ONE HOP ONLY — no teleportation (T27)
+    const step = path[0];
+    if (_swapBlocked(xon.node, step)) return null; // T41: abort if swap
+    const fromWF = xon.node;
+    xon.prevNode = xon.node;
+    xon.node = step;
+    xon._movedThisTick = true; // one hop per tick — prevent double-move
+    _moveRecord.set(step, fromWF);
+    _traceMove(xon, fromWF, step, 'walkToFace');
+
+    _trailPush(xon, step, 0xffffff);
+    xon.tweenT = 0;
+
+    // Return the target if we reached it in one hop, otherwise null (still walking)
+    return targetNodes.has(step) ? step : null;
+}
+
+// T42: Clean up face SCs from xonImpliedSet when a xon abandons its tet face.
+// Respects traversal lock — won't remove SCs being traversed by other xons.
+function _relinquishFaceSCs(xon) {
+    if (xon._assignedFace == null) return;
+    const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
+    if (!fd) return;
+    const locked = _traversalLockedSCs(xon); // exclude self — don't self-lock
+    for (const scId of fd.scIds) {
+        if (locked.has(scId)) continue;
+        if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
+            xonImpliedSet.delete(scId);
+            _scAttribution.delete(scId);
+            stateVersion++;
+        }
+    }
+}
+
+// Transition xon from tet mode back to oct mode after loop completion.
+// Optional `occupied` map prevents Pauli violations when multiple xons return simultaneously.
+function _returnXonToOct(xon, occupied) {
+    // If at a non-oct node, check if we can actually reach an oct node first.
+    // Only clear assignment and switch to oct mode if we can get there.
+    if (_octNodeSet && !_octNodeSet.has(xon.node)) {
+        const nbs = baseNeighbors[xon.node] || [];
+        let target = null;
+        for (const nb of nbs) {
+            if (!_octNodeSet.has(nb.node)) continue;
+            if (_swapBlocked(xon.node, nb.node)) continue;
+            if (occupied && (occupied.get(nb.node) || 0) > 0) continue;
+            target = nb;
+            break;
+        }
+        if (!target) {
+            // Can't reach an oct node — DON'T switch to oct mode (would violate T16).
+            // Keep current mode; will retry next tick.
+            return;
+        }
+        // Can reach an oct node — proceed with mode transition + move
+        _relinquishFaceSCs(xon); // T42: clean up face SCs before clearing assignment
+        _clearModeProps(xon);
+        xon._mode = 'oct';
+        xon._assignedFace = null;
+        xon._quarkType = null;
+        xon._loopType = null;
+        xon._loopSeq = null;
+        xon._loopStep = 0;
+        xon.col = 0xffffff;
+        if (_flashEnabled) xon.flashT = 1.0;
+        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+
+        const fromRTO = xon.node;
+        xon.prevNode = xon.node;
+        xon.node = target.node;
+        xon._movedThisTick = true;
+        _moveRecord.set(target.node, fromRTO);
+        _traceMove(xon, fromRTO, target.node, 'returnToOct');
+        if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, target.node); }
+        _trailPush(xon, target.node, xon.col);
+    } else {
+        // Already at an oct node — just switch mode
+        _relinquishFaceSCs(xon);
+        _clearModeProps(xon);
+        xon._mode = 'oct';
+        xon._assignedFace = null;
+        xon._quarkType = null;
+        xon._loopType = null;
+        xon._loopSeq = null;
+        xon._loopStep = 0;
+        xon.col = 0xffffff;
+        if (_flashEnabled) xon.flashT = 1.0;
+        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+    }
+}
+
+// Start an idle tet loop for a xon boxed in on the oct surface.
+// CONSTRAINT: xons can ONLY idle in already-actualized tets — faces whose
+// SCs are already in xonImpliedSet or activeSet. No new geometry created.
+// Returns true if a loop was started, false if no actualized face found.
+function _startIdleTetLoop(xon, occupied) {
+    if (!_nucleusTetFaceData) return false;
+
+    const types = ['pu', 'nd', 'pd', 'nu'];
+
+    // ── Pass 1: Try already-actualized faces ──
+    const actualizedFaces = [];
+    const manifestCandidates = []; // faces we could try to manifest
+    for (const [fStr, fd] of Object.entries(_nucleusTetFaceData)) {
+        if (!fd.cycle.includes(xon.node)) continue;
+        const actualized = fd.scIds.every(scId =>
+            xonImpliedSet.has(scId) || activeSet.has(scId) || impliedSet.has(scId));
+        if (actualized) {
+            actualizedFaces.push(parseInt(fStr));
+        } else {
+            manifestCandidates.push(parseInt(fStr));
+        }
+    }
+
+    // Helper: try to assign xon to a face with free destination
+    function tryFaces(faces) {
+        const shuffled = _sRngShuffle(faces.slice());
+        const shuffledTypes = _sRngShuffle(types.slice());
+        let bestSeq = null, bestFace = null, bestType = null;
+        for (const face of shuffled) {
+            const existingXon = _demoXons.find(x =>
+                x.alive && x !== xon && x._assignedFace === face &&
+                (x._mode === 'tet' || x._mode === 'idle_tet'));
+            const fd = _nucleusTetFaceData[face];
+            const cycle = fd.cycle;
+            const [a, b, c, d] = cycle;
+            let rotated;
+            if (xon.node === a) rotated = [a, b, c, d];
+            else if (xon.node === c) rotated = [c, b, a, d];
+            else if (xon.node === d) rotated = [d, b, c, a];
+            else if (xon.node === b) rotated = [b, a, d, c];
+            else continue;
+
+            for (const qType of shuffledTypes) {
+                const seq = LOOP_SEQUENCES[qType](rotated);
+                const dest = seq[1];
+                if (occupied && occupied.has(dest)) continue;
+                _promoteFaceSCs(face, xon);
+                _clearModeProps(xon);
+                xon._mode = 'idle_tet';
+                xon._loopSeq = seq;
+                xon._loopStep = 0;
+                xon._assignedFace = face;
+                xon._quarkType = qType;
+                xon._loopType = LOOP_TYPE_NAMES[qType];
+                xon.col = QUARK_COLORS[qType];
+                if (_flashEnabled) xon.flashT = 1.0;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+                return true;
+            }
+            if (!bestSeq) {
+                const fallbackType = existingXon
+                    ? shuffledTypes.find(t => QUARK_COLORS[t] === existingXon.col) || shuffledTypes[0]
+                    : shuffledTypes[0];
+                bestSeq = LOOP_SEQUENCES[fallbackType](rotated);
+                bestFace = face;
+                bestType = fallbackType;
+            }
+        }
+        if (bestSeq) {
+            _promoteFaceSCs(bestFace, xon);
+            _clearModeProps(xon);
+            xon._mode = 'idle_tet';
+            xon._loopSeq = bestSeq;
+            xon._loopStep = 0;
+            xon._assignedFace = bestFace;
+            xon._quarkType = bestType;
+            xon._loopType = bestType ? LOOP_TYPE_NAMES[bestType] : null;
+            xon.col = bestType ? QUARK_COLORS[bestType] : 0x888888;
+            if (_flashEnabled) xon.flashT = 1.0;
+            if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+            return true;
+        }
+        return false;
+    }
+
+    if (tryFaces(actualizedFaces)) return true;
+
+    // ── Pass 2: Manifest new tet voids ──
+    // Try to materialise the missing SCs for non-actualized faces.
+    // This creates new loiter space when the oct cage is congested.
+    const newlyActualized = [];
+    for (const face of _sRngShuffle(manifestCandidates.slice())) {
+        const fd = _nucleusTetFaceData[face];
+        const missingSCs = fd.scIds.filter(scId =>
+            !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
+        // Try to materialise all missing SCs
+        let allOk = true;
+        const justAdded = [];
+        const xi = _demoXons.indexOf(xon);
+        for (const scId of missingSCs) {
+            if (canMaterialiseQuick(scId)) {
+                xonImpliedSet.add(scId);
+                _scAttribution.set(scId, { reason: 'manifest', xonIdx: xi, face, tick: _demoTick });
+                stateVersion++; // invalidate cache for next check
+                justAdded.push(scId);
+            } else if (excitationSeverForRoom(scId)) {
+                if (canMaterialiseQuick(scId)) {
+                    xonImpliedSet.add(scId);
+                    _scAttribution.set(scId, { reason: 'manifest', xonIdx: xi, face, tick: _demoTick });
+                    stateVersion++; // invalidate cache
+                    justAdded.push(scId);
+                } else {
+                    allOk = false; break;
+                }
+            } else {
+                allOk = false; break;
+            }
+        }
+        if (allOk) {
+            newlyActualized.push(face);
+            if (justAdded.length > 0) {
+                _idleTetManifested = true;
+                console.log(`[MANIFEST] Actualized tet face ${face} (${justAdded.length} new SCs) for idle loitering`);
+            }
+        } else {
+            // Roll back partial materialisation
+            for (const scId of justAdded) {
+                xonImpliedSet.delete(scId);
+                _scAttribution.delete(scId);
+                stateVersion++; // invalidate cache
+            }
+        }
+    }
+
+    if (newlyActualized.length > 0) {
+        const _idleLocked = _traversalLockedSCs();
+        if (tryFaces(newlyActualized)) {
+            // Rollback SCs for faces we manifested but didn't use
+            const assignedFace = xon._assignedFace;
+            for (const face of newlyActualized) {
+                if (face === assignedFace) continue;
+                const fd = _nucleusTetFaceData[face];
+                for (const scId of fd.scIds) {
+                    if (_idleLocked.has(scId)) continue; // xon traversing this SC
+                    if (xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                        xonImpliedSet.delete(scId);
+                        _scAttribution.delete(scId);
+                        stateVersion++;
+                    }
+                }
+            }
+            return true;
+        }
+        // tryFaces failed — rollback ALL newly manifested SCs
+        for (const face of newlyActualized) {
+            const fd = _nucleusTetFaceData[face];
+            for (const scId of fd.scIds) {
+                if (_idleLocked.has(scId)) continue; // xon traversing this SC
+                if (xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                    xonImpliedSet.delete(scId);
+                    _scAttribution.delete(scId);
+                    stateVersion++;
+                }
+            }
+        }
+    }
+
+    // ── Fallback: use any blocked actualized face ──
+    // (caller handles Pauli if this destination is occupied)
+    if (actualizedFaces.length > 0) return tryFaces(actualizedFaces);
+    return false;
+}

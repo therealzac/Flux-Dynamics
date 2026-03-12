@@ -68,19 +68,26 @@ The simulator models a deuteron: 1 proton + 1 neutron sharing an octahedral cage
 ## 2. Project Structure
 
 ```
-flux-v2.html              — Main HTML entry point (loads all JS via script tags)
+flux-v2.html               — Main HTML entry point (loads all JS via script tags)
 src/
-  flux-constants.js        — Global constants, geometry, state declarations, tet/quark definitions
-  flux-solver-render.js    — PBD constraint solver, FCC lattice builder, Three.js rendering
-  flux-electrons.js        — Excitation system, vacuum negotiation (canMaterialiseQuick, sever)
-  flux-voids.js            — Void detection, tet/oct rendering, void sphere meshes
-  flux-nucleus.js          — Nucleus simulation setup (deuteron H-2), NucleusSimulator IIFE
-  flux-demo.js             — Demo mode: xon choreography, coordinated move planner, animation
-  flux-tests.js            — Test suite (T01-T28), live guards (T19/T21/T26/T27)
-  flux-rules-v2.js         — K-complexity metrics, rule tournament engine, QUARK_ALGO_REGISTRY
-  flux-tournament.js       — Tournament execution, fitness evaluation, playback system
-  flux-ui.js               — UI controls, camera/orbit, jiggle mode, export, raycasting
-"Flux Dynamics (1).pdf"    — The foundational paper (20+ pages)
+  flux-constants.js         — Global constants, geometry, state declarations, tet/quark definitions
+  flux-solver-proxy.js      — Solver web worker proxy
+  flux-solver-worker.js     — CPU & GPU solver backend (Web Worker)
+  flux-solver-render.js     — PBD constraint solver, FCC lattice builder, Three.js rendering
+  flux-electrons.js         — Excitation system, vacuum negotiation (canMaterialiseQuick, sever)
+  flux-voids.js             — Void detection, tet/oct rendering, void sphere meshes
+  flux-nucleus.js           — Nucleus simulation setup (deuteron H-2), NucleusSimulator IIFE
+  flux-demo-state.js        — Demo shared state, constants, PRNG, choreo params, loop sequences
+  flux-demo-xon.js          — Xon lifecycle: spawn, destroy, advance, trails, occupancy
+  flux-demo-backtrack.js    — Backtracker: state snapshots, BFS layers, exclusion ledger
+  flux-demo-planner.js      — Move planner: bipartite matching, lookahead, face scoring, assignment
+  flux-demo-ui.js           — Demo panels, profiling, choreo logging, pause/resume/stop
+  flux-demo.js              — Orchestrator: demoTick phases, opening, schedule, gluons, algo registry
+  flux-tests.js             — Test suite (T01-T28), live guards (T19/T21/T26/T27)
+  flux-rules-v2.js          — K-complexity metrics, rule tournament engine, QUARK_ALGO_REGISTRY
+  flux-tournament.js        — Tournament execution, fitness evaluation, playback system
+  flux-ui.js                — UI controls, camera/orbit, jiggle mode, export, raycasting
+"Flux Dynamics (1).pdf"     — The foundational paper (20+ pages)
 ```
 
 All files are loaded as global-scope `<script>` tags in `flux-v2.html`. No module system. Order matters.
@@ -423,3 +430,88 @@ PHASE 4 enforces Pauli exclusion absolutely:
 - **Test after changes**: Run demo, check left sidebar for test results (green checkmarks). Live guards (T19/T21/T26/T27) monitor continuously during demo.
 - **pairId(a,b)**: Always use this for SC edge lookup (canonical `min:max` format)
 - **_occAdd/_occDel**: Use these helpers for occupied map manipulation (count-based, not boolean)
+
+---
+
+## 12. Roadmap
+
+### 12.1 Matter/Anti-Matter Distinction
+Matter/anti-matter correspond to the two possible winding directions of the shortcut equator of the oct. During the opening phase, a 'merry go round' motion is scheduled along the shortcut equator. A unit test + live guard must ensure the winding direction stays constant for the entire simulation.
+
+### 12.2 Updated Fermion Model
+
+| Type | Sequence | Identity |
+|------|----------|----------|
+| Fork | a → b → a → c → a | proton up 1 / neutron down 1 |
+| Hook (renamed from "lollipop") | a → b → c → b → a | proton up 2 / neutron down 2 |
+| Hamiltonian CW | a → b → c → d → a | proton down (anchor) |
+| Hamiltonian CCW | a → d → c → b → a | neutron up (anchor) |
+
+**H-2 atom**: 2 "anchor" quarks (proton down, neutron up) + 4 "follower" quarks (2× proton up, 2× neutron down). Follower types 1 (Fork) and 2 (Hook) should occur in equal measures on average.
+
+**Bipartite constraint**: Quarks of the same hadron must never occur simultaneously as tets with a shared edge. Proton and neutron constituents must occupy separate parts of the bipartite graph when they appear together.
+
+**Coverage target**: Each face should tend towards equal parts pu1, pu2, nd1, nd2, pd, nu.
+
+**Quark loops can only be initiated by oct xons.**
+
+**New colors**:
+| Type | Color | Hex |
+|------|-------|-----|
+| proton down | cyan | #00FFFF |
+| proton up 1 | medium blue | #0040FF |
+| proton up 2 | emerald | #00FF40 |
+| neutron up | red | #FF0000 |
+| neutron down 1 | goldenrod | #FFBF00 |
+| neutron down 2 | hot pink | #FF00BF |
+| weak | violet | #7F00FF |
+| gluon | yellow-green | #80FF00 |
+
+Update trails, shapes, sparks, and legend with these colors.
+
+**Permutations** (prune if matter/antimatter directionality forbids):
+
+Fork: `abaca`, `acaba`, `abada`, `adaba`, `acada`, `adaca`
+Hook: `abcba`, `acbca`, `abdba`, `adbda`, `acdca`, `adcda`
+Ham CW: `abcda`, `acdba`, `adbca`
+Ham CCW: `adcba`, `acbda`, `abdca`
+
+### 12.3 Tournament Overhaul
+
+**Xon balance panel**: Give each xon a score for directional balance across all 10 directions. Surface in the xon panel (right side).
+
+**Fitness criteria (priority order)**:
+1. Anchor quark balance (even face distribution)
+2. Follower quark balance (even face distribution)
+3. Anchor/follower ratios per orientation (target 1:2)
+4. Follower/follower ratios per orientation (target 1:1)
+5. Quark frequency (maximize quarks generated per tick)
+6. Periodicity (regularity of oct orientation changes over time)
+7. Xonic balance (movement stats + mode stats per xon, displayed in xon panel)
+
+Overhaul tunable genes to optimize for these criteria.
+
+### 12.4 RL Feasibility Investigation
+
+Consider replacing genetic algorithm tournament with reinforcement learning: "graph in, xon moves out." Feed the graph + pre-computed legal moves (including shortcuts with severance costs). Optimize for balanced system. Investigate browser-based RL with GPU acceleration.
+
+### 12.5 Fix Larger Lattice Behavior
+
+Fermions never form on larger lattices. Investigate whether compute-load shortcuts that reduce simulation accuracy were introduced. Remove any such shortcuts.
+
+### 12.6 Choreographer Redesign
+
+**Priority-based quark scheduler**: Replace pattern machine complexity with a function that gives a prioritized list of which quarks are needed right now. The oct can then make optimal decisions, including handling "unscheduled" fermions.
+
+**SC planning intelligence**: The choreographer must know when it needs to create a shortcut to actualize a needed tet. Relevant shortcuts are always from node 0 or node 4. Must plan correct orientation (starting node a), and plan around geometrically mutually exclusive tet schedules. This is the "air traffic controller" problem — the core challenge of choreography.
+
+### 12.7 Planck-Second vs Tick Distinction
+
+- **tick**: Total number of steps taken by any given xon
+- **Planck second**: Total number of ticks which featured at least one lattice deformation event (SC added/subtracted)
+
+Display both. Swap the current naming: what was "tick" becomes the above definition.
+
+### 12.8 Re-Center Lattice Around Nuclear Octa
+
+Currently centered around a single node. Should be centered around the nuclear octa itself, giving symmetrical space above and below the nucleus for weak force operation.
