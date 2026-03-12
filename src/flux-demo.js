@@ -1510,8 +1510,9 @@ function _executeOpeningTick(occupied) {
 
         console.log(`[opening] Oct discovered: equator=[${ordered}], pole=${chosen.pole}, ${adjTets.length} tets`);
 
-        // Build wavefunction surface now that oct is known
+        // Build wavefunction surface and concentric shells now that oct is known
         if (typeof buildWavefunction === 'function') buildWavefunction();
+        if (typeof buildBranes === 'function') buildBranes();
 
         // ── Merry-go-round: equatorial xons rotate one position via cage SCs ──
         // This establishes the matter/antimatter winding direction (CW = matter).

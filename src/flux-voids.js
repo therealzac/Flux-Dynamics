@@ -703,236 +703,237 @@ document.getElementById('weak-opacity-slider').addEventListener('input',()=>{
     const pct=+document.getElementById('weak-opacity-slider').value;
     document.getElementById('weak-opacity-val').textContent=pct+'%';
 });
-// ═══ BRANE LAYER — Planar slices through FCC lattice ═══════════════════════
-// 6 plane families, one per shortcut type.  Each plane is spanned by a pair
-// of base directions; the plane normal IS the corresponding shortcut direction.
-// Perpendicular plane pairs automatically receive complementary SC colors.
+// ═══ SHELL LAYER — Concentric wavefunction shells from oct center ═══════════
+// One 3D convex hull per BFS distance level (≥3) from _octNodeSet, up to but
+// not including the outermost boundary (which is the wavefunction layer).
 
-let _braneMeshes = [];   // THREE.Mesh[], one per stype
-let _braneVertMeta = [];  // per-mesh: [{nodes:[nodeIdx,...], falloff, br, bg, bb}, ...] per vertex
-
-function _cross3(a, b) {
-    return [a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x];
-}
-
-function _grahamHull2D(pts) {
-    // Returns convex hull indices in CCW order (Graham scan)
-    if (pts.length < 3) return pts.map((_, i) => i);
-    // Find bottom-most (then left-most) point
-    let p0 = 0;
-    for (let i = 1; i < pts.length; i++) {
-        if (pts[i][1] < pts[p0][1] || (pts[i][1] === pts[p0][1] && pts[i][0] < pts[p0][0])) p0 = i;
-    }
-    const anchor = pts[p0];
-    const idxs = [];
-    for (let i = 0; i < pts.length; i++) if (i !== p0) idxs.push(i);
-    // Sort by polar angle from anchor
-    idxs.sort((a, b) => {
-        const ax = pts[a][0] - anchor[0], ay = pts[a][1] - anchor[1];
-        const bx = pts[b][0] - anchor[0], by = pts[b][1] - anchor[1];
-        const cross = ax * by - ay * bx;
-        if (Math.abs(cross) > 1e-12) return -cross; // CCW first
-        // Collinear: closer first
-        return (ax*ax + ay*ay) - (bx*bx + by*by);
-    });
-    const stack = [p0];
-    for (const idx of idxs) {
-        while (stack.length > 1) {
-            const t = stack[stack.length - 1], t2 = stack[stack.length - 2];
-            const cross = (pts[t][0]-pts[t2][0])*(pts[idx][1]-pts[t2][1])
-                        - (pts[t][1]-pts[t2][1])*(pts[idx][0]-pts[t2][0]);
-            if (cross > 1e-12) break;
-            stack.pop();
-        }
-        stack.push(idx);
-    }
-    return stack;
-}
+let _braneShells = [];  // [{mesh, vertNodeIdx, adaptiveMax, distance, maxDist}]
 
 function buildBranes() {
     disposeBranes();
     if (typeof N === 'undefined' || N === 0 || typeof REST === 'undefined') return;
+    if (!_octNodeSet || _octNodeSet.size === 0) return;
+    if (typeof baseNeighbors === 'undefined' || !baseNeighbors) return;
 
     const slider = document.getElementById('brane-opacity-slider');
-    // Slider 0–100 maps to 0.0%–10.0%
     const baseOp = slider ? (+slider.value / 10) / 100 : 0.03;
 
-    // Oct center for inverse distance dimming (dim near nucleus, bright far away)
-    let ocx = 0, ocy = 0, ocz = 0;
-    if (typeof _octNodeSet !== 'undefined' && _octNodeSet && _octNodeSet.size > 0) {
-        for (const ni of _octNodeSet) { ocx += REST[ni][0]; ocy += REST[ni][1]; ocz += REST[ni][2]; }
-        ocx /= _octNodeSet.size; ocy /= _octNodeSet.size; ocz /= _octNodeSet.size;
+    // BFS from all oct nodes to assign every lattice node a distance
+    const dist = new Int32Array(N).fill(-1);
+    const queue = [];
+    for (const ni of _octNodeSet) {
+        dist[ni] = 0;
+        queue.push(ni);
     }
-    // Compute max distance from oct center for normalization
-    let maxDist = 0;
-    for (let k = 0; k < N; k++) {
-        const dx = REST[k][0] - ocx, dy = REST[k][1] - ocy, dz = REST[k][2] - ocz;
-        const d = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        if (d > maxDist) maxDist = d;
-    }
-    if (maxDist < 0.01) maxDist = 1; // safety
-
-    for (let stype = 1; stype <= 6; stype++) {
-        const dirs = SC_BASE_DIRS[stype]; // [i, j] base direction indices
-        const va = BASE_DIR_V[dirs[0]], vb = BASE_DIR_V[dirs[1]];
-        // Plane normal = cross product of the two base directions
-        const nc = _cross3(va, vb);
-        const nm = Math.sqrt(nc[0]*nc[0] + nc[1]*nc[1] + nc[2]*nc[2]);
-        const nx = nc[0]/nm, ny = nc[1]/nm, nz = nc[2]/nm;
-
-        // Project all nodes onto normal, group by projection value
-        const projMap = new Map(); // rounded d → [nodeIdx, ...]
-        for (let k = 0; k < N; k++) {
-            const d = REST[k][0]*nx + REST[k][1]*ny + REST[k][2]*nz;
-            const key = Math.round(d * 1e4); // tolerance ~1e-4
-            if (!projMap.has(key)) projMap.set(key, []);
-            projMap.get(key).push(k);
-        }
-
-        // Build orthonormal basis in the plane
-        // u = normalize(va), w = cross(n, u)
-        const ux = va.x, uy = va.y, uz = va.z; // already normalized
-        const wx = ny*uz - nz*uy, wy = nz*ux - nx*uz, wz = nx*uy - ny*ux;
-
-        // Base color components (normalized 0–1)
-        const hex = S_COLOR[stype];
-        const br = ((hex >> 16) & 0xff) / 255;
-        const bg = ((hex >> 8) & 0xff) / 255;
-        const bb = (hex & 0xff) / 255;
-
-        // Collect all triangle vertices + vertex colors + metadata across all slices
-        const triVerts = [];
-        const triColors = [];
-        const vertMeta = []; // per-vertex: {nodes:[nodeIdx,...], br, bg, bb}
-
-        for (const [, nodeIdxs] of projMap) {
-            if (nodeIdxs.length < 3) continue;
-
-            // Project to 2D plane coordinates
-            const pts2D = [];
-            for (const ni of nodeIdxs) {
-                const px = REST[ni][0], py = REST[ni][1], pz = REST[ni][2];
-                pts2D.push([px*ux + py*uy + pz*uz, px*wx + py*wy + pz*wz]);
-            }
-
-            // Convex hull
-            const hull = _grahamHull2D(pts2D);
-            if (hull.length < 3) continue;
-
-            // Fan triangulate from centroid
-            let cx3 = 0, cy3 = 0, cz3 = 0;
-            const hullNodes = hull.map(hi => nodeIdxs[hi]);
-            for (const ni of hullNodes) {
-                cx3 += REST[ni][0]; cy3 += REST[ni][1]; cz3 += REST[ni][2];
-            }
-            cx3 /= hull.length; cy3 /= hull.length; cz3 /= hull.length;
-
-            for (let h = 0; h < hull.length; h++) {
-                const h2 = (h + 1) % hull.length;
-                const a = hullNodes[h], b = hullNodes[h2];
-
-                // Inverse distance dimming: dim near oct, bright far away
-                // Centroid vertex
-                const cdx = cx3-ocx, cdy = cy3-ocy, cdz = cx3-ocz; // intentional: use cx3 for x,z
-                const cDist = Math.sqrt((cx3-ocx)**2 + (cy3-ocy)**2 + (cz3-ocz)**2);
-                const cDim = (cDist / maxDist) ** 2; // quadratic: 0 at center, 1 at edge
-                triVerts.push(cx3, cy3, cz3);
-                triColors.push(br * cDim, bg * cDim, bb * cDim);
-                vertMeta.push({nodes: hullNodes, br: br * cDim, bg: bg * cDim, bb: bb * cDim});
-                // Vertex A
-                const aDist = Math.sqrt((REST[a][0]-ocx)**2 + (REST[a][1]-ocy)**2 + (REST[a][2]-ocz)**2);
-                const aDim = (aDist / maxDist) ** 2;
-                triVerts.push(REST[a][0], REST[a][1], REST[a][2]);
-                triColors.push(br * aDim, bg * aDim, bb * aDim);
-                vertMeta.push({nodes: [a], br: br * aDim, bg: bg * aDim, bb: bb * aDim});
-                // Vertex B
-                const bDist = Math.sqrt((REST[b][0]-ocx)**2 + (REST[b][1]-ocy)**2 + (REST[b][2]-ocz)**2);
-                const bDim = (bDist / maxDist) ** 2;
-                triVerts.push(REST[b][0], REST[b][1], REST[b][2]);
-                triColors.push(br * bDim, bg * bDim, bb * bDim);
-                vertMeta.push({nodes: [b], br: br * bDim, bg: bg * bDim, bb: bb * bDim});
+    let qi = 0;
+    let maxBFS = 0;
+    while (qi < queue.length) {
+        const curr = queue[qi++];
+        const nbs = baseNeighbors[curr];
+        if (!nbs) continue;
+        for (const nb of nbs) {
+            if (dist[nb.node] === -1) {
+                dist[nb.node] = dist[curr] + 1;
+                if (dist[nb.node] > maxBFS) maxBFS = dist[nb.node];
+                queue.push(nb.node);
             }
         }
+    }
 
-        if (triVerts.length === 0) continue;
+    // Group nodes by BFS distance
+    const shellNodes = new Map(); // distance → [nodeIdx, ...]
+    for (let i = 0; i < N; i++) {
+        if (dist[i] >= 3) {
+            if (!shellNodes.has(dist[i])) shellNodes.set(dist[i], []);
+            shellNodes.get(dist[i]).push(i);
+        }
+    }
+
+    // Build shells for distances 3 .. maxBFS-1 (skip outermost = wavefunction)
+    const distances = Array.from(shellNodes.keys()).sort((a, b) => a - b);
+    // Remove the outermost distance level (overlaps with wavefunction boundary)
+    if (distances.length > 0 && distances[distances.length - 1] === maxBFS) {
+        distances.pop();
+    }
+
+    for (const d of distances) {
+        const nodes = shellNodes.get(d);
+        if (nodes.length < 4) continue;
+
+        const points = nodes.map(ni => REST[ni]);
+        const hullTris = _convexHull3D(points);
+        if (hullTris.length === 0) continue;
+
+        // Unique vertex indices used in hull
+        const usedSet = new Set();
+        for (const tri of hullTris) for (const idx of tri) usedSet.add(idx);
+
+        // Remap: hull point index → geometry vertex index
+        const vertMap = new Map();
+        const verts = [];
+        const vertNodeIdx = [];
+        for (const pi of usedSet) {
+            vertMap.set(pi, verts.length);
+            verts.push(points[pi]);
+            vertNodeIdx.push(nodes[pi]); // map to lattice node
+        }
+
+        // Build index buffer
+        const indices = [];
+        for (const tri of hullTris) {
+            indices.push(vertMap.get(tri[0]), vertMap.get(tri[1]), vertMap.get(tri[2]));
+        }
+
+        // Positions
+        const posArr = new Float32Array(verts.length * 3);
+        for (let i = 0; i < verts.length; i++) {
+            posArr[i * 3] = verts[i][0];
+            posArr[i * 3 + 1] = verts[i][1];
+            posArr[i * 3 + 2] = verts[i][2];
+        }
+
+        // Colors — initialize to cool blue
+        const colors = new Float32Array(verts.length * 3);
+        for (let i = 0; i < verts.length; i++) {
+            colors[i * 3] = 0.0;
+            colors[i * 3 + 1] = 0.2;
+            colors[i * 3 + 2] = 1.0;
+        }
 
         const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(triVerts, 3));
-        geo.setAttribute('color', new THREE.Float32BufferAttribute(triColors, 3));
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        geo.setIndex(indices);
         geo.computeVertexNormals();
 
-        const mat = new THREE.MeshBasicMaterial({
+        // Opacity scales: inner shells dimmer, outer shells brighter
+        const opScale = distances.length > 1
+            ? 0.5 + 0.5 * ((d - distances[0]) / (distances[distances.length - 1] - distances[0]))
+            : 1.0;
+        const shellOp = baseOp * opScale;
+        const solid = shellOp > 0.5;
+
+        const mat = new THREE.MeshPhongMaterial({
             vertexColors: true,
             transparent: true,
-            opacity: baseOp,
+            opacity: shellOp,
             side: THREE.DoubleSide,
-            depthWrite: false,
-            blending: THREE.AdditiveBlending,
+            depthWrite: solid,
+            blending: solid ? THREE.NormalBlending : THREE.AdditiveBlending,
+            emissive: 0x111111,
+            emissiveIntensity: 0.3,
+            shininess: 30,
         });
 
         const mesh = new THREE.Mesh(geo, mat);
         mesh.renderOrder = 0;
         scene.add(mesh);
-        _braneMeshes.push(mesh);
-        _braneVertMeta.push(vertMeta);
+        _braneShells.push({
+            mesh,
+            vertNodeIdx,
+            adaptiveMax: 0.001,
+            distance: d,
+            maxDist: distances.length > 0 ? distances[distances.length - 1] : d,
+        });
     }
 }
 
 function updateBraneOpacity() {
     const slider = document.getElementById('brane-opacity-slider');
     if (!slider) return;
-    // Slider 0–100 maps to 0.0%–10.0% opacity (0.1% per tick)
-    const pct = +slider.value / 10;          // 0.0 – 10.0
-    const op = pct / 100;                    // 0.000 – 0.100
+    const pct = +slider.value / 10;
+    const op = pct / 100;
     document.getElementById('brane-opacity-val').textContent = pct.toFixed(1) + '%';
-    for (const mesh of _braneMeshes) {
-        mesh.material.opacity = op;
-        mesh.visible = op > 0;
+    for (const shell of _braneShells) {
+        // Inner shells dimmer, outer shells brighter
+        const opScale = _braneShells.length > 1
+            ? 0.5 + 0.5 * ((shell.distance - _braneShells[0].distance) / Math.max(1, shell.maxDist - _braneShells[0].distance))
+            : 1.0;
+        const shellOp = op * opScale;
+        shell.mesh.material.opacity = shellOp;
+        shell.mesh.visible = shellOp > 0;
+        const solid = shellOp > 0.5;
+        shell.mesh.material.depthWrite = solid;
+        shell.mesh.material.blending = solid ? THREE.NormalBlending : THREE.AdditiveBlending;
+        shell.mesh.material.needsUpdate = true;
     }
 }
 
-// Per-frame: compute node displacements, highlight deformed brane segments
+// Per-frame: update shell positions from solver, displacement-based coloring
 function updateBraneHighlights() {
-    if (typeof pos === 'undefined' || typeof REST === 'undefined' || typeof N === 'undefined') return;
-    if (_braneMeshes.length === 0) return;
+    if (typeof pos === 'undefined' || typeof REST === 'undefined') return;
+    if (_braneShells.length === 0) return;
 
-    const disp = new Float32Array(N);
-    for (let k = 0; k < N; k++) {
-        const dx = pos[k][0] - REST[k][0], dy = pos[k][1] - REST[k][1], dz = pos[k][2] - REST[k][2];
-        disp[k] = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    }
+    for (const shell of _braneShells) {
+        const mesh = shell.mesh;
+        if (!mesh.visible) continue;
 
-    const DEFORM_THRESH = 0.005;
-    for (let mi = 0; mi < _braneMeshes.length; mi++) {
-        const mesh = _braneMeshes[mi];
-        const meta = _braneVertMeta[mi];
-        if (!meta) continue;
+        const posAttr = mesh.geometry.attributes.position;
         const colAttr = mesh.geometry.attributes.color;
+        const posArr = posAttr.array;
         const colArr = colAttr.array;
+        const vni = shell.vertNodeIdx;
 
-        for (let vi = 0; vi < meta.length; vi++) {
-            const m = meta[vi];
-            let maxD = 0;
-            for (const ni of m.nodes) {
-                if (disp[ni] > maxD) maxD = disp[ni];
-            }
-            const boost = maxD > DEFORM_THRESH ? Math.min(2, 1 + maxD / DEFORM_THRESH) : 1;
-            colArr[vi * 3]     = m.br * boost;
-            colArr[vi * 3 + 1] = m.bg * boost;
-            colArr[vi * 3 + 2] = m.bb * boost;
+        let frameMax = 0;
+        for (let i = 0; i < vni.length; i++) {
+            const ni = vni[i];
+            // Update position from solver
+            posArr[i * 3]     = pos[ni][0];
+            posArr[i * 3 + 1] = pos[ni][1];
+            posArr[i * 3 + 2] = pos[ni][2];
+            // Compute displacement
+            const dx = pos[ni][0] - REST[ni][0];
+            const dy = pos[ni][1] - REST[ni][1];
+            const dz = pos[ni][2] - REST[ni][2];
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (d > frameMax) frameMax = d;
         }
+
+        // EMA-smooth adaptive max
+        shell.adaptiveMax = Math.max(0.001, shell.adaptiveMax * 0.95 + frameMax * 0.05);
+        const invMax = 1 / shell.adaptiveMax;
+
+        // Displacement-based cool→warm color ramp (same as wavefunction)
+        for (let i = 0; i < vni.length; i++) {
+            const ni = vni[i];
+            const dx = pos[ni][0] - REST[ni][0];
+            const dy = pos[ni][1] - REST[ni][1];
+            const dz = pos[ni][2] - REST[ni][2];
+            let t = Math.sqrt(dx * dx + dy * dy + dz * dz) * invMax;
+            if (t > 1) t = 1;
+
+            let r, g, b;
+            if (t < 0.25) {
+                const s = t / 0.25;
+                r = 0; g = 0.2 + 0.6 * s; b = 1.0;
+            } else if (t < 0.5) {
+                const s = (t - 0.25) / 0.25;
+                r = 0.2 * s; g = 0.8 + 0.2 * s; b = 1.0 - 0.8 * s;
+            } else if (t < 0.75) {
+                const s = (t - 0.5) / 0.25;
+                r = 0.2 + 0.8 * s; g = 1.0 - 0.1 * s; b = 0.2 - 0.2 * s;
+            } else {
+                const s = (t - 0.75) / 0.25;
+                r = 1.0; g = 0.9 - 0.7 * s; b = 0;
+            }
+            colArr[i * 3] = r;
+            colArr[i * 3 + 1] = g;
+            colArr[i * 3 + 2] = b;
+        }
+
+        posAttr.needsUpdate = true;
         colAttr.needsUpdate = true;
+        mesh.geometry.computeVertexNormals();
     }
 }
 
 function disposeBranes() {
-    for (const mesh of _braneMeshes) {
-        scene.remove(mesh);
-        mesh.geometry.dispose();
-        mesh.material.dispose();
+    for (const shell of _braneShells) {
+        scene.remove(shell.mesh);
+        shell.mesh.geometry.dispose();
+        shell.mesh.material.dispose();
     }
-    _braneMeshes = [];
-    _braneVertMeta = [];
+    _braneShells = [];
 }
 
 document.getElementById('brane-opacity-slider').addEventListener('input', updateBraneOpacity);
