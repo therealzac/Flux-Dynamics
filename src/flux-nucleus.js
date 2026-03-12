@@ -362,13 +362,15 @@ const NucleusSimulator = (function(){
         if(!el) return;
         const toHex = c => '#' + c.toString(16).padStart(6, '0');
         const entries = [
-            { label: 'proton up',   color: 0xffdd44 },
-            { label: 'proton down', color: 0x44cc66 },
-            { label: 'neutron up',  color: 0x4488ff },
-            { label: 'neutron down', color: 0xff4444 },
-            { label: 'bosonic',     color: 0xffffff },
-            { label: 'gluon (cage)',color: 0xff8800 },
-            { label: 'weak',        color: 0xcc44ff },
+            { label: 'pu\u2081 (fork)',    color: 0x0040ff },
+            { label: 'pu\u2082 (hook)',    color: 0x00ff40 },
+            { label: 'pd (ham CW)',        color: 0x00ffff },
+            { label: 'nd\u2081 (fork)',    color: 0xffbf00 },
+            { label: 'nd\u2082 (hook)',    color: 0xff00bf },
+            { label: 'nu (ham CCW)',       color: 0xff0000 },
+            { label: 'bosonic',            color: 0xffffff },
+            { label: 'gluon (cage)',       color: 0x80ff00 },
+            { label: 'weak',              color: 0x7f00ff },
         ];
         let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;
         for(const e of entries){
@@ -425,11 +427,11 @@ const NucleusSimulator = (function(){
     // Only counts when tet is FULLY ACTUALIZED (both SCs open).
     // Keys: type_face (e.g. 'pu_1', 'nd_5')
     const _FACE_QUARK_TYPE = {
-        1:'pu', 3:'pu', 6:'pd', 8:'pd',
-        2:'nu', 4:'nu', 5:'nd', 7:'nd',
+        1:'pu1', 3:'pu2', 6:'pd', 8:'pd',
+        2:'nu', 4:'nu', 5:'nd1', 7:'nd2',
     };
-    const _TYPE_COLORS = { pu:'#ddcc44', pd:'#44cc66', nu:'#4488ff', nd:'#ff4444' };
-    const _TYPE_LABELS = { pu:'p\u2191', pd:'p\u2193', nu:'n\u2191', nd:'n\u2193' };
+    const _TYPE_COLORS = { pu1:'#0040ff', pu2:'#00ff40', pd:'#00ffff', nd1:'#ffbf00', nd2:'#ff00bf', nu:'#ff0000' };
+    const _TYPE_LABELS = { pu1:'pu\u2081', pu2:'pu\u2082', pd:'pd', nd1:'nd\u2081', nd2:'nd\u2082', nu:'nu' };
 
     function _updateDeuteronCoverage(){
         const el = document.getElementById('dp-coverage-bars');
@@ -445,32 +447,29 @@ const NucleusSimulator = (function(){
             if(!fd) continue;
             const tetActualized = fd.scIds.every(id => allOpen.has(id));
             if(!tetActualized) continue;
-            const qType = _FACE_QUARK_TYPE[q._currentFace] || 'pu';
+            const qType = _FACE_QUARK_TYPE[q._currentFace] || 'pu1';
             const key = qType + '_' + q._currentFace;
             _faceCoverageTotal[key] = (_faceCoverageTotal[key] || 0) + 1;
         }
         // Find max for normalization
+        const _types6 = ['pu1','pu2','pd','nd1','nd2','nu'];
         let maxCount = 1;
         for(let f = 1; f <= 8; f++){
-            for(const t of ['pu','pd','nu','nd']){
+            for(const t of _types6){
                 maxCount = Math.max(maxCount, _faceCoverageTotal[t + '_' + f] || 0);
             }
         }
-        // Build bars: 4 bars per face (y g b r)
+        // Build bars: 6 bars per face
         let html = '';
         for(let f = 1; f <= 8; f++){
             const isGroupA = [1,3,6,8].includes(f);
-            const pu = _faceCoverageTotal['pu_' + f] || 0;
-            const pd = _faceCoverageTotal['pd_' + f] || 0;
-            const nu = _faceCoverageTotal['nu_' + f] || 0;
-            const nd = _faceCoverageTotal['nd_' + f] || 0;
-            html += `<div style="display:flex; align-items:center; gap:2px;">`
-                + `<span style="width:16px; color:${isGroupA ? '#cc8866' : '#6688aa'}; font-size:7px;">F${f}</span>`
-                + `<div class="dp-bar-bg" style="flex:1;" title="p\u2191 ${pu}"><div class="dp-bar-fill" style="width:${(pu/maxCount*100).toFixed(1)}%; background:#ddcc44;"></div></div>`
-                + `<div class="dp-bar-bg" style="flex:1;" title="p\u2193 ${pd}"><div class="dp-bar-fill" style="width:${(pd/maxCount*100).toFixed(1)}%; background:#44cc66;"></div></div>`
-                + `<div class="dp-bar-bg" style="flex:1;" title="n\u2191 ${nu}"><div class="dp-bar-fill" style="width:${(nu/maxCount*100).toFixed(1)}%; background:#4488ff;"></div></div>`
-                + `<div class="dp-bar-bg" style="flex:1;" title="n\u2193 ${nd}"><div class="dp-bar-fill" style="width:${(nd/maxCount*100).toFixed(1)}%; background:#ff4444;"></div></div>`
-                + `</div>`;
+            html += `<div style="display:flex; align-items:center; gap:1px;">`
+                + `<span style="width:16px; color:${isGroupA ? '#cc8866' : '#6688aa'}; font-size:7px;">F${f}</span>`;
+            for(const t of _types6){
+                const count = _faceCoverageTotal[t + '_' + f] || 0;
+                html += `<div class="dp-bar-bg" style="flex:1;" title="${_TYPE_LABELS[t]} ${count}"><div class="dp-bar-fill" style="width:${(count/maxCount*100).toFixed(1)}%; background:${_TYPE_COLORS[t]};"></div></div>`;
+            }
+            html += `</div>`;
         }
         el.innerHTML = html;
     }

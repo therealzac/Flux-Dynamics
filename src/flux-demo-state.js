@@ -9,32 +9,37 @@ let _demoPaused = false;  // true when user has paused via pause button
 // Bounces are only allowed in actualized hadronic patterns that require them.
 const _T45_BOUNCE_GUARD = false;
 let _demoTick = 0;
-let _demoVisits = null;       // {face: {pu:0, pd:0, nu:0, nd:0}}
+let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 
 // ── Rolling Ratio Tracker — demand-driven quark type selection ──
 // Syncs from _demoVisits each tick. Computes deficit for any quark type.
-// Target fractions: pu=2/3 of proton total, pd=1/3; nd=2/3 of neutron total, nu=1/3.
+// Target fractions: each type = 1/3 within its hadron (3-way split).
 const _ratioTracker = {
-    pu: 0, pd: 0, nu: 0, nd: 0,
+    pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0,
     sync() {
-        this.pu = 0; this.pd = 0; this.nu = 0; this.nd = 0;
+        this.pu1 = 0; this.pu2 = 0; this.pd = 0;
+        this.nd1 = 0; this.nd2 = 0; this.nu = 0;
         for (let f = 1; f <= 8; f++) {
             if (!_demoVisits || !_demoVisits[f]) continue;
-            this.pu += _demoVisits[f].pu || 0;
-            this.pd += _demoVisits[f].pd || 0;
-            this.nu += _demoVisits[f].nu || 0;
-            this.nd += _demoVisits[f].nd || 0;
+            this.pu1 += _demoVisits[f].pu1 || 0;
+            this.pu2 += _demoVisits[f].pu2 || 0;
+            this.pd  += _demoVisits[f].pd  || 0;
+            this.nd1 += _demoVisits[f].nd1 || 0;
+            this.nd2 += _demoVisits[f].nd2 || 0;
+            this.nu  += _demoVisits[f].nu  || 0;
         }
     },
-    // Returns positive value when type is underrepresented vs target ratio
+    // Returns positive value when type is underrepresented vs 1/3 target
     deficit(type) {
-        const protonTotal = this.pu + this.pd;
-        const neutronTotal = this.nu + this.nd;
-        if (type === 'pu') return protonTotal === 0 ? 1.0 : (2/3) - this.pu / protonTotal;
-        if (type === 'pd') return protonTotal === 0 ? 1.0 : (1/3) - this.pd / protonTotal;
-        if (type === 'nu') return neutronTotal === 0 ? 1.0 : (1/3) - this.nu / neutronTotal;
-        if (type === 'nd') return neutronTotal === 0 ? 1.0 : (2/3) - this.nd / neutronTotal;
+        const protonTotal = this.pu1 + this.pu2 + this.pd;
+        const neutronTotal = this.nd1 + this.nd2 + this.nu;
+        if (type === 'pu1') return protonTotal === 0 ? 1.0 : (1/3) - this.pu1 / protonTotal;
+        if (type === 'pu2') return protonTotal === 0 ? 1.0 : (1/3) - this.pu2 / protonTotal;
+        if (type === 'pd')  return protonTotal === 0 ? 1.0 : (1/3) - this.pd / protonTotal;
+        if (type === 'nd1') return neutronTotal === 0 ? 1.0 : (1/3) - this.nd1 / neutronTotal;
+        if (type === 'nd2') return neutronTotal === 0 ? 1.0 : (1/3) - this.nd2 / neutronTotal;
+        if (type === 'nu')  return neutronTotal === 0 ? 1.0 : (1/3) - this.nu / neutronTotal;
         return 0;
     }
 };
@@ -176,17 +181,19 @@ const _choreoParamRanges = {
 // Loop topology → concrete node sequence, given tet cycle [a, b, c, d]
 // a=octNode0, b=extNode, c=octNode1, d=octNode2
 const LOOP_SEQUENCES = {
-    pu: ([a, b, c, d]) => [a, b, a, c, a],      // Fork (p-up)
-    nd: ([a, b, c, d]) => [a, b, c, b, a],      // Lollipop (n-down)
-    pd: ([a, b, c, d]) => [a, b, c, d, a],      // Hamiltonian CW (p-down)
-    nu: ([a, b, c, d]) => [a, d, c, b, a],      // Hamiltonian CCW (n-up)
+    pu1: ([a, b, c, d]) => [a, b, a, c, a],     // Fork (proton up 1)
+    pu2: ([a, b, c, d]) => [a, b, c, b, a],     // Hook (proton up 2)
+    pd:  ([a, b, c, d]) => [a, b, c, d, a],     // Hamiltonian CW (proton down)
+    nd1: ([a, b, c, d]) => [a, b, a, c, a],     // Fork (neutron down 1)
+    nd2: ([a, b, c, d]) => [a, b, c, b, a],     // Hook (neutron down 2)
+    nu:  ([a, b, c, d]) => [a, d, c, b, a],     // Hamiltonian CCW (neutron up)
 };
 
-const LOOP_TYPE_NAMES = { pu: 'fork', nd: 'lollipop', pd: 'ham_cw', nu: 'ham_ccw' };
+const LOOP_TYPE_NAMES = { pu1: 'fork', pu2: 'hook', pd: 'ham_cw', nd1: 'fork', nd2: 'hook', nu: 'ham_ccw' };
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.
 // Used when a xon breaks confinement and enters the 'weak' mode.
-const WEAK_FORCE_COLOR = 0xcc44ff;
+const WEAK_FORCE_COLOR = 0x7f00ff;
 
 const XON_TRAIL_LENGTH = 50;
 
@@ -203,7 +210,7 @@ const WEAK_LIFECYCLE_MAX = 10;
 // ╚══════════════════════════════════════════════════════════════════════╝
 let _gluonStoredPairs = 0;
 
-const QUARK_COLORS = { pu: 0xffdd44, pd: 0x44cc66, nu: 0x4488ff, nd: 0xff4444 };
+const QUARK_COLORS = { pu1: 0x0040ff, pu2: 0x00ff40, pd: 0x00ffff, nd1: 0xffbf00, nd2: 0xff00bf, nu: 0xff0000 };
 const A_SET = new Set([1, 3, 6, 8]);
 
 const L1_VALID_TRIPLES = [

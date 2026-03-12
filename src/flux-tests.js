@@ -49,32 +49,32 @@ function _loopMatchesAnyRotation(actual, quarkType, cycle) {
 }
 
 const LIVE_GUARD_REGISTRY = [
-    { id: 'T01', name: 'Fork path audit (pu)', init: { _seen: 0 }, convergence: true,
+    { id: 'T01', name: 'Fork path audit (pu1)', init: { _seen: 0 }, convergence: true,
       check(tick, g) {
         if (g.ok === true) return null;
         for (const xon of _demoXons) {
-          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'pu') continue;
+          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'pu1') continue;
           if (!xon._loopSeq || !xon._assignedFace) continue;
           const fd = _nucleusTetFaceData[xon._assignedFace];
           if (!fd) continue;
-          if (_loopMatchesAnyRotation(xon._loopSeq, 'pu', fd.cycle)) {
+          if (_loopMatchesAnyRotation(xon._loopSeq, 'pu1', fd.cycle)) {
             g._seen++; g.ok = true; g.msg = ''; _liveGuardRender(); return null;
-          } else return `tick ${tick}: pu loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
+          } else return `tick ${tick}: pu1 loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
         }
         return null;
       }
     },
-    { id: 'T02', name: 'Lollipop path audit (nd)', init: { _seen: 0 }, convergence: true,
+    { id: 'T02', name: 'Hook path audit (pu2)', init: { _seen: 0 }, convergence: true,
       check(tick, g) {
         if (g.ok === true) return null;
         for (const xon of _demoXons) {
-          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'nd') continue;
+          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'pu2') continue;
           if (!xon._loopSeq || !xon._assignedFace) continue;
           const fd = _nucleusTetFaceData[xon._assignedFace];
           if (!fd) continue;
-          if (_loopMatchesAnyRotation(xon._loopSeq, 'nd', fd.cycle)) {
+          if (_loopMatchesAnyRotation(xon._loopSeq, 'pu2', fd.cycle)) {
             g._seen++; g.ok = true; g.msg = ''; _liveGuardRender(); return null;
-          } else return `tick ${tick}: nd loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
+          } else return `tick ${tick}: pu2 loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
         }
         return null;
       }
@@ -105,6 +105,36 @@ const LIVE_GUARD_REGISTRY = [
           if (_loopMatchesAnyRotation(xon._loopSeq, 'nu', fd.cycle)) {
             g._seen++; g.ok = true; g.msg = ''; _liveGuardRender(); return null;
           } else return `tick ${tick}: nu loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
+        }
+        return null;
+      }
+    },
+    { id: 'T05b', name: 'Fork path audit (nd1)', init: { _seen: 0 }, convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'nd1') continue;
+          if (!xon._loopSeq || !xon._assignedFace) continue;
+          const fd = _nucleusTetFaceData[xon._assignedFace];
+          if (!fd) continue;
+          if (_loopMatchesAnyRotation(xon._loopSeq, 'nd1', fd.cycle)) {
+            g._seen++; g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+          } else return `tick ${tick}: nd1 loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
+        }
+        return null;
+      }
+    },
+    { id: 'T06b', name: 'Hook path audit (nd2)', init: { _seen: 0 }, convergence: true,
+      check(tick, g) {
+        if (g.ok === true) return null;
+        for (const xon of _demoXons) {
+          if (!xon.alive || xon._mode !== 'tet' || xon._quarkType !== 'nd2') continue;
+          if (!xon._loopSeq || !xon._assignedFace) continue;
+          const fd = _nucleusTetFaceData[xon._assignedFace];
+          if (!fd) continue;
+          if (_loopMatchesAnyRotation(xon._loopSeq, 'nd2', fd.cycle)) {
+            g._seen++; g.ok = true; g.msg = ''; _liveGuardRender(); return null;
+          } else return `tick ${tick}: nd2 loop [${xon._loopSeq}] != any rotation of cycle [${fd.cycle}]`;
         }
         return null;
       }
@@ -238,16 +268,27 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    { id: 'T22', name: 'Hadronic composition (pu:pd\u22482, nd:nu\u22482)', convergence: true,
+    { id: 'T22', name: 'Hadronic composition (1:1:1 per hadron)', convergence: true,
       check(tick, g) {
         if (g.ok === true) return null;
-        const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
-        const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
-        const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
-        const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
-        const puPdRatio = gPd > 0 ? gPu / gPd : 0;
-        const ndNuRatio = gNu > 0 ? gNd / gNu : 0;
-        const total = gPu + gPd + gNd + gNu;
+        const vals = Object.values(_demoVisits);
+        const gPu1 = vals.reduce((s, v) => s + (v.pu1 || 0), 0);
+        const gPu2 = vals.reduce((s, v) => s + (v.pu2 || 0), 0);
+        const gPd  = vals.reduce((s, v) => s + (v.pd  || 0), 0);
+        const gNd1 = vals.reduce((s, v) => s + (v.nd1 || 0), 0);
+        const gNd2 = vals.reduce((s, v) => s + (v.nd2 || 0), 0);
+        const gNu  = vals.reduce((s, v) => s + (v.nu  || 0), 0);
+        const pTotal = gPu1 + gPu2 + gPd;
+        const nTotal = gNd1 + gNd2 + gNu;
+        const total = pTotal + nTotal;
+        // 3-way evenness within each hadron: max deviation from 1/3
+        const pEven = pTotal > 0 ? 1 - Math.max(
+          Math.abs(gPu1/pTotal - 1/3), Math.abs(gPu2/pTotal - 1/3), Math.abs(gPd/pTotal - 1/3)
+        ) * 3 : 0;
+        const nEven = nTotal > 0 ? 1 - Math.max(
+          Math.abs(gNd1/nTotal - 1/3), Math.abs(gNd2/nTotal - 1/3), Math.abs(gNu/nTotal - 1/3)
+        ) * 3 : 0;
+        // Face coverage evenness
         const totals = [];
         for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
         const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
@@ -255,23 +296,20 @@ const LIVE_GUARD_REGISTRY = [
         const cv = mean > 0 ? (stddev / mean) : 1;
         const evenness = Math.max(0, 1 - cv);
         if (total > 0)
-          g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)} cov=${(evenness*100).toFixed(0)}%`;
-        // Passes when evenness is near-perfect with enough data
-        if (evenness >= 0.999 && total >= 16) {
+          g.msg = `p:${gPu1}/${gPu2}/${gPd} n:${gNd1}/${gNd2}/${gNu} cov=${(evenness*100).toFixed(0)}%`;
+        // Passes when both hadrons have good 3-way balance with enough data
+        if (total >= 18 && pEven >= 0.7 && nEven >= 0.7) {
           g.ok = true;
-          g.msg = `coverage 100% pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
+          g.msg = `p:${gPu1}/${gPu2}/${gPd} n:${gNd1}/${gNd2}/${gNu}`;
           _liveGuardRender();
           return null;
         }
-        // Also passes when ratios are in the target band [1.6, 2.4]
-        if (total >= 16 && puPdRatio >= 1.6 && puPdRatio <= 2.4
-                        && ndNuRatio >= 1.6 && ndNuRatio <= 2.4) {
+        // Also passes on near-perfect face coverage
+        if (evenness >= 0.999 && total >= 18) {
           g.ok = true;
-          g.msg = `pu:pd=${puPdRatio.toFixed(2)} nd:nu=${ndNuRatio.toFixed(2)}`;
           _liveGuardRender();
           return null;
         }
-        // No time limit — stays pending until ratios converge
         return null;
       }
     },
@@ -300,8 +338,7 @@ const LIVE_GUARD_REGISTRY = [
           for (let j = 0; j < xon.trailColHistory.length; j++) {
             const c = xon.trailColHistory[j];
             const isWhite = c === 0xffffff;
-            const isQuark = c === QUARK_COLORS.pu || c === QUARK_COLORS.pd ||
-                            c === QUARK_COLORS.nu || c === QUARK_COLORS.nd;
+            const isQuark = Object.values(QUARK_COLORS).includes(c);
             const isWeak = c === WEAK_FORCE_COLOR;
             if (!isWhite && !isQuark && !isWeak) return `tick ${tick}: color 0x${c.toString(16)}`;
           }
@@ -570,20 +607,20 @@ const LIVE_GUARD_REGISTRY = [
         if (tick < LIVE_GUARD_GRACE) return null;
         // Sync and verify against manual sum of _demoVisits
         _ratioTracker.sync();
-        let manualPu = 0, manualPd = 0, manualNu = 0, manualNd = 0;
+        const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+        const manual = {};
+        for (const t of types6) manual[t] = 0;
         for (let f = 1; f <= 8; f++) {
             if (!_demoVisits[f]) continue;
-            manualPu += _demoVisits[f].pu || 0;
-            manualPd += _demoVisits[f].pd || 0;
-            manualNu += _demoVisits[f].nu || 0;
-            manualNd += _demoVisits[f].nd || 0;
+            for (const t of types6) manual[t] += _demoVisits[f][t] || 0;
         }
-        if (_ratioTracker.pu !== manualPu || _ratioTracker.pd !== manualPd ||
-            _ratioTracker.nu !== manualNu || _ratioTracker.nd !== manualNd) {
-            return `tick ${tick}: tracker mismatch pu=${_ratioTracker.pu}/${manualPu} pd=${_ratioTracker.pd}/${manualPd}`;
+        for (const t of types6) {
+            if (_ratioTracker[t] !== manual[t]) {
+                return `tick ${tick}: tracker mismatch ${t}=${_ratioTracker[t]}/${manual[t]}`;
+            }
         }
         // Verify deficit() returns number in [-1, 1]
-        for (const t of ['pu', 'pd', 'nu', 'nd']) {
+        for (const t of types6) {
             const d = _ratioTracker.deficit(t);
             if (typeof d !== 'number' || isNaN(d)) {
                 return `tick ${tick}: deficit('${t}') returned ${d}`;
@@ -1294,7 +1331,7 @@ function runDemo3Tests() {
     _demoTypeBalanceHistory = [];
     _demoPrevFaces = new Set();
     if (_demoVisits) for (let f = 1; f <= 8; f++) {
-        _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
+        _demoVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 };
     }
     // Return xons to oct mode at their current positions
     for (const xon of _demoXons) {
@@ -1397,13 +1434,19 @@ let _tournamentCallback = null; // called when trial reaches target tick
 // Evaluate fitness from current _demoVisits state.
 // Returns { puPd, ndNu, evenness, totalVisits, fitness, criticalFail }
 function _evaluateFitness() {
-    const gPu = Object.values(_demoVisits).reduce((s, v) => s + v.pu, 0);
-    const gPd = Object.values(_demoVisits).reduce((s, v) => s + v.pd, 0);
-    const gNd = Object.values(_demoVisits).reduce((s, v) => s + v.nd, 0);
-    const gNu = Object.values(_demoVisits).reduce((s, v) => s + v.nu, 0);
-    const puPd = gPd > 0 ? gPu / gPd : 0;
-    const ndNu = gNu > 0 ? gNd / gNu : 0;
-    const total = gPu + gPd + gNd + gNu;
+    const vals = Object.values(_demoVisits);
+    const gPu1 = vals.reduce((s, v) => s + (v.pu1 || 0), 0);
+    const gPu2 = vals.reduce((s, v) => s + (v.pu2 || 0), 0);
+    const gPd  = vals.reduce((s, v) => s + (v.pd  || 0), 0);
+    const gNd1 = vals.reduce((s, v) => s + (v.nd1 || 0), 0);
+    const gNd2 = vals.reduce((s, v) => s + (v.nd2 || 0), 0);
+    const gNu  = vals.reduce((s, v) => s + (v.nu  || 0), 0);
+    const pTotal = gPu1 + gPu2 + gPd;
+    const nTotal = gNd1 + gNd2 + gNu;
+    const total = pTotal + nTotal;
+    // 3-way evenness: how close each type is to 1/3 of its hadron
+    const pEven = pTotal > 0 ? 1 - (Math.abs(gPu1/pTotal - 1/3) + Math.abs(gPu2/pTotal - 1/3) + Math.abs(gPd/pTotal - 1/3)) : 0;
+    const nEven = nTotal > 0 ? 1 - (Math.abs(gNd1/nTotal - 1/3) + Math.abs(gNd2/nTotal - 1/3) + Math.abs(gNu/nTotal - 1/3)) : 0;
 
     const totals = [];
     for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
@@ -1418,21 +1461,19 @@ function _evaluateFitness() {
         .map(([id]) => id);
     const anyFail = failedGuards.length > 0 || simHalted;
 
-    const distPuPd = 1 - Math.min(1, Math.abs(puPd - 2.0) / 2.0);
-    const distNdNu = 1 - Math.min(1, Math.abs(ndNu - 2.0) / 2.0);
     // Hit rate: completions / assignments (how often does assignment → actualized tet?)
     const hitRate = _demoTetAssignments > 0 ? total / _demoTetAssignments : 0;
-    // Fitness = ratio accuracy + evenness + hit rate
-    // distPuPd, distNdNu ∈ [0,1], evenness ∈ [0,1], hitRate ∈ [0,1]
-    // Weights: 30% puPd + 30% ndNu + 20% evenness + 20% hitRate = max 1.0
-    const balance = distPuPd * 0.3 + distNdNu * 0.3 + evenness * 0.2 + hitRate * 0.2;
+    // Fitness = 3-way ratio accuracy + face evenness + hit rate
+    // pEven, nEven ∈ [0,1], evenness ∈ [0,1], hitRate ∈ [0,1]
+    // Weights: 30% pEven + 30% nEven + 20% evenness + 20% hitRate = max 1.0
+    const balance = pEven * 0.3 + nEven * 0.3 + evenness * 0.2 + hitRate * 0.2;
     // Fitness tiers: clean survivors > failed candidates > zero-visit candidates
     let fitness;
     if (total === 0) fitness = -20;
     else if (anyFail) fitness = balance - 10;
     else fitness = balance;
 
-    return { puPd, ndNu, evenness, hitRate, totalVisits: total, assignments: _demoTetAssignments, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
+    return { pEven, nEven, evenness, hitRate, totalVisits: total, assignments: _demoTetAssignments, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
 }
 
 // Hook into demoTick to detect when trial reaches target tick.
@@ -1639,7 +1680,7 @@ async function _runTournament() {
         const avgFitness = results.reduce((s, r) => s + r.fitness, 0) / results.length;
         const worstFitness = results[results.length - 1].fitness;
         const failStr = top.failedGuards?.length ? ` FAIL[${top.failedGuards.join(',')}]@${top.survivedTicks}` : ` survived ${top.survivedTicks}`;
-        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pu:pd=${top.puPd.toFixed(2)} nd:nu=${top.ndNu.toFixed(2)} even=${top.evenness.toFixed(2)} hit=${(top.hitRate*100).toFixed(0)}% (${top.totalVisits}/${top.assignments}) visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
+        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pEven=${top.pEven.toFixed(2)} nEven=${top.nEven.toFixed(2)} even=${top.evenness.toFixed(2)} hit=${(top.hitRate*100).toFixed(0)}% (${top.totalVisits}/${top.assignments}) visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
 
         genSummaries.push({
             gen: gen + 1,
@@ -1652,7 +1693,7 @@ async function _runTournament() {
         // Keep full results from last generation for dump
         if (gen === GENERATIONS - 1 || !_tournamentRunning) {
             finalGenResults = results.map(r => ({
-                fitness: r.fitness, clean: r.clean, puPd: r.puPd, ndNu: r.ndNu,
+                fitness: r.fitness, clean: r.clean, pEven: r.pEven, nEven: r.nEven,
                 evenness: r.evenness, hitRate: r.hitRate, totalVisits: r.totalVisits,
                 assignments: r.assignments, survivedTicks: r.survivedTicks,
                 failedGuards: r.failedGuards || [], params: r.params,

@@ -52,7 +52,7 @@ function _maxBipartiteAssignment(plans, blocked) {
 // Two lookahead modes:
 // 1. Generic graph traversal (_lookahead) — for oct xons with flexible movement
 // 2. Loop-shape-aware (_lookaheadTetPath) — for tet/idle_tet xons following
-//    their specific fermionic loop (fork, lollipop, ham CW/CCW).
+//    their specific fermionic loop (fork, hook, ham CW/CCW).
 //    This simulates the xon stepping through its ACTUAL sequence, tracking
 //    self-occupation to handle revisited nodes (fork: a→b→a→c→a).
 //
@@ -258,7 +258,7 @@ function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
 
     if (futureMode === 'tet' || futureMode === 'idle_tet') {
         // Loop-shape-aware: check the full remaining loop path, not just 1 step.
-        // Uses the xon's actual loop sequence (fork, lollipop, ham CW/CCW).
+        // Uses the xon's actual loop sequence (fork, hook, ham CW/CCW).
         if (xon._loopSeq) {
             const tp = tetPlans.find(p => p.xon === xon && p.approved);
             let stepAfter1st;
@@ -387,19 +387,15 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     // PRNG jitter diversifies type assignment across backtracker retries
     // (seed incorporates retry count so each attempt gets different sequence).
     const isProtonFace = A_SET.has(face);
-    const primaryType = isProtonFace ? 'pu' : 'nd';
-    const secondaryType = isProtonFace ? 'pd' : 'nu';
-    const primaryDeficit = _ratioTracker.deficit(primaryType);
-    const secondaryDeficit = _ratioTracker.deficit(secondaryType);
-    const jitter = (_sRng() - 0.5) * 0.15;
-    let quarkType;
-    if (secondaryDeficit > primaryDeficit + _choreoParams.ratioThreshold + jitter) {
-        quarkType = secondaryType;
-        score += secondaryDeficit * _choreoParams.ratioDeficitWeight * 10;
-    } else {
-        quarkType = primaryType;
-        score += Math.max(0, primaryDeficit) * _choreoParams.ratioDeficitWeight * 10;
+    const candidates = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
+    // Pick type with highest deficit (+ PRNG jitter to break ties across retries)
+    let quarkType = candidates[0];
+    let bestDeficit = -Infinity;
+    for (const t of candidates) {
+        const d = _ratioTracker.deficit(t) + (_sRng() - 0.5) * 0.15;
+        if (d > bestDeficit) { bestDeficit = d; quarkType = t; }
     }
+    score += Math.max(0, bestDeficit) * _choreoParams.ratioDeficitWeight * 10;
 
     // 2. XONIC MOVEMENT BALANCE: score by how much the loop's directions
     //    help balance this xon's 10-direction counters.
@@ -870,7 +866,7 @@ function _returnXonToOct(xon, occupied) {
 function _startIdleTetLoop(xon, occupied) {
     if (!_nucleusTetFaceData) return false;
 
-    const types = ['pu', 'nd', 'pd', 'nu'];
+    const types = ['pu1', 'pu2', 'nd1', 'nd2', 'pd', 'nu'];
 
     // ── Pass 1: Try already-actualized faces ──
     const actualizedFaces = [];

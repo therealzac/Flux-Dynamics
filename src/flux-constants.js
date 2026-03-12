@@ -92,7 +92,7 @@ let _voidMeshPool = []; // {fillMesh, wireMesh, type} per void
 // ║  indistinguishable → this is the ELECTRON (flavorless).           ║
 // ║  One complete 4-step loop = one hadron actualization.              ║
 // ║                                                                    ║
-// ║  Fork/lollipop assignment is a gauge choice (isospin conjugates).  ║
+// ║  Fork/hook assignment is a gauge choice (isospin conjugates).  ║
 // ║  Pick whichever makes physical sense for xon movement, as long    ║
 // ║  as the distribution is balanced.                                 ║
 // ║                                                                    ║

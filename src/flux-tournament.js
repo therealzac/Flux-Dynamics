@@ -263,7 +263,7 @@ function _computeCoverageEvenness(){
     // Per quark-type coverage evenness across all 8 faces.
     // Each quark type (pu, pd, nu, nd) should ideally be spread
     // evenly across all faces it can reach.
-    const types = ['pu', 'pd', 'nu', 'nd'];
+    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
     const faces = [1, 2, 3, 4, 5, 6, 7, 8];
     let totalCV = 0;
     let totalCov = 0;

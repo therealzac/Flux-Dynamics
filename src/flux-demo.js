@@ -27,7 +27,7 @@
 //
 //   tet       (quark)   Executing a scheduled hadronic excitation loop on an
 //                        assigned face. Follows a fixed 5-node sequence (fork,
-//                        lollipop, ham CW, or ham CCW). First-class priority:
+//                        hook, ham CW, or ham CCW). First-class priority:
 //                        the planner defers to tet xons' paths.
 //
 //   idle_tet  (quark)   Executing an unscheduled loop on an actualized face.
@@ -222,7 +222,7 @@
 //
 // NO-PREVNODE RULE
 //   A xon may NEVER travel to prevNode UNLESS it is in tet mode following
-//   its _loopSeq (fork/lollipop loops require node revisits). This is
+//   its _loopSeq (fork/hook loops require node revisits). This is
 //   absolute for oct, weak, gluon, and idle_tet modes.
 //
 // EJECTION RULES
@@ -1015,12 +1015,12 @@ function buildDeuteronSchedule(patP, patN, D4) {
             neutronFaces: [B[ancB_n[i]], B[i], B[dB_n[i]]],
             // Quark-type map: face → quarkType
             faceQuarks: {
-                [A[ancA_p[i]]]: 'pd',   // proton anchor = down
-                [A[i]]: 'pu',            // proton follower-1 = up
-                [A[dA_p[i]]]: 'pu',      // proton follower-2 = up
-                [B[ancB_n[i]]]: 'nu',    // neutron anchor = up
-                [B[i]]: 'nd',            // neutron follower-1 = down
-                [B[dB_n[i]]]: 'nd',      // neutron follower-2 = down
+                [A[ancA_p[i]]]: 'pd',   // proton anchor (ham CW)
+                [A[i]]: 'pu1',           // proton follower-1 (fork)
+                [A[dA_p[i]]]: 'pu2',     // proton follower-2 (hook)
+                [B[ancB_n[i]]]: 'nu',    // neutron anchor (ham CCW)
+                [B[i]]: 'nd1',           // neutron follower-1 (fork)
+                [B[dB_n[i]]]: 'nd2',     // neutron follower-2 (hook)
             },
         });
         // Odd tick 2i+1: proton on B, neutron on A
@@ -1029,11 +1029,11 @@ function buildDeuteronSchedule(patP, patN, D4) {
             neutronFaces: [A[ancA_n[i]], A[i], A[dA_n[i]]],
             faceQuarks: {
                 [B[ancB_p[i]]]: 'pd',
-                [B[i]]: 'pu',
-                [B[dB_p[i]]]: 'pu',
+                [B[i]]: 'pu1',
+                [B[dB_p[i]]]: 'pu2',
                 [A[ancA_n[i]]]: 'nu',
-                [A[i]]: 'nd',
-                [A[dA_n[i]]]: 'nd',
+                [A[i]]: 'nd1',
+                [A[dA_n[i]]]: 'nd2',
             },
         });
     }
@@ -1050,7 +1050,7 @@ function startDemoLoop() {
     // Init visit counters (demand-driven — no schedule needed)
     _demoVisits = {};
     for (let f = 1; f <= 8; f++) {
-        _demoVisits[f] = { pu: 0, pd: 0, nu: 0, nd: 0, total: 0 };
+        _demoVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 };
     }
     _demoTick = 0;
     _bfsReset(); // fresh demo = clean BFS + ledger

@@ -62,57 +62,57 @@ function updateDemoPanel() {
     const evenness = Math.max(0, 1 - cv);
 
     // Find max for bar normalization
+    const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+    const typeColors = { pu1: '#0040ff', pu2: '#00ff40', pd: '#00ffff', nd1: '#ffbf00', nd2: '#ff00bf', nu: '#ff0000' };
+    const typeLabels = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
     let maxCount = 1;
     for (let f = 1; f <= 8; f++) {
-        for (const t of ['pu', 'pd', 'nu', 'nd']) {
-            maxCount = Math.max(maxCount, _demoVisits[f][t]);
+        for (const t of types6) {
+            maxCount = Math.max(maxCount, _demoVisits[f][t] || 0);
         }
     }
 
-    // Build bars
+    // Build bars (6 per face)
     let html = '';
     for (let f = 1; f <= 8; f++) {
         const v = _demoVisits[f];
         const isA = [1, 3, 6, 8].includes(f);
-        html += `<div style="display:flex; align-items:center; gap:2px;">`
-            + `<span style="width:18px; color:${isA ? '#cc8866' : '#6688aa'}; font-size:8px; font-weight:bold;">F${f}</span>`
-            + `<div class="dp-bar-bg" style="flex:1;" title="p\u2191 ${v.pu}"><div class="dp-bar-fill" style="width:${(v.pu / maxCount * 100).toFixed(1)}%; background:#ddcc44;"></div></div>`
-            + `<div class="dp-bar-bg" style="flex:1;" title="p\u2193 ${v.pd}"><div class="dp-bar-fill" style="width:${(v.pd / maxCount * 100).toFixed(1)}%; background:#44cc66;"></div></div>`
-            + `<div class="dp-bar-bg" style="flex:1;" title="n\u2191 ${v.nu}"><div class="dp-bar-fill" style="width:${(v.nu / maxCount * 100).toFixed(1)}%; background:#4488ff;"></div></div>`
-            + `<div class="dp-bar-bg" style="flex:1;" title="n\u2193 ${v.nd}"><div class="dp-bar-fill" style="width:${(v.nd / maxCount * 100).toFixed(1)}%; background:#ff4444;"></div></div>`
-            + `<span style="width:22px; text-align:right; font-size:7px; color:#667788;">${v.total}</span>`
+        html += `<div style="display:flex; align-items:center; gap:1px;">`
+            + `<span style="width:18px; color:${isA ? '#cc8866' : '#6688aa'}; font-size:8px; font-weight:bold;">F${f}</span>`;
+        for (const t of types6) {
+            html += `<div class="dp-bar-bg" style="flex:1;" title="${typeLabels[t]} ${v[t] || 0}"><div class="dp-bar-fill" style="width:${((v[t] || 0) / maxCount * 100).toFixed(1)}%; background:${typeColors[t]};"></div></div>`;
+        }
+        html += `<span style="width:22px; text-align:right; font-size:7px; color:#667788;">${v.total}</span>`
             + `</div>`;
     }
 
     // ── Per-hadron evenness ──
-    // Proton visits per face = pu + pd, Neutron = nu + nd
-    const protonPerFace = [], neutronPerFace = [], typePerFace = [];
+    const protonPerFace = [], neutronPerFace = [];
     for (let f = 1; f <= 8; f++) {
         const v = _demoVisits[f];
-        protonPerFace.push(v.pu + v.pd);
-        neutronPerFace.push(v.nu + v.nd);
+        protonPerFace.push((v.pu1 || 0) + (v.pu2 || 0) + (v.pd || 0));
+        neutronPerFace.push((v.nd1 || 0) + (v.nd2 || 0) + (v.nu || 0));
     }
-    // Per-type global totals
-    // Physical ratio: pu ≈ 2×pd (proton uud), nd ≈ 2×nu (neutron udd)
-    const typeTotals = { pu: 0, pd: 0, nu: 0, nd: 0 };
+    // Per-type global totals for 3-way evenness
+    const typeTotals = {};
+    for (const t of types6) typeTotals[t] = 0;
     for (let f = 1; f <= 8; f++) {
-        for (const t of ['pu', 'pd', 'nu', 'nd']) typeTotals[t] += _demoVisits[f][t];
+        for (const t of types6) typeTotals[t] += _demoVisits[f][t] || 0;
     }
     const calcEvenness = (arr) => {
         const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-        if (m === 0) return 0; // no visits = 0% balance
+        if (m === 0) return 0;
         const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
         return Math.max(0, 1 - sd / m);
     };
     const protonEvenness = calcEvenness(protonPerFace);
     const neutronEvenness = calcEvenness(neutronPerFace);
-    // Type ratio balance: check pu:pd ≈ 2:1 and nd:nu ≈ 2:1
-    const puPdRatio = typeTotals.pd > 0 ? typeTotals.pu / typeTotals.pd : 0;
-    const ndNuRatio = typeTotals.nu > 0 ? typeTotals.nd / typeTotals.nu : 0;
-    // How close each ratio is to the target 2.0
-    const ratioAccuracy = (puPdRatio > 0 && ndNuRatio > 0)
-        ? 1 - (Math.abs(puPdRatio - 2) + Math.abs(ndNuRatio - 2)) / 4
-        : 0;
+    // 3-way type evenness within each hadron
+    const pTotal = typeTotals.pu1 + typeTotals.pu2 + typeTotals.pd;
+    const nTotal = typeTotals.nd1 + typeTotals.nd2 + typeTotals.nu;
+    const pEven = pTotal > 0 ? 1 - (Math.abs(typeTotals.pu1/pTotal - 1/3) + Math.abs(typeTotals.pu2/pTotal - 1/3) + Math.abs(typeTotals.pd/pTotal - 1/3)) : 0;
+    const nEven = nTotal > 0 ? 1 - (Math.abs(typeTotals.nd1/nTotal - 1/3) + Math.abs(typeTotals.nd2/nTotal - 1/3) + Math.abs(typeTotals.nu/nTotal - 1/3)) : 0;
+    const ratioAccuracy = (pEven + nEven) / 2;
     const evColor = (e) => e > 0.99 ? '#66dd66' : e > 0.95 ? '#ccaa66' : '#ff6644';
 
     // Evenness + rule compliance
@@ -130,12 +130,12 @@ function updateDemoPanel() {
         + `<span style="color:${evColor(neutronEvenness)}; font-weight:bold;">${(neutronEvenness * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">pu:pd ratio</span>`
-        + `<span style="color:${Math.abs(puPdRatio - 2) < 0.3 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${puPdRatio.toFixed(2)} (\u21922.0)</span>`
+        + `<span style="color:#6a8a9a;">p 1:1:1</span>`
+        + `<span style="color:${pEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(pEven * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">nd:nu ratio</span>`
-        + `<span style="color:${Math.abs(ndNuRatio - 2) < 0.3 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${ndNuRatio.toFixed(2)} (\u21922.0)</span>`
+        + `<span style="color:#6a8a9a;">n 1:1:1</span>`
+        + `<span style="color:${nEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(nEven * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
         + `<span style="color:#6a8a9a;">epoch</span>`
@@ -194,7 +194,7 @@ function _logChoreo(msg) {
 
 // ── Log PHASE 2 summary: called after bipartite matching + fallbacks ──
 function _logPhase2Summary(octPlans) {
-    const _QL = { pu: 'p_u', pd: 'p_d', nu: 'n_u', nd: 'n_d' };
+    const _QL = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
     const lines = [];
     for (const plan of octPlans) {
         const x = plan.xon;
@@ -237,7 +237,7 @@ function updateXonPanel() {
                         x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
                         x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
         // Display labels: oct=idle, tet/idle_tet=hadron type (p_u, p_d, n_u, n_d)
-        const QUARK_LABELS = { pu: 'p_u', pd: 'p_d', nu: 'n_u', nd: 'n_d' };
+        const QUARK_LABELS = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
         let modeLabel, faceStr;
         if (x._mode === 'oct') {
             modeLabel = 'idle';
