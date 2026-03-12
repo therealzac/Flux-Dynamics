@@ -2421,11 +2421,9 @@ async function _runTournament() {
         if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
         if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
 
-        // Suppress live guards & backtracker during PPO training.
-        // Must be set AFTER startDemoLoop() because runDemo3Tests() resets it.
-        // The random policy will violate constraints — that's expected.
-        // The reward signal (not guards) teaches the policy to avoid violations.
-        _testRunning = true;
+        // Live guards & backtracker run normally during PPO training —
+        // identical physics enforcement to demo mode. The NN's bad moves
+        // get backtracked just like any other bad moves.
 
         // Restore camera
         panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
@@ -2462,8 +2460,10 @@ async function _runTournament() {
                 _liveGuardDumped = false;
             }
 
-            // Pause support: wait while paused, yielding to let UI respond
+            // Pause support: wait while paused, yielding to let UI respond.
+            // User may rewind/step during pause — RL picks up from new state.
             if (_demoPaused && _tournamentRunning) {
+                const tickBeforePause = _demoTick;
                 // First pause frame: sync visuals so user can see current state
                 if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
                 if (typeof bumpState === 'function') bumpState();
@@ -2473,6 +2473,15 @@ async function _runTournament() {
                 if (typeof updateXonPanel === 'function') updateXonPanel();
                 while (_demoPaused && _tournamentRunning) {
                     await new Promise(r => setTimeout(r, 50));
+                }
+                // If user rewound during pause, reset backtracker & guards
+                // so RL continues cleanly from the new position
+                if (_demoTick !== tickBeforePause) {
+                    _redoStack.length = 0;
+                    _bfsReset(); _btReset();
+                    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+                    // Adjust epoch tick counter to match rewound position
+                    tick = Math.max(0, tick - (tickBeforePause - _demoTick));
                 }
             }
             if (!_tournamentRunning) break;
@@ -2565,7 +2574,6 @@ async function _runTournament() {
 
     // Cleanup
     _ppoTraining = false;
-    _testRunning = false;
     _ppoStrategicBuffer = null;
     _ppoTacticalBuffer = null;
     strategicOptimizer.dispose();

@@ -3052,6 +3052,7 @@ async function demoTick() {
             _tickLogLastGuards = {};
             _btRetryCount = 0;
             _btRestoreSnapshot(anchorSnap);
+            _updateTickCounter(); // show tick decrement during backtrack
             _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}`);
             return true;
         };
@@ -3074,6 +3075,7 @@ async function demoTick() {
 
         const snap = _btSnapshots[_btSnapshots.length - 1];
         _btRestoreSnapshot(snap);
+        _updateTickCounter(); // show tick decrement during backtrack
         _logChoreo(`BACKTRACK retry at tick ${currentTick} (ledger: ${ledger.size} exclusions)`);
         continue;
     }

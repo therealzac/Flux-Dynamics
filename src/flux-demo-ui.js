@@ -1,5 +1,14 @@
 // flux-demo-ui.js — Demo panels, profiling, choreo logging, pause/resume/stop
 
+// Lightweight tick counter update — safe to call during backtrack retry loops.
+// Only touches the two tick counter DOM elements, no panel rebuild.
+function _updateTickCounter() {
+    const el = document.getElementById('nucleus-status');
+    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:var(--text-3);">${_demoTick} ticks</span>`;
+    const dpT = document.getElementById('dp-title');
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
+}
+
 function dumpProfile() {
     if (_tickCount === 0) { console.log('[PROFILE] No ticks recorded'); return; }
     const n = _tickCount;
@@ -337,6 +346,9 @@ function resumeDemo() {
     _demoPaused = false;
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     simHalted = false;
+    // During RL training, the PPO loop drives ticks — don't start a second tick loop.
+    // Setting _demoPaused = false above is sufficient; the RL wait loop will exit.
+    if (typeof _tournamentRunning !== 'undefined' && _tournamentRunning) return;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
         if (_redoStack.length > 0) {
             // Drain redo stack at playback speed (deterministic replay)
