@@ -311,6 +311,7 @@ function resumeDemo() {
                 if (_redoStack.length > 0) {
                     const snap = _redoStack.pop();
                     _btRestoreSnapshot(snap);
+                    _btSaveSnapshot(); // rebuild snapshot stack for future rewind
                     simHalted = false;
                     _playbackUpdateDisplay();
                 } else {
@@ -403,6 +404,8 @@ function stopDemo() {
 function _playbackStepBack() {
     if (_tickInProgress || _btSnapshots.length < 1) return false;
     if (_demoTick <= 0) return false;
+    // Invalidate stale redo from prior forward pass
+    _redoStack.length = 0;
     // Save current state to redo stack before restoring (for instant step-forward)
     _btSaveSnapshot();
     const redoSnap = _btSnapshots.pop(); // the one we just saved = current state
@@ -433,6 +436,7 @@ async function _playbackStepForward() {
         // Instant restore from redo stack (no solver, no choreography)
         const redoSnap = _redoStack.pop();
         _btRestoreSnapshot(redoSnap);
+        _btSaveSnapshot(); // rebuild snapshot stack for future rewind
         simHalted = false;
         _playbackUpdateDisplay();
         return;
