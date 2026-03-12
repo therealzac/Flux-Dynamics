@@ -297,6 +297,20 @@ let _activePatternSchedule = null;
 // ════════════════════════════════════════════════════════════════════
 const QUARK_ALGO_REGISTRY = [];
 
+// ── Network naming for tournament/training ──
+const _NETWORK_NAMES = [
+    'Helios','Andromeda','Quasar','Pulsar','Cassini','Kepler','Orion','Vega',
+    'Sirius','Nova','Nebula','Zenith','Eclipse','Photon','Boson','Fermion',
+    'Tachyon','Planck','Hawking','Dirac','Faraday','Tesla','Maxwell','Euler',
+    'Gauss','Riemann','Lagrange','Lorentz','Noether','Feynman','Curie','Hubble',
+    'Sagan','Cosmos','Horizon','Meridian','Polaris','Aether','Prism','Singularity',
+    'Vertex','Lattice','Flux','Radiance','Lumina','Solstice','Equinox','Aurora',
+    'Nimbus','Helix'
+];
+let _networkName = null;   // current network identity (assigned at training start)
+let _networkGen = 0;       // generation counter within current training run
+let _networkLeaderboard = []; // [{name, gen, fitness, cv, guardFailures, actualizationRate, avgReward}]
+
 // ── Opening phase flag ──
 let _openingPhase = false;
 // ── Matter/antimatter winding direction ──

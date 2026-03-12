@@ -45,7 +45,7 @@ function updateDemoPanel() {
     // ── Update demo-status (right panel, below button) ──
     const ds = document.getElementById('demo-status');
     if (ds) {
-        ds.innerHTML = `<span style="color:#88bbdd;">epoch ${epoch}</span>`;
+        ds.innerHTML = `<span style="color:var(--text-2);">epoch ${epoch}</span>`;
     }
 
     // ── Update left panel coverage bars (skip during non-PPO test execution) ──
@@ -82,7 +82,7 @@ function updateDemoPanel() {
         for (const t of types6) {
             html += `<div class="dp-bar-bg" style="flex:1;" title="${typeLabels[t]} ${v[t] || 0}"><div class="dp-bar-fill" style="width:${((v[t] || 0) / maxCount * 100).toFixed(1)}%; background:${typeColors[t]};"></div></div>`;
         }
-        html += `<span style="width:22px; text-align:right; font-size:7px; color:#667788;">${v.total}</span>`
+        html += `<span style="width:22px; text-align:right; font-size:7px; color:var(--text-3);">${v.total}</span>`
             + `</div>`;
     }
 
@@ -118,7 +118,7 @@ function updateDemoPanel() {
     // Evenness + rule compliance
     html += `<div style="margin-top:6px; border-top:1px solid rgba(80,100,120,0.25); padding-top:4px;">`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">overall</span>`
+        + `<span style="color:var(--text-3);">overall</span>`
         + `<span style="color:${evColor(evenness)}; font-weight:bold;">${(evenness * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
@@ -130,16 +130,16 @@ function updateDemoPanel() {
         + `<span style="color:${evColor(neutronEvenness)}; font-weight:bold;">${(neutronEvenness * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">p 1:1:1</span>`
+        + `<span style="color:var(--text-3);">p 1:1:1</span>`
         + `<span style="color:${pEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(pEven * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">n 1:1:1</span>`
+        + `<span style="color:var(--text-3);">n 1:1:1</span>`
         + `<span style="color:${nEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(nEven * 100).toFixed(1)}%</span>`
         + `</div>`;
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:#6a8a9a;">epoch</span>`
-        + `<span style="color:#88aacc;">${epoch}</span>`
+        + `<span style="color:var(--text-3);">epoch</span>`
+        + `<span style="color:var(--text-2);">${epoch}</span>`
         + `</div>`;
 
     // ── Ratio accuracy history sparkline ──
@@ -160,7 +160,7 @@ function updateDemoPanel() {
         sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
     }
     html += `<div style="margin-top:4px; overflow:hidden;">`
-        + `<div style="font-size:7px; color:#556677; margin-bottom:1px;">ratio accuracy (last ${sparkLen} windows)</div>`
+        + `<div style="font-size:7px; color:var(--text-3); margin-bottom:1px;">ratio accuracy (last ${sparkLen} windows)</div>`
         + `<div style="font-size:10px; letter-spacing:-1px; line-height:1; font-family:monospace; overflow:hidden;">${sparkline}</div>`
         + `<div style="display:flex; justify-content:space-between; font-size:6px; color:#445566; margin-top:1px;">`
         + `<span>${sparkMin.toFixed(0)}%</span><span>100%</span></div>`
@@ -172,7 +172,7 @@ function updateDemoPanel() {
         { name: 'spread', ok: _demoSpreadViolations === 0 },
         { name: 'coverage', ok: evenness > 0.9 },
     ];
-    html += `<div style="margin-top:3px; font-size:8px; color:#556677;">`;
+    html += `<div style="margin-top:3px; font-size:8px; color:var(--text-3);">`;
     for (const r of rules) {
         html += `<span style="color:${r.ok ? '#44aa66' : '#cc4444'}; margin-right:6px;">${r.ok ? '\u2713' : '\u2717'} ${r.name}</span>`;
     }
@@ -233,7 +233,9 @@ function updateXonPanel() {
         const x = _demoXons[i];
         if (!x.alive) continue;
         const modeCol = x._mode === 'oct' ? '#ffffff' :
-                        x._mode === 'weak' ? '#cc44ff' :
+                        x._mode === 'weak' ? '#080808' :
+                        x._mode === 'gluon' ? '#7f00ff' :
+                        x._mode === 'oct_formation' ? '#ffffff' :
                         x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
                         x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
         // Display labels: oct=idle, tet/idle_tet=hadron type (p_u, p_d, n_u, n_d)
@@ -244,6 +246,9 @@ function updateXonPanel() {
             faceStr = '';
         } else if (x._mode === 'weak') {
             modeLabel = 'weak';
+            faceStr = '';
+        } else if (x._mode === 'gluon') {
+            modeLabel = 'gluon';
             faceStr = '';
         } else if (x._mode === 'oct_formation') {
             modeLabel = 'form';
@@ -287,10 +292,10 @@ function updateXonPanel() {
         const bg = highlighted ? 'rgba(255,255,255,0.15)' : '#0d1520';
         html += `<button class="xon-btn" data-xon-idx="${i}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:48px; height:52px; padding:2px; cursor:pointer; border-radius:4px; background:${bg}; border:${border}; font-family:monospace; outline:none;" title="X${i}: n${x.node} ${modeLabel}${faceStr}\n${tipDirs}">`
             + `<span style="color:${modeCol}; font-weight:bold; font-size:11px;">X${i}</span>`
-            + `<span style="color:#88aacc; font-size:8px;">n${x.node}</span>`
-            + `<span style="color:#667788; font-size:7px;">${modeLabel}${faceStr}</span>`
+            + `<span style="color:var(--text-2); font-size:8px;">n${x.node}</span>`
+            + `<span style="color:var(--text-3); font-size:7px;">${modeLabel}${faceStr}</span>`
             + `<span style="color:${balColor}; font-size:6px; letter-spacing:-0.5px;">${barStr} ${balStr}</span>`
-            + `<span style="color:#556677; font-size:6px;">${msStr}</span>`
+            + `<span style="color:var(--text-3); font-size:6px;">${msStr}</span>`
             + `</button>`;
     }
     listEl.innerHTML = html;
@@ -537,7 +542,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const el = document.getElementById('nucleus-status');
-    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>`;
+    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:var(--text-3);">${_demoTick} ticks</span>`;
     const dpT = document.getElementById('dp-title');
     if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
     // Apply restored solver positions to the 3D scene (no re-solve needed)

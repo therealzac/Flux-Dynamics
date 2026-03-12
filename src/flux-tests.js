@@ -2122,24 +2122,55 @@ function _startVisualTrial(params, maxTicks) {
 // ── Fitness curve state ──
 let _rlFitnessCurve = [];  // [{gen, best, avg}]
 
+// ── Leaderboard rendering ──
+function _updateLeaderboard() {
+    const panel = document.getElementById('leaderboard-panel');
+    const list = document.getElementById('leaderboard-list');
+    if (!panel || !list) return;
+    if (_networkLeaderboard.length === 0) { panel.style.display = 'none'; return; }
+    panel.style.display = '';
+
+    const sorted = [..._networkLeaderboard].sort((a, b) => b.fitness - a.fitness);
+    const maxFit = Math.max(0.001, sorted[0].fitness);
+    let html = '';
+    for (let i = 0; i < sorted.length; i++) {
+        const e = sorted[i];
+        const rank = i + 1;
+        const rankClass = rank <= 3 ? ` rank-${rank}` : '';
+        const isCurrent = e.gen === _networkGen && _tournamentRunning;
+        const currentClass = isCurrent ? ' current' : '';
+        const rankColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : rank === 3 ? '#CD7F32' : '';
+        const pct = Math.max(0, Math.min(100, (e.fitness / maxFit) * 100));
+        html += `<div class="lb-card${rankClass}${currentClass}">` +
+            `<div class="lb-rank${rank <= 3 ? ' top' : ''}" ${rankColor ? `style="color:${rankColor}"` : ''}>${rank}</div>` +
+            `<div class="lb-info">` +
+                `<div><span class="lb-name">${e.name}</span><span class="lb-gen">Gen ${e.gen}</span></div>` +
+                `<div class="lb-bar-track"><div class="lb-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>` +
+                `<div class="lb-metrics">` +
+                    `fit ${(e.fitness * 100).toFixed(1)}%` +
+                    ` · cv ${e.cv.toFixed(3)}` +
+                    ` · fails ${e.guardFailures}` +
+                    (e.actualizationRate != null ? ` · act ${(e.actualizationRate * 100).toFixed(0)}%` : '') +
+                `</div>` +
+            `</div>` +
+        `</div>`;
+    }
+    list.innerHTML = html;
+}
+
 function _drawFitnessCurve() {
     const canvas = document.getElementById('rl-fitness-canvas');
     if (!canvas || _rlFitnessCurve.length === 0) return;
-    canvas.style.display = '';
+    const wrap = document.getElementById('rl-fitness-wrap');
+    if (wrap) wrap.style.display = '';
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
+    const PAD = { top: 24, right: 12, bottom: 24, left: 40 };
     ctx.clearRect(0, 0, W, H);
 
     // Background
-    ctx.fillStyle = 'rgba(10, 14, 20, 0.9)';
+    ctx.fillStyle = 'rgba(8, 12, 20, 0.95)';
     ctx.fillRect(0, 0, W, H);
-
-    // Axes
-    ctx.strokeStyle = '#334455';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(30, 5); ctx.lineTo(30, H - 18); ctx.lineTo(W - 5, H - 18);
-    ctx.stroke();
 
     const data = _rlFitnessCurve;
     const maxGen = data.length;
@@ -2147,13 +2178,45 @@ function _drawFitnessCurve() {
     const minFit = Math.min(0, ...data.map(d => Math.min(d.best, d.avg)));
     const range = maxFit - minFit || 0.01;
 
-    const xScale = (W - 40) / Math.max(1, maxGen - 1);
-    const yScale = (H - 28) / range;
-    const toX = (i) => 30 + i * xScale;
-    const toY = (v) => H - 18 - (v - minFit) * yScale;
+    const plotW = W - PAD.left - PAD.right;
+    const plotH = H - PAD.top - PAD.bottom;
+    const toX = (i) => PAD.left + (i / Math.max(1, maxGen - 1)) * plotW;
+    const toY = (v) => PAD.top + plotH - ((v - minFit) / range) * plotH;
 
-    // Average line (grey)
-    ctx.strokeStyle = '#556677';
+    // Gridlines
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+        const y = PAD.top + (i / 4) * plotH;
+        ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, H - PAD.bottom);
+    ctx.lineTo(W - PAD.right, H - PAD.bottom);
+    ctx.stroke();
+
+    // Area fill under best line
+    if (data.length > 1) {
+        const grad = ctx.createLinearGradient(0, PAD.top, 0, H - PAD.bottom);
+        grad.addColorStop(0, 'rgba(232,197,71,0.12)');
+        grad.addColorStop(1, 'rgba(232,197,71,0.0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(toX(0), H - PAD.bottom);
+        for (let i = 0; i < data.length; i++) ctx.lineTo(toX(i), toY(data[i].best));
+        ctx.lineTo(toX(data.length - 1), H - PAD.bottom);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    // Average line (muted)
+    ctx.strokeStyle = 'rgba(148,163,184,0.4)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 0; i < data.length; i++) {
@@ -2162,8 +2225,18 @@ function _drawFitnessCurve() {
     }
     ctx.stroke();
 
-    // Best line (gold)
-    ctx.strokeStyle = '#ccaa44';
+    // Best line glow
+    ctx.strokeStyle = 'rgba(232,197,71,0.2)';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+        const x = toX(i), y = toY(data[i].best);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Best line crisp
+    ctx.strokeStyle = '#E8C547';
     ctx.lineWidth = 2;
     ctx.beginPath();
     for (let i = 0; i < data.length; i++) {
@@ -2172,17 +2245,44 @@ function _drawFitnessCurve() {
     }
     ctx.stroke();
 
-    // Labels
-    ctx.fillStyle = '#8899aa';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'left';
-    const last = data[data.length - 1];
-    ctx.fillText(`gen ${maxGen}  best=${last.best.toFixed(3)}  avg=${last.avg.toFixed(3)}`, 34, 12);
+    // Data point dots on best line
+    if (data.length <= 30) {
+        ctx.fillStyle = '#E8C547';
+        for (let i = 0; i < data.length; i++) {
+            ctx.beginPath(); ctx.arc(toX(i), toY(data[i].best), 3, 0, Math.PI * 2); ctx.fill();
+        }
+    }
 
     // Y-axis labels
+    ctx.fillStyle = '#64748B';
+    ctx.font = '10px "SF Mono", "Fira Code", monospace';
     ctx.textAlign = 'right';
-    ctx.fillText(maxFit.toFixed(2), 28, 12);
-    ctx.fillText(minFit.toFixed(2), 28, H - 20);
+    ctx.fillText(maxFit.toFixed(2), PAD.left - 4, PAD.top + 4);
+    ctx.fillText(minFit.toFixed(2), PAD.left - 4, H - PAD.bottom + 4);
+
+    // X-axis label
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#64748B';
+    ctx.font = '9px Inter, sans-serif';
+    ctx.fillText('Epoch', W / 2, H - 4);
+
+    // Legend (top right)
+    const lx = W - PAD.right - 90;
+    ctx.font = '10px Inter, sans-serif';
+    ctx.fillStyle = '#E8C547'; ctx.fillRect(lx, 6, 8, 8); ctx.beginPath();
+    ctx.fillStyle = '#94A3B8'; ctx.textAlign = 'left'; ctx.fillText('Best', lx + 12, 14);
+    ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.fillRect(lx + 48, 6, 8, 8);
+    ctx.fillStyle = '#94A3B8'; ctx.fillText('Avg', lx + 60, 14);
+
+    // Current stats
+    const last = data[data.length - 1];
+    ctx.fillStyle = '#E8ECF1';
+    ctx.font = '11px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Gen ${maxGen}`, PAD.left + 4, 14);
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '10px "SF Mono", monospace';
+    ctx.fillText(`best ${last.best.toFixed(3)}  avg ${last.avg.toFixed(3)}`, PAD.left + 50, 14);
 }
 
 // Main tournament runner — PPO training with live metrics
@@ -2199,6 +2299,16 @@ async function _runTournament() {
     const TICKS_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 500) : 500;
     const statusEl = document.getElementById('tune-status');
     const titleEl  = document.getElementById('rule-title');
+
+    // ── Network naming ──
+    const usedNames = new Set(_networkLeaderboard.map(e => e.name));
+    const available = _NETWORK_NAMES.filter(n => !usedNames.has(n));
+    _networkName = available.length > 0
+        ? available[Math.floor(Math.random() * available.length)]
+        : _NETWORK_NAMES[Math.floor(Math.random() * _NETWORK_NAMES.length)];
+    _networkGen = 0;
+    _networkLeaderboard = [];
+    if (titleEl) { titleEl.textContent = _networkName; titleEl.style.textTransform = 'uppercase'; }
 
     // Initialize RL models
     const rlReady = typeof initRL === 'function' && await initRL();
@@ -2227,12 +2337,13 @@ async function _runTournament() {
     _ppoTraining = true;
     resetTickRewardState();
 
-    // Show fitness canvas + tensor dashboard
+    // Show fitness canvas + tensor dashboard (canvases are inside wrapper divs)
     const fitnessCanvas = document.getElementById('rl-fitness-canvas');
-    if (fitnessCanvas) fitnessCanvas.style.display = '';
-    for (const id of ['rl-policy-canvas', 'rl-weights-canvas', 'rl-metrics-canvas']) {
-        const c = document.getElementById(id);
-        if (c) c.style.display = '';
+    const fitnessWrap = document.getElementById('rl-fitness-wrap');
+    if (fitnessWrap) fitnessWrap.style.display = '';
+    for (const id of ['rl-policy-wrap', 'rl-weights-wrap', 'rl-metrics-wrap']) {
+        const w = document.getElementById(id);
+        if (w) w.style.display = '';
     }
     // Clear metrics history for fresh run
     if (typeof _ppoMetricsHistory !== 'undefined') _ppoMetricsHistory.length = 0;
@@ -2377,12 +2488,26 @@ async function _runTournament() {
         _rlFitnessCurve.push({ gen: epoch + 1, best: bestFitness, avg: fitness.fitness });
         _drawFitnessCurve();
 
+        // ── Network naming + leaderboard ──
+        _networkGen = epoch + 1;
+        const { evennessScore: _lbEven, avgCV: _lbCV } = _computeCoverageEvenness();
+        _networkLeaderboard.push({
+            name: _networkName,
+            gen: _networkGen,
+            fitness: fitness.fitness,
+            cv: _lbCV,
+            guardFailures: guardFailures,
+            actualizationRate: fitness.actualizationRate || 0,
+            avgReward: avgReward
+        });
+        if (typeof _updateLeaderboard === 'function') _updateLeaderboard();
+
         if (statusEl) {
-            statusEl.textContent = `PPO epoch ${epoch+1}/${EPOCHS} | fitness=${fitness.fitness.toFixed(3)} | best=${bestFitness.toFixed(3)}`;
+            statusEl.textContent = `${_networkName} · Gen ${_networkGen}/${EPOCHS} | fitness ${fitness.fitness.toFixed(3)} | best ${bestFitness.toFixed(3)}`;
         }
         if (titleEl) {
-            titleEl.textContent = `PPO epoch ${epoch+1}`;
-            titleEl.dataset.trialLabel = `PPO epoch ${epoch+1}`;
+            titleEl.textContent = `${_networkName} · Gen ${_networkGen}`;
+            titleEl.dataset.trialLabel = `${_networkName} · Gen ${_networkGen}`;
         }
     }
 
@@ -2398,8 +2523,8 @@ async function _runTournament() {
     console.log(`[PPO] Done. Tensors: ${tensorsBefore} → ${tensorsAfter} (delta=${tensorsAfter - tensorsBefore})`);
 
     if (statusEl) {
-        statusEl.textContent = `PPO done! fitness=${bestFitness.toFixed(3)}`;
-        statusEl.style.color = '#66dd66';
+        statusEl.textContent = `${_networkName} trained · best fitness ${bestFitness.toFixed(3)}`;
+        statusEl.style.color = 'var(--success, #4ADE80)';
     }
 
     _tournamentRunning = false;
@@ -2407,10 +2532,10 @@ async function _runTournament() {
     panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
     applyCamera();
     const tuneBtn = document.getElementById('btn-tune-t22');
-    if (tuneBtn) { tuneBtn.textContent = 'train RL'; tuneBtn.style.borderColor = '#aa8844'; }
+    if (tuneBtn) { tuneBtn.textContent = 'Train RL'; }
 
     if (titleEl) {
-        titleEl.textContent = 'NUCLEUS: DEUTERON';
+        titleEl.textContent = _networkName || 'NUCLEUS: DEUTERON';
         titleEl.title = '';
         delete titleEl.dataset.trialLabel;
     }

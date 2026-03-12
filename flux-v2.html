@@ -4,353 +4,435 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Flux Dynamics</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-mono: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            --gold: #E8C547;
+            --gold-dim: #B89A30;
+            --blue: #5B9BD5;
+            --blue-bright: #7AB8E8;
+            --success: #4ADE80;
+            --warning: #FBBF24;
+            --error: #F87171;
+            --surface: rgba(15, 20, 30, 0.92);
+            --surface-raised: rgba(22, 28, 40, 0.95);
+            --border: rgba(255,255,255,0.06);
+            --border-accent: rgba(255,255,255,0.12);
+            --text-1: #E8ECF1;
+            --text-2: #94A3B8;
+            --text-3: #64748B;
+            --radius: 8px;
+            --shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2);
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #333333; overflow: hidden; height: 100vh; font-family: 'Courier New', monospace; }
-        canvas { display: block; position: fixed; top: 0; left: 0; }
+        body { background: #1a1e2e; overflow: hidden; height: 100vh; font-family: var(--font-sans); }
+        canvas#c { display: block; position: fixed; top: 0; left: 0; }
 
-        /* Legacy legend CSS removed — deuteron panel is now inline-styled */
-
-        /* Bottom hint */
+        /* ── Bottom overlays ── */
         #hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-            font-size: 12px; color: #7a9aaa; letter-spacing: 0.07em;
+            font-size: 11px; color: var(--text-3); letter-spacing: 0.04em;
             pointer-events: none; user-select: none; white-space: nowrap;
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
         #toast { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%);
-            font-size: 12px; color: #ff7755; letter-spacing: 0.07em; opacity: 0;
+            font-size: 12px; color: var(--error); letter-spacing: 0.04em; opacity: 0;
             transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
-        /* Right panel shell */
-        #side-panel { position: fixed; top: 16px; right: 16px; width: 275px;
+        /* ── Right panel ── */
+        #side-panel { position: fixed; top: 16px; right: 16px; width: 300px;
             display: flex; flex-direction: column; gap: 0;
-            font-size: 12px; letter-spacing: 0.06em; color: #8aacbf;
+            font-size: 12px; letter-spacing: 0.02em; color: var(--text-2);
             user-select: none;
             max-height: calc(100vh - 32px); overflow-y: auto; overflow-x: hidden;
             pointer-events: auto; }
         #side-panel::-webkit-scrollbar { width: 4px; }
         #side-panel::-webkit-scrollbar-track { background: transparent; }
-        #side-panel::-webkit-scrollbar-thumb { background: rgba(100,140,170,0.3); border-radius: 2px; }
-        #side-panel::-webkit-scrollbar-thumb:hover { background: rgba(100,140,170,0.5); }
+        #side-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+        #side-panel::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-        /* Stats block — inside deuteron-panel when visible, standalone when not */
+        /* ── Section cards ── */
+        .panel-section { background: var(--surface-raised); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 12px; margin-bottom: 8px; }
+        .panel-section-header { font-size: 10px; font-weight: 600; color: var(--text-3);
+            text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
+
+        /* ── Stats block ── */
         #bottom-stats { position: fixed; bottom: 16px; left: 16px; z-index: 1;
-            font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.9;
-            color: #6a8a9a; pointer-events: none; user-select: none;
-            background: rgba(8,14,22,0.6); border: 1px solid rgba(80,120,150,0.15);
-            border-radius: 4px; padding: 4px 8px; backdrop-filter: blur(2px); }
+            font-family: var(--font-mono); font-size: 11px; line-height: 1.9;
+            color: var(--text-3); pointer-events: none; user-select: none;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 6px 10px; backdrop-filter: blur(8px); }
         #bottom-stats.inline { position: relative; bottom: auto; left: auto;
-            margin-top: 8px; border-top: 1px solid rgba(80,120,150,0.25);
+            margin-top: 8px; border-top: 1px solid var(--border);
             background: none; border: none; border-radius: 0; padding: 8px 0 0 0;
             backdrop-filter: none; pointer-events: none; }
-        #bottom-stats span { color: #8aacbf; }
+        #bottom-stats span { color: var(--text-2); }
 
-        /* Sliders + controls */
-        #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 4px; margin-bottom: 7px; pointer-events: all; }
-        .ctrl-label { font-size: 11px; color: #7a9ab0; width: 52px; flex-shrink: 0;
-            letter-spacing: 0.1em; text-transform: uppercase; }
-        .ctrl-val { font-size: 11px; color: #9abccc; min-width: 30px; text-align: right; letter-spacing: 0.05em; }
-        #lattice-lv { font-size: 11px; color: #9abccc; min-width: 20px; text-align: right; }
-        .ctrl-slider { flex: 1; height: 2px; appearance: none; -webkit-appearance: none;
-            background: rgba(120,160,180,0.2); border-radius: 1px; cursor: pointer; outline: none; }
-        .ctrl-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px;
-            border-radius: 50%; background: #5090b8; border: 1px solid #80c0e0;
-            cursor: pointer; transition: background 0.15s; }
-        .ctrl-slider::-webkit-slider-thumb:hover { background: #70b8e8; }
-        .ctrl-step-btn { background: none; border: none; color: #5a7a90;
-            font-size: 9px; width: 12px; height: 14px; cursor: pointer;
+        /* ── Sliders + controls ── */
+        #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; pointer-events: all; }
+        .ctrl-label { font-size: 10px; font-weight: 500; color: var(--text-3); width: 52px; flex-shrink: 0;
+            letter-spacing: 0.06em; text-transform: uppercase; }
+        .ctrl-val { font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+            min-width: 34px; text-align: right; letter-spacing: 0.02em; }
+        #lattice-lv { font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+            min-width: 20px; text-align: right; }
+        .ctrl-slider { flex: 1; height: 4px; appearance: none; -webkit-appearance: none;
+            background: rgba(255,255,255,0.08); border-radius: 2px; cursor: pointer; outline: none; }
+        .ctrl-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; background: var(--blue); border: 2px solid rgba(255,255,255,0.2);
+            cursor: pointer; transition: all 0.15s; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+        .ctrl-slider::-webkit-slider-thumb:hover { background: var(--blue-bright); box-shadow: 0 0 8px rgba(91,155,213,0.4); }
+        .ctrl-step-btn { background: none; border: none; color: var(--text-3);
+            font-size: 10px; width: 16px; height: 18px; cursor: pointer;
             display: flex; align-items: center; justify-content: center; padding: 0;
-            line-height: 1; flex-shrink: 0; user-select: none; }
-        .ctrl-step-btn:hover { color: #aadcf0; }
+            line-height: 1; flex-shrink: 0; user-select: none; border-radius: 3px; transition: all 0.15s; }
+        .ctrl-step-btn:hover { color: var(--text-1); background: rgba(255,255,255,0.06); }
 
-        /* Jiggle row */
-        /* jiggle/big-bang styles removed */
+        /* ── Button hierarchy ── */
+        .action-btn { flex: 1; font-family: var(--font-sans); font-size: 11px; font-weight: 500;
+            letter-spacing: 0.04em; padding: 7px 10px;
+            background: rgba(255,255,255,0.04); border: 1px solid var(--border-accent);
+            border-radius: 6px; color: var(--text-2); cursor: pointer; transition: all 0.15s; }
+        .action-btn:hover { border-color: rgba(255,255,255,0.2); color: var(--text-1);
+            background: rgba(255,255,255,0.08); }
+        .action-btn.active { border-color: var(--success); color: var(--success);
+            background: rgba(74,222,128,0.08); }
 
-        /* Buttons */
-        .action-btn { flex: 1; font-family: 'Courier New', monospace; font-size: 11px;
-            letter-spacing: 0.08em; padding: 7px 8px;
-            background: rgba(10,20,35,0.7); border: 1px solid rgba(100,150,180,0.25);
-            border-radius: 3px; color: #7aaabf; cursor: pointer; transition: all 0.15s; }
-        .action-btn:hover { border-color: rgba(100,180,220,0.6); color: #aaddf0; background: rgba(20,50,70,0.7); }
-        .action-btn.active { border-color: #44aa77; color: #66ddaa; background: rgba(10,40,25,0.7); }
-        #btn-add-excitation.placing { border-color: #ffaa22; color: #ffcc55;
+        .btn-primary { font-family: var(--font-sans); font-size: 12px; font-weight: 600;
+            letter-spacing: 0.04em; padding: 10px 16px;
+            background: var(--gold); color: #1a1a2e; border: none;
+            border-radius: 6px; cursor: pointer; transition: all 0.2s; flex: 1; }
+        .btn-primary:hover { filter: brightness(1.1); box-shadow: 0 2px 12px rgba(232,197,71,0.3); }
+        .btn-primary:active { transform: scale(0.98); }
+
+        .btn-secondary { font-family: var(--font-sans); font-size: 11px; font-weight: 500;
+            letter-spacing: 0.04em; padding: 7px 12px;
+            background: transparent; color: var(--blue); border: 1px solid rgba(91,155,213,0.4);
+            border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+        .btn-secondary:hover { background: rgba(91,155,213,0.1); border-color: var(--blue); }
+
+        .btn-ghost { font-family: var(--font-sans); font-size: 11px; font-weight: 500;
+            padding: 6px 8px; background: transparent; color: var(--text-3);
+            border: 1px solid transparent; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+        .btn-ghost:hover { background: rgba(255,255,255,0.06); color: var(--text-2); border-color: var(--border); }
+
+        #btn-add-excitation.placing { border-color: var(--warning); color: var(--warning);
             animation: pulse-placing 0.8s infinite alternate; }
         @keyframes pulse-placing { from { opacity: 0.7 } to { opacity: 1 } }
 
-        /* Side actions */
+        /* ── Side actions ── */
         #side-actions { display: flex; gap: 6px; margin-top: 8px; pointer-events: all; }
-        #side-context { margin-top: 10px; max-height: calc(100vh - 320px); overflow-y: auto;
-            scrollbar-width: thin; scrollbar-color: rgba(80,130,160,0.3) transparent;
-            background: rgba(8,18,28,0.82); border: 1px solid rgba(80,120,150,0.25);
-            border-radius: 4px; backdrop-filter: blur(4px); pointer-events: all; }
+        #side-context { margin-top: 8px; max-height: calc(100vh - 320px); overflow-y: auto;
+            scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius); backdrop-filter: blur(8px); pointer-events: all; }
         #side-context::-webkit-scrollbar { width: 3px; }
-        #side-context::-webkit-scrollbar-thumb { background: rgba(80,130,160,0.3); border-radius: 2px; }
-        /* side-context hides when both children are hidden (empty excitations + empty shortcuts) */
+        #side-context::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
         #side-context:has(#side-excitations:empty):has(#side-shortcuts.empty) { display: none; }
 
-        /* Shortcut list */
-        #side-shortcuts { pointer-events: all; border-top: 1px solid rgba(60,100,130,0.2); }
+        /* ── Shortcut list ── */
+        #side-shortcuts { pointer-events: all; border-top: 1px solid var(--border); }
         #side-shortcuts.empty { display: none; }
-        #sh-clear { float: right; cursor: pointer; color: #4a7a90; transition: color 0.15s; font-size: 11px; }
-        #sh-clear:hover { color: #ff6655; }
-        #side-shortcuts .sh-header { padding: 5px 10px; font-size: 11px; color: #6a9ab0;
-            letter-spacing: 0.12em; text-transform: uppercase; border-bottom: 1px solid rgba(80,120,150,0.2); }
-        .sh-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
-            border-bottom: 1px solid rgba(60,100,130,0.15); transition: background 0.1s; }
+        #sh-clear { float: right; cursor: pointer; color: var(--text-3); transition: color 0.15s; font-size: 11px; }
+        #sh-clear:hover { color: var(--error); }
+        #side-shortcuts .sh-header { padding: 6px 12px; font-size: 10px; font-weight: 500; color: var(--text-3);
+            letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+        .sh-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+            border-bottom: 1px solid var(--border); transition: background 0.1s; }
         .sh-item:last-child { border-bottom: none; }
-        .sh-item.manual:hover { background: rgba(30,60,90,0.4); }
-        .sh-item.implied { opacity: 0.6; }
+        .sh-item.manual:hover { background: rgba(255,255,255,0.03); }
+        .sh-item.implied { opacity: 0.5; }
         .sh-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
         .sh-dot.implied-dot { border-radius: 0; background: transparent !important; border: 1px dashed currentColor; }
-        .sh-label { flex: 1; color: #88b0c8; font-size: 11px; line-height: 1.5; }
-        .sh-label .sh-sub { color: #5a8870; font-size: 10px; display: block; margin-top: 1px; }
-        .sh-sever { font-size: 10px; color: #a05050; letter-spacing: 0.06em; padding: 2px 5px;
-            border: 1px solid rgba(160,80,80,0.3); border-radius: 2px; cursor: pointer;
+        .sh-label { flex: 1; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+        .sh-label .sh-sub { color: var(--text-3); font-size: 10px; display: block; margin-top: 1px; }
+        .sh-sever { font-size: 10px; color: #a05050; letter-spacing: 0.04em; padding: 3px 6px;
+            border: 1px solid rgba(160,80,80,0.3); border-radius: 4px; cursor: pointer;
             transition: all 0.12s; flex-shrink: 0; }
-        .sh-item.manual:hover .sh-sever { color: #ff7766; border-color: #884444; background: rgba(40,10,10,0.5); }
+        .sh-item.manual:hover .sh-sever { color: var(--error); border-color: rgba(248,113,113,0.4); background: rgba(248,113,113,0.08); }
         .sh-item.locked { opacity: 0.35; }
-        .sh-sever.sh-locked { font-size: 10px; color: #506070; letter-spacing: 0.06em; padding: 2px 5px;
-            border: 1px solid rgba(60,80,100,0.3); border-radius: 2px; cursor: default; flex-shrink: 0; }
+        .sh-sever.sh-locked { font-size: 10px; color: var(--text-3); letter-spacing: 0.04em; padding: 3px 6px;
+            border: 1px solid var(--border); border-radius: 4px; cursor: default; flex-shrink: 0; }
 
-        /* Excitations */
+        /* ── Excitations ── */
         #side-excitations { pointer-events: all; }
         #side-excitations:empty { display: none; }
-        .el-header { padding: 5px 10px; font-size: 11px; color: #6a9ab0;
-            letter-spacing: 0.12em; text-transform: uppercase;
-            border-bottom: 1px solid rgba(60,100,130,0.2); }
+        .el-header { padding: 6px 12px; font-size: 10px; font-weight: 500; color: var(--text-3);
+            letter-spacing: 0.08em; text-transform: uppercase;
+            border-bottom: 1px solid var(--border); }
         #el-clear { float: right; cursor: pointer; color: #a05050; font-size: 11px; }
-        #el-clear:hover { color: #ff7766; }
-        .el-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
-            border-bottom: 1px solid rgba(60,100,130,0.12); pointer-events: all; }
+        #el-clear:hover { color: var(--error); }
+        .el-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+            border-bottom: 1px solid var(--border); pointer-events: all; }
         .el-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        .el-label { flex: 1; font-size: 11px; color: #88b0c8; letter-spacing: 0.04em; }
-        .el-remove { font-size: 11px; color: #5a7a8a; cursor: pointer;
-            letter-spacing: 0.05em; transition: color 0.15s; pointer-events: all; }
-        .el-remove:hover { color: #ff6655; }
+        .el-label { flex: 1; font-size: 11px; color: var(--text-2); letter-spacing: 0.02em; }
+        .el-remove { font-size: 11px; color: var(--text-3); cursor: pointer;
+            letter-spacing: 0.02em; transition: color 0.15s; pointer-events: all; }
+        .el-remove:hover { color: var(--error); }
 
-        /* Violation banner */
-        #violation-banner { display:none; margin-top:6px; padding:6px;
-            background: rgba(40,5,5,0.85); border: 1px solid #cc4444;
-            border-radius: 3px; pointer-events: all; }
-        #violation-msg { font-size: 10px; color: #ff8877; margin-bottom: 5px; word-break: break-all; }
+        /* ── Violation banner ── */
+        #violation-banner { display:none; margin-top:6px; padding:8px;
+            background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.3);
+            border-radius: 6px; pointer-events: all; }
+        #violation-msg { font-size: 10px; color: var(--error); margin-bottom: 5px; word-break: break-all; }
+
+        /* ── Leaderboard ── */
+        #leaderboard-panel { display:none; margin-top:8px; }
+        .lb-card { display:flex; align-items:center; gap:8px; padding:8px 10px;
+            background: var(--surface); border:1px solid var(--border); border-radius:6px;
+            margin-bottom:4px; transition: border-color 0.2s; border-left: 3px solid transparent; }
+        .lb-card.rank-1 { border-left-color: #FFD700; }
+        .lb-card.rank-2 { border-left-color: #C0C0C0; }
+        .lb-card.rank-3 { border-left-color: #CD7F32; }
+        .lb-card.current { animation: lb-pulse 2s ease-in-out infinite; }
+        @keyframes lb-pulse { 0%,100% { border-color: var(--border); } 50% { border-color: var(--gold-dim); } }
+        .lb-rank { font-size: 13px; font-weight: 700; min-width: 18px; text-align: center; color: var(--text-3); font-family: var(--font-mono); }
+        .lb-rank.top { color: var(--gold); }
+        .lb-info { flex:1; min-width:0; }
+        .lb-name { font-size: 11px; font-weight: 600; color: var(--text-1); }
+        .lb-gen { font-size: 10px; color: var(--text-3); margin-left: 4px; }
+        .lb-bar-track { height:3px; background: var(--border); border-radius:2px; margin-top:4px; }
+        .lb-bar-fill { height:100%; border-radius:2px; background: var(--gold); transition: width 0.3s; }
+        .lb-metrics { font-size: 9px; color: var(--text-3); font-family: var(--font-mono); margin-top:2px; letter-spacing: 0.02em; }
+
+        /* ── Chart containers ── */
+        .chart-container { background: rgba(8,12,20,0.95); border:1px solid var(--border-accent);
+            border-radius: var(--radius); padding:10px; margin-top:8px; }
+        .chart-container canvas { width:100%; height:auto; display:block; }
+        .chart-label { font-size: 10px; font-weight: 500; color: var(--text-3);
+            text-transform: uppercase; letter-spacing: 0.08em; margin-bottom:6px; }
+
+        /* ── Nucleus panel ── */
+        #nucleus-panel { margin-top:8px; padding:12px; border:1px solid var(--border-accent);
+            border-radius: var(--radius); pointer-events:all; background: var(--surface-raised); }
+        #nucleus-status { font-family: var(--font-mono); font-size:10px; color: var(--text-3);
+            margin-top:6px; text-align:center; min-height:12px; line-height:1.3; }
+        #nucleus-info { display:none; margin-top:8px; border-top:1px solid var(--border);
+            padding-top:8px; font-size:10px; color: var(--text-2); line-height:1.8; }
+        #nucleus-metrics { display:none; margin-top:4px; font-size:10px; color: var(--text-3); line-height:1.6; }
     </style>
 </head>
 <body>
     <canvas id="c"></canvas>
     <!-- ═══ DEUTERON PANEL (replaces old legend tabs) ═══ -->
     <div id="deuteron-panel" style="display:none; position:fixed; top:16px; left:16px;
-        font-size:12px; line-height:1.8; letter-spacing:0.04em; color:#a0bccf;
-        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:240px;
-        pointer-events:auto; background:rgba(12,18,26,0.88);
-        border:1px solid rgba(100,140,170,0.2); border-radius:6px; padding:12px 14px;
-        backdrop-filter:blur(4px); z-index:100; box-shadow:0 4px 20px rgba(0,0,0,0.4);
+        font-size:12px; line-height:2.0; letter-spacing:0.02em; color:var(--text-2);
+        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:260px;
+        pointer-events:auto; background:var(--surface);
+        border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px;
+        backdrop-filter:blur(8px); z-index:100; box-shadow:var(--shadow);
         max-height:calc(100vh - 32px); overflow-y:auto;">
-        <div id="dp-title" style="font-size:16px; color:#e0c88a; letter-spacing:0.12em;
-            font-weight:bold; margin-bottom:8px; text-align:center;">DEUTERON</div>
+        <div id="dp-title" style="font-size:18px; color:var(--gold); letter-spacing:0.06em;
+            font-weight:600; margin-bottom:10px; text-align:center;">DEUTERON</div>
 
         <!-- Packing density with alarm -->
         <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:#6a8a9a;">density</span>
-            <span><span id="dp-density-val" style="color:#9abccc; font-weight:bold;">--</span>
-            <span id="dp-density-alarm" style="color:#ff4444; display:none; animation:dp-alarm 0.5s infinite alternate; font-size:10px;"> ALARM</span></span>
+            <span style="color:var(--text-3); font-size:11px; font-weight:500;">density</span>
+            <span><span id="dp-density-val" style="color:var(--text-1); font-weight:600; font-family:var(--font-mono);">--</span>
+            <span id="dp-density-alarm" style="color:var(--error); display:none; animation:dp-alarm 0.5s infinite alternate; font-size:10px;"> ALARM</span></span>
         </div>
 
         <!-- Sync health indicator -->
-        <div style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:#6a8a9a;">sync</span>
+        <div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+            <span style="color:var(--text-3); font-size:11px; font-weight:500;">sync</span>
             <span>
                 <span id="dp-sync-dot" style="display:inline-block; width:7px; height:7px;
-                    border-radius:50%; background:#44dd44; vertical-align:middle; margin-right:4px;"></span>
-                <span id="dp-sync-label" style="color:#66dd66; font-size:12px;">OK</span>
-                <span id="dp-sync-detail" style="color:#5a7a8a; font-size:10px; margin-left:3px;"></span>
+                    border-radius:50%; background:var(--success); vertical-align:middle; margin-right:4px;"></span>
+                <span id="dp-sync-label" style="color:var(--success); font-size:11px; font-weight:500;">OK</span>
+                <span id="dp-sync-detail" style="color:var(--text-3); font-size:10px; margin-left:3px;"></span>
             </span>
         </div>
 
         <!-- Quark color legend -->
-        <div style="margin-top:4px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
-            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em;">XON TYPES</div>
+        <div class="panel-section" style="margin-top:0; padding:10px;">
+            <div class="panel-section-header" style="margin-bottom:6px;">XON TYPES</div>
             <div id="dp-quark-legend"><!-- populated by JS --></div>
         </div>
 
         <!-- Hadronic ratios per void face -->
-        <div style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
-            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em;">HADRONIC RATIO / VOID FACE</div>
-            <div id="dp-coverage-bars" style="font-size:10px; line-height:1.7;"><!-- populated by JS --></div>
+        <div class="panel-section" style="padding:10px;">
+            <div class="panel-section-header" style="margin-bottom:6px;">HADRONIC RATIO / VOID FACE</div>
+            <div id="dp-coverage-bars" style="font-size:10px; line-height:1.8;"><!-- populated by JS --></div>
         </div>
 
         <!-- Unit test results -->
-        <div id="dp-test-section" style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px; display:none;">
-            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em; display:flex; justify-content:space-between; align-items:center;">
+        <div id="dp-test-section" class="panel-section" style="display:none; padding:10px;">
+            <div class="panel-section-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span>UNIT TESTS</span>
-                <span id="dp-test-summary" style="color:#667788; font-size:10px;"></span>
+                <span id="dp-test-summary" style="color:var(--text-3); font-size:10px; font-family:var(--font-mono);"></span>
             </div>
-            <div id="dp-test-results" style="font-size:10px; line-height:1.6;"><!-- populated by runDemo3Tests --></div>
+            <div id="dp-test-results" style="font-size:10px; line-height:1.7;"><!-- populated by runDemo3Tests --></div>
         </div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
-        .dp-bar-bg { display:inline-block; width:60px; height:4px; background:rgba(60,80,100,0.4);
-            border-radius:2px; overflow:hidden; vertical-align:middle; }
-        .dp-bar-fill { height:100%; border-radius:2px; transition:width 0.3s; }
+        .dp-bar-bg { display:inline-block; width:60px; height:6px; background:rgba(255,255,255,0.06);
+            border-radius:3px; overflow:hidden; vertical-align:middle; }
+        .dp-bar-fill { height:100%; border-radius:3px; transition:width 0.3s; }
     </style>
     <div id="side-panel">
         <!-- ═══ MANUAL CONTROLS (hidden in nucleus mode) ═══ -->
         <div id="manual-controls">
-            <!-- jiggle row removed -->
             <div class="ctrl-row">
                 <span class="ctrl-label">lattice</span>
                 <input type="range" id="lattice-slider" class="ctrl-slider" min="1" max="10" value="2" step="1">
                 <span id="lattice-lv">L2</span>
             </div>
-            <!-- lifespan slider removed from UI; hidden element kept for compatibility -->
             <div class="ctrl-row" style="display:none;">
                 <span class="ctrl-label">lifespan</span>
                 <input type="range" id="energy-slider" class="ctrl-slider" min="0" max="100" value="50" step="1">
                 <span id="energy-val" class="ctrl-val">44</span>
             </div>
         </div>
-        <!-- Opacity sliders — always visible -->
-        <div class="ctrl-row">
-            <span class="ctrl-label">spheres</span>
-            <input type="range" id="sphere-opacity-slider" class="ctrl-slider" min="1" max="100" value="5" step="1">
-            <span id="sphere-opacity-val" class="ctrl-val">5%</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">shapes</span>
-            <input type="range" id="void-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
-            <span id="void-opacity-val" class="ctrl-val">13%</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">branes</span>
-            <input type="range" id="brane-opacity-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
-            <span id="brane-opacity-val" class="ctrl-val">2.0%</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">graph</span>
-            <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
-            <span id="graph-opacity-val" class="ctrl-val">13%</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">xons</span>
-            <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
-            <span id="trail-opacity-val" class="ctrl-val">100%</span>
-        </div>
-        <!-- spark slider hidden: unified with xons slider -->
-        <input type="range" id="spark-opacity-slider" style="display:none" min="0" max="100" value="100" step="1">
-        <!-- spark synced from xons slider; keep at 100 -->
-        <div class="ctrl-row">
-            <span class="ctrl-label">weak</span>
-            <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="34" step="1">
-            <span id="weak-opacity-val" class="ctrl-val">34%</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">speed</span>
-            <input type="range" id="excitation-speed-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
-            <span id="excitation-speed-val" class="ctrl-val">MAX</span>
-        </div>
-        <div class="ctrl-row">
-            <span class="ctrl-label">trails</span>
-            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="250" step="1">
-            <span id="tracer-lifespan-val" class="ctrl-val">250</span>
-        </div>
-        <div class="ctrl-row" style="margin-top:2px;">
-            <span class="ctrl-label" id="orbit-toggle" style="cursor:pointer; user-select:none; color:#6a8aaa;"
-                  title="Click to toggle auto-orbit">orbit</span>
-            <input type="range" id="orbit-speed-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
-            <span id="orbit-speed-val" class="ctrl-val" style="color:#555;">off</span>
-        </div>
-        <!-- ═══ NUCLEUS SIMULATOR PANEL (primary V2 interface) ═══ -->
-        <div id="nucleus-panel" style="margin-top:6px; padding:6px; border:1px solid #4a3a1a;
-            border-radius:4px; pointer-events:all; background:rgba(30,25,15,0.4);">
-            <div style="font-size:10px; color:#d4a054; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">
-                nucleus simulator
+        <!-- ═══ VISUALIZATION ═══ -->
+        <div class="panel-section">
+            <div class="panel-section-header">Visualization</div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">spheres</span>
+                <input type="range" id="sphere-opacity-slider" class="ctrl-slider" min="1" max="100" value="5" step="1">
+                <span id="sphere-opacity-val" class="ctrl-val">5%</span>
             </div>
-            <div style="font-size:12px; color:#d4b884; margin-bottom:2px; font-weight:bold;">H-2 DEUTERON</div>
-            <div id="atom-desc" style="font-size:11px; color:#8a7a5a; margin:2px 0;">8 tet quarks · 6 xons</div>
-            <!-- Hidden model select (kept for compatibility) -->
+            <div class="ctrl-row">
+                <span class="ctrl-label">shapes</span>
+                <input type="range" id="void-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
+                <span id="void-opacity-val" class="ctrl-val">13%</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">branes</span>
+                <input type="range" id="brane-opacity-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
+                <span id="brane-opacity-val" class="ctrl-val">2.0%</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">graph</span>
+                <input type="range" id="graph-opacity-slider" class="ctrl-slider" min="1" max="100" value="13" step="1">
+                <span id="graph-opacity-val" class="ctrl-val">13%</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">xons</span>
+                <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
+                <span id="trail-opacity-val" class="ctrl-val">100%</span>
+            </div>
+            <input type="range" id="spark-opacity-slider" style="display:none" min="0" max="100" value="100" step="1">
+            <div class="ctrl-row" style="margin-bottom:0;">
+                <span class="ctrl-label">weak</span>
+                <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="34" step="1">
+                <span id="weak-opacity-val" class="ctrl-val">34%</span>
+            </div>
+        </div>
+        <!-- ═══ PLAYBACK ═══ -->
+        <div class="panel-section">
+            <div class="panel-section-header">Playback</div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">speed</span>
+                <input type="range" id="excitation-speed-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
+                <span id="excitation-speed-val" class="ctrl-val">MAX</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">trails</span>
+                <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="250" step="1">
+                <span id="tracer-lifespan-val" class="ctrl-val">250</span>
+            </div>
+            <div class="ctrl-row" style="margin-bottom:0;">
+                <span class="ctrl-label" id="orbit-toggle" style="cursor:pointer; user-select:none; color:var(--text-3);"
+                      title="Click to toggle auto-orbit">orbit</span>
+                <input type="range" id="orbit-speed-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
+                <span id="orbit-speed-val" class="ctrl-val" style="color:var(--text-3);">off</span>
+            </div>
+        </div>
+        <!-- ═══ NUCLEUS SIMULATOR PANEL ═══ -->
+        <div id="nucleus-panel">
+            <div style="font-size:10px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">
+                Nucleus Simulator
+            </div>
+            <div style="font-size:14px; color:var(--text-1); margin-bottom:2px; font-weight:600;">H-2 Deuteron</div>
+            <div id="atom-desc" style="font-size:11px; color:var(--text-3); margin:2px 0 8px;">8 tet quarks · 6 xons</div>
             <select id="model-select" style="display:none;"></select>
             <div id="model-desc" style="display:none;"></div>
             <!-- Action buttons -->
-            <div style="display:flex; gap:4px; margin-top:4px;">
-                <button class="action-btn" id="btn-simulate-nucleus"
-                    style="flex:1; border-color:#6688aa; color:#88aacc;">
-                    demo
-                </button>
-                <button class="action-btn" id="btn-nucleus-pause"
-                    style="flex:0 0 auto; padding:5px 8px; border-color:#44aa77; color:#66ddaa; display:none;"
+            <div style="display:flex; gap:6px; margin-top:4px;">
+                <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
+                <button class="btn-secondary" id="btn-nucleus-pause"
+                    style="flex:0 0 auto; padding:7px 12px; display:none;"
                     title="Pause/resume simulation">⏸</button>
             </div>
-            <div id="playback-controls" style="display:none; margin-top:4px;">
-                <div style="display:flex; gap:3px;">
-                    <button class="action-btn" id="btn-rewind-start"
-                        style="flex:0 0 auto; padding:5px 6px;" title="Rewind to t=0">|&#9664;&#9664;</button>
-                    <button class="action-btn" id="btn-reverse"
-                        style="flex:0 0 auto; padding:5px 6px;" title="Reverse playback">&#9664;&#9664;</button>
-                    <button class="action-btn" id="btn-step-back"
-                        style="flex:0 0 auto; padding:5px 6px;" title="Step back 1 tick">&#9664;|</button>
-                    <button class="action-btn" id="btn-step-forward"
-                        style="flex:0 0 auto; padding:5px 6px;" title="Step forward 1 tick">|&#9654;</button>
-                    <button class="action-btn" id="btn-forward-end"
-                        style="flex:0 0 auto; padding:5px 6px;" title="Fast-forward to latest">&#9654;&#9654;|</button>
-                    <button class="action-btn" id="btn-export-log"
-                        style="flex:1; padding:5px 6px; border-color:#aa8844; color:#ccaa66;"
-                        title="Export tick log as JSON">export</button>
+            <div id="playback-controls" style="display:none; margin-top:6px;">
+                <div style="display:flex; gap:4px;">
+                    <button class="btn-ghost" id="btn-rewind-start"
+                        style="flex:0 0 auto; padding:6px 8px;" title="Rewind to t=0">|◀◀</button>
+                    <button class="btn-ghost" id="btn-reverse"
+                        style="flex:0 0 auto; padding:6px 8px;" title="Reverse playback">◀◀</button>
+                    <button class="btn-ghost" id="btn-step-back"
+                        style="flex:0 0 auto; padding:6px 8px;" title="Step back 1 tick">◀|</button>
+                    <button class="btn-ghost" id="btn-step-forward"
+                        style="flex:0 0 auto; padding:6px 8px;" title="Step forward 1 tick">|▶</button>
+                    <button class="btn-ghost" id="btn-forward-end"
+                        style="flex:0 0 auto; padding:6px 8px;" title="Fast-forward to latest">▶▶|</button>
+                    <button class="btn-secondary" id="btn-export-log"
+                        style="flex:1; padding:6px 8px;"
+                        title="Export tick log as JSON">Export</button>
                 </div>
             </div>
-            <div id="nucleus-status" style="font-size:10px; color:#5a7a4a; margin-top:3px;
-                text-align:center; min-height:12px; line-height:1.3;">ready</div>
-            <!-- tournament button/status/playback removed -->
-            <div id="demo-status" style="display:none; font-size:11px; color:#88aacc; margin-top:4px; text-align:center; line-height:1.4;"></div>
-            <div style="margin-top:8px; border-top:1px solid rgba(170,136,68,0.25); padding-top:8px;">
-                <div style="display:flex; align-items:center; gap:6px;">
-                    <button class="action-btn" id="btn-tune-t22"
-                        style="flex:1; font-size:10px; padding:5px 12px; border-color:#aa8844; color:#ccaa66;"
-                        title="Train RL model to optimize hadronic ratios">train RL</button>
-                </div>
-                <div id="tune-status" style="font-size:10px; color:#8899aa; margin-top:4px; text-align:center; min-height:14px;"></div>
-                <div style="margin-top:6px; display:flex; gap:10px; justify-content:center; font-size:10px; color:#7a8a9a;">
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Population size per generation">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">pop</span>
+            <div id="nucleus-status">ready</div>
+            <div id="demo-status" style="display:none; font-size:11px; color:var(--text-2); margin-top:6px; text-align:center; line-height:1.4;"></div>
+
+            <!-- ── Training Section ── -->
+            <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
+                <button class="btn-primary" id="btn-tune-t22" style="width:100%; font-size:11px; padding:8px 12px;"
+                    title="Train RL model to optimize hadronic ratios">Train RL</button>
+                <div id="tune-status" style="font-size:10px; color:var(--text-3); margin-top:6px; text-align:center; min-height:14px; font-family:var(--font-mono);"></div>
+                <div style="margin-top:8px; display:flex; gap:10px; justify-content:center; font-size:10px; color:var(--text-3);">
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Population size per generation">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">pop</span>
                         <input id="tournament-pop-size" type="number" value="8" min="2" max="50"
-                            style="width:40px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                            style="width:44px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
                     </label>
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Number of generations">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">gens</span>
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Number of generations">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">gens</span>
                         <input id="tournament-generations" type="number" value="10" min="1" max="100"
-                            style="width:40px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                            style="width:44px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
                     </label>
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Planck seconds per contestant">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">planck</span>
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Planck seconds per contestant">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">planck</span>
                         <input id="tournament-ticks" type="number" value="500" min="100" max="20000" step="100"
-                            style="width:52px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                            style="width:56px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
                     </label>
                 </div>
-                <canvas id="rl-fitness-canvas" width="260" height="100"
-                    style="display:none; position:static; margin-top:6px; border:1px solid rgba(170,136,68,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
-                <!-- Tensor Dashboard: policy heatmap -->
-                <canvas id="rl-policy-canvas" width="260" height="120"
-                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(100,180,255,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
-                <!-- Tensor Dashboard: weight distributions -->
-                <canvas id="rl-weights-canvas" width="260" height="200"
-                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(100,255,180,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
-                <!-- Tensor Dashboard: training metrics -->
-                <canvas id="rl-metrics-canvas" width="260" height="100"
-                    style="display:none; position:static; margin-top:4px; border:1px solid rgba(255,180,100,0.2); border-radius:3px; width:100%; height:auto; pointer-events:none;"></canvas>
+                <!-- Leaderboard -->
+                <div id="leaderboard-panel" style="display:none;">
+                    <div class="panel-section-header" style="margin-top:10px;">Leaderboard</div>
+                    <div id="leaderboard-list" style="max-height:260px; overflow-y:auto;"></div>
+                </div>
+                <!-- Charts -->
+                <div id="rl-fitness-wrap" class="chart-container" style="display:none;">
+                    <div class="chart-label">Fitness Curve</div>
+                    <canvas id="rl-fitness-canvas" width="320" height="180" style="pointer-events:none;"></canvas>
+                </div>
+                <div id="rl-policy-wrap" class="chart-container" style="display:none;">
+                    <div class="chart-label">Policy Heatmap</div>
+                    <canvas id="rl-policy-canvas" width="320" height="160" style="pointer-events:none;"></canvas>
+                </div>
+                <div id="rl-weights-wrap" class="chart-container" style="display:none;">
+                    <div class="chart-label">Weight Distributions</div>
+                    <canvas id="rl-weights-canvas" width="320" height="220" style="pointer-events:none;"></canvas>
+                </div>
+                <div id="rl-metrics-wrap" class="chart-container" style="display:none;">
+                    <div class="chart-label">Training Metrics</div>
+                    <canvas id="rl-metrics-canvas" width="320" height="160" style="pointer-events:none;"></canvas>
+                </div>
             </div>
             <!-- Nucleus info (shown during simulation) -->
-            <div id="nucleus-info" style="display:none; margin-top:6px; border-top:1px solid #4a3a1a;
-                padding-top:6px; font-size:10px; color:#8aac8f; line-height:1.8;">
-            </div>
-            <!-- Live observable metrics -->
-            <div id="nucleus-metrics" style="display:none; margin-top:4px; font-size:10px; color:#7a9a6a; line-height:1.6;">
-            </div>
-            <!-- Quark color legend moved to #deuteron-panel (left side) -->
+            <div id="nucleus-info"></div>
+            <div id="nucleus-metrics"></div>
         </div>
         <!-- Selection info & violation banner (contextual, stays in sidebar) -->
         <div id="st-sel" style="color:#40b0ff; font-size:9px; margin-top:4px;"></div>
-        <div id="violation-banner" style="display:none; margin-top:6px; padding:5px; background:#1a0505; border:1px solid #ff4444; border-radius:3px; pointer-events:all;">
-            <div id="violation-msg" style="font-size:8px; color:#ff6666; margin-bottom:5px; word-break:break-all;"></div>
-            <button class="action-btn" id="btn-copy-violation" style="border-color:#ff4444; color:#ff8888; width:100%;">copy state</button>
+        <div id="violation-banner">
+            <div id="violation-msg"></div>
+            <button class="btn-secondary" id="btn-copy-violation" style="width:100%; color:var(--error); border-color:rgba(248,113,113,0.4);">Copy State</button>
         </div>
         <!-- V1 controls (hidden in nucleus mode) -->
         <div id="v1-controls">
@@ -367,8 +449,8 @@
             </div>
         </div>
         <!-- Xon panel: clickable list of xons for debugging -->
-        <div id="xon-panel" style="display:none; margin-top:6px; padding:4px; background:#0a0f14; border:1px solid #223344; border-radius:3px; pointer-events:all;">
-            <div style="font-size:8px; color:#667788; margin-bottom:4px; font-weight:bold;">XONS</div>
+        <div id="xon-panel" style="display:none; margin-top:8px; padding:8px; background:var(--surface-raised); border:1px solid var(--border); border-radius:var(--radius); pointer-events:all;">
+            <div class="panel-section-header" style="margin-bottom:6px;">Xons</div>
             <div id="xon-panel-list" style="display:flex; flex-wrap:wrap; gap:3px;"></div>
         </div>
         <div id="side-context">
@@ -380,21 +462,21 @@
         </div>
     </div>
     <!-- Current rule title — top center overlay -->
-    <div id="rule-title" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; font-family:monospace; font-size:16px; color:#aaccdd; text-transform:uppercase; letter-spacing:0.15em; text-shadow:0 1px 4px rgba(0,0,0,0.7); white-space:nowrap;"></div>
+    <div id="rule-title" style="position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; font-family:var(--font-sans); font-size:20px; font-weight:600; color:var(--gold); letter-spacing:0.06em; text-shadow:0 2px 8px rgba(0,0,0,0.6); white-space:nowrap;"></div>
     <div id="hint">click sphere to select · click candidate (blue) to add shortcut · click edge to sever</div>
     <!-- Scale bar (nucleus mode only) -->
     <div id="scale-bar" style="display:none; position:fixed; bottom:50px; left:50%;
         transform:translateX(-50%); pointer-events:none; text-align:center; z-index:200;">
-        <div style="width:100px; height:2px; background:#8aac8f; margin:0 auto; border-radius:1px;"></div>
-        <div style="font-size:8px; color:#8aac8f; margin-top:2px; font-family:'Courier New',monospace;
-            letter-spacing:0.05em; text-shadow:0 1px 3px rgba(0,0,0,0.6);">
+        <div style="width:100px; height:2px; background:var(--text-3); margin:0 auto; border-radius:1px;"></div>
+        <div style="font-size:9px; color:var(--text-3); margin-top:3px; font-family:var(--font-mono);
+            letter-spacing:0.03em; text-shadow:0 1px 3px rgba(0,0,0,0.6);">
             <span id="scale-fm">—</span> Planck lengths
         </div>
     </div>
     <!-- Bottom-left stats overlay -->
     <div id="bottom-stats">
-        <div>shortcuts: <span id="st-sc" style="color:#9abccc">0 / 18</span></div>
-        <div>density: <span id="st-dens" style="color:#9abccc">—</span></div>
+        <div>shortcuts: <span id="st-sc" style="color:var(--text-2)">0 / 18</span></div>
+        <div>density: <span id="st-dens" style="color:var(--text-2)">—</span></div>
         <!-- Hidden but kept for compatibility -->
         <span id="st-state" style="display:none">FCC</span>
         <span id="st-kolm" style="display:none">—</span>
@@ -406,11 +488,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=13"></script>
+    <script src="src/flux-demo-state.js?v=14"></script>
     <script src="src/flux-demo-xon.js?v=4"></script>
     <script src="src/flux-demo-backtrack.js?v=5"></script>
     <script src="src/flux-demo-planner.js?v=8"></script>
-    <script src="src/flux-demo-ui.js?v=15"></script>
+    <script src="src/flux-demo-ui.js?v=18"></script>
     <script src="src/flux-demo.js?v=338"></script>
     <script src="src/flux-solver-render.js?v=30"></script>
     <script src="src/flux-tournament.js?v=9"></script>
@@ -420,7 +502,7 @@
     <script src="src/flux-voids.js?v=22"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=35"></script>
-    <script src="src/flux-tests.js?v=203"></script>
+    <script src="src/flux-tests.js?v=204"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -439,10 +521,18 @@
     updateCandidates(); updateSpheres(); updateStatus();
     startRenderLoop();       // render loop (moved from flux-voids.js)
 
-    // ── Auto-inject ◂/▸ step buttons around every slider ─────────────────
+    // ── Slider fill + step buttons ─────────────────
+    function _updateSliderFill(slider) {
+        const pct = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+        slider.style.background = `linear-gradient(to right, var(--blue) 0%, var(--blue) ${pct}%, rgba(255,255,255,0.08) ${pct}%, rgba(255,255,255,0.08) 100%)`;
+    }
     document.querySelectorAll('.ctrl-slider').forEach(slider => {
         const row = slider.closest('.ctrl-row') || slider.parentElement;
         if (!row) return;
+        // Filled track
+        _updateSliderFill(slider);
+        slider.addEventListener('input', () => _updateSliderFill(slider));
+        // Step buttons
         const mkBtn = (label, delta) => {
             const b = document.createElement('button');
             b.className = 'ctrl-step-btn';
