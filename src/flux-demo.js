@@ -2918,6 +2918,11 @@ async function demoTick() {
             for (const [t] of _btBadMoveLedger) {
                 if (t > targetTick) _btBadMoveLedger.delete(t);
             }
+            // Trim stale snapshots from the failed forward path so rewind
+            // playback only shows the happy path, not BFS mistakes.
+            while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
+                _btSnapshots.pop();
+            }
             _btRetryCount = 0;
             _btRestoreSnapshot(anchorSnap);
             _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}`);

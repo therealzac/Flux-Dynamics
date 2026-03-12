@@ -2122,6 +2122,39 @@ async function _runTournament() {
         console.error('[Tournament] Failed to dump results:', e);
     }
 
+    // ── Download winning RL model (genome + architecture metadata) ──
+    if (bestEver && bestEver._rlGenome) {
+        try {
+            const modelData = {
+                timestamp: new Date().toISOString(),
+                fitness: bestFitnessEver,
+                clean: bestClean,
+                architecture: {
+                    inputSize: typeof RL_NUM_FEATURES !== 'undefined' ? RL_NUM_FEATURES : 22,
+                    hidden1: typeof RL_HIDDEN_1 !== 'undefined' ? RL_HIDDEN_1 : 32,
+                    hidden2: typeof RL_HIDDEN_2 !== 'undefined' ? RL_HIDDEN_2 : 32,
+                    outputSize: 1,
+                    activation: 'relu',
+                    genomeSize: bestEver._rlGenome.length,
+                },
+                choreoParams: (() => { const { _rlGenome, ...cp } = bestEver; return cp; })(),
+                genome: Array.from(bestEver._rlGenome),
+            };
+            const mBlob = new Blob([JSON.stringify(modelData, null, 2)], { type: 'application/json' });
+            const mUrl = URL.createObjectURL(mBlob);
+            const mA = document.createElement('a');
+            mA.href = mUrl;
+            mA.download = `flux-rl-model-${Date.now()}.json`;
+            document.body.appendChild(mA);
+            mA.click();
+            document.body.removeChild(mA);
+            URL.revokeObjectURL(mUrl);
+            console.log('[Tournament] Winning RL model downloaded:', mA.download);
+        } catch (e) {
+            console.error('[Tournament] Failed to download RL model:', e);
+        }
+    }
+
     // Restore top-center title
     if (titleEl) {
         titleEl.textContent = 'NUCLEUS: DEUTERON';
