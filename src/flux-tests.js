@@ -1816,7 +1816,7 @@ function _tournamentTickCheck() {
         }
     }
 
-    if (_demoTick >= _tournamentTargetTick || simHalted) {
+    if (_planckSeconds >= _tournamentTargetTick || simHalted) {
         const cb = _tournamentCallback;
         _tournamentCallback = null;
         cb();

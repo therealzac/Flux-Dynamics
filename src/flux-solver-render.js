@@ -610,10 +610,6 @@ function _solve(scPairs,iters=5000,noBailout=false){
             px[rjo]-=f*dx; px[rjo+1]-=f*dy; px[rjo+2]-=f*dz;
         }
         if(mx<1e-9) break;
-        if(!noBailout){
-            if(it===49) mx50=mx;
-            if(it===99&&mx>mx50*0.5) break;
-        }
     }
     // Convert back to array-of-arrays for compatibility
     const p = new Array(nNodes);
@@ -655,8 +651,20 @@ function detectImplied(){
     activeSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
     xonImpliedSet.forEach(id=>{ const s=SC_BY_ID[id]; activePairs.push([s.a,s.b]); });
     const {p,converged:probeConverged}=_solve(activePairs);
+    // Use strain-based check instead of exact convergence — L3+ may not reach 1e-9
+    // but positions are still accurate enough for cascade detection.
+    let probeUsable = probeConverged;
+    if (!probeUsable) {
+        let worstBase = 0;
+        for (const [i,j] of BASE_EDGES) {
+            const dx=p[i][0]-p[j][0], dy=p[i][1]-p[j][1], dz=p[i][2]-p[j][2];
+            const err = Math.abs(Math.sqrt(dx*dx+dy*dy+dz*dz) - 1.0);
+            if (err > worstBase) worstBase = err;
+        }
+        probeUsable = worstBase < 1e-3; // positions good enough for cascade detection
+    }
     let newImplied = 0;
-    if(probeConverged){
+    if(probeUsable){
         // When excitations are active, bypass blockedImplied for cascade detection.
         // blockedImplied is a manual-mode feature; excitation physics should detect
         // all cascade shortcuts so octahedral voids can actualize properly.
@@ -681,7 +689,7 @@ function detectImplied(){
     });
     // If no new cascade-implied shortcuts were found, the probe positions
     // are already correct — skip the second solve entirely.
-    if(newImplied === 0 && probeConverged) { _detectImpliedMs += performance.now() - _diT0; return p; }
+    if(newImplied === 0 && probeUsable) { _detectImpliedMs += performance.now() - _diT0; return p; }
     const {p:pFinal,converged:finalConverged}=_solve((()=>{
         const pairs=[];
         activeSet.forEach(id=>{ const s=SC_BY_ID[id]; pairs.push([s.a,s.b]); });

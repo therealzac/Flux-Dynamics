@@ -137,8 +137,9 @@ function canMaterialiseQuick(scId){
     const basePairs = _getBasePairs();
     const sc=SC_BY_ID[scId];
     const pairs = [...basePairs, [sc.a, sc.b]];
-    // 500 iters is enough for strain check (don't need full convergence)
-    const {p}=_solve(pairs, 500);
+    // Scale iterations with lattice size so L3+ converges sufficiently
+    const cmqIters = Math.max(500, Math.ceil(N * 5));
+    const {p}=_solve(pairs, cmqIters);
     _cmqTotalMs += performance.now() - _cmqT0;
     // Don't bail on !converged — solver may not reach 1e-9 on L3+
     // but positions can still be within strain tolerance. Let strain check decide.
