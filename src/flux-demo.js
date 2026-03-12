@@ -1589,10 +1589,8 @@ async function demoTick() {
                 const faceActualized = fd60 && fd60.scIds.every(scId =>
                     activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
                 if (!faceActualized) {
-                    // Recolor trail to purple
-                    for (let ti = 0; ti < xon.trailColHistory.length; ti++) {
-                        xon.trailColHistory[ti] = WEAK_FORCE_COLOR;
-                    }
+                    // Trail segments keep their original recorded color.
+                    // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
                     // Relinquish face SCs
                     const locked60 = _traversalLockedSCs();
                     if (fd60) {
@@ -1605,19 +1603,33 @@ async function demoTick() {
                             }
                         }
                     }
-                    _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → weak`);
-                    xon._mode = 'weak';
-                    xon._assignedFace = null;
-                    xon._quarkType = null;
-                    xon._loopSeq = null;
-                    xon._loopStep = 0;
-                    xon._tetActualized = false;
-                    xon._t60Ejected = true;
-                    xon.col = WEAK_FORCE_COLOR;
-                    if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                    _weakLifecycleEnter(xon, 'non_actualized_tet');
+                    // If already on an oct node, go directly to oct mode (no weak ejection needed)
+                    if (_octNodeSet && _octNodeSet.has(xon.node)) {
+                        _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → oct (already on cage)`);
+                        _clearModeProps(xon);
+                        xon._mode = 'oct';
+                        xon._assignedFace = null;
+                        xon._quarkType = null;
+                        xon._loopSeq = null;
+                        xon._loopStep = 0;
+                        xon.col = 0xffffff;
+                        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                        if (_flashEnabled) xon.flashT = 1.0;
+                    } else {
+                        _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → weak`);
+                        xon._mode = 'weak';
+                        xon._assignedFace = null;
+                        xon._quarkType = null;
+                        xon._loopSeq = null;
+                        xon._loopStep = 0;
+                        xon._tetActualized = false;
+                        xon._t60Ejected = true;
+                        xon.col = WEAK_FORCE_COLOR;
+                        if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                        _weakLifecycleEnter(xon, 'non_actualized_tet');
+                    }
                     phase0Changed = true;
-                    continue; // skip normal eviction checks; PHASE 0.5 moves it
+                    continue;
                 }
             }
 
@@ -1988,10 +2000,7 @@ async function demoTick() {
                 }
             }
             if (!_t60actualized) {
-                // Recolor trail to purple — no colored trail without an actualized tet
-                for (let ti = 0; ti < xon.trailColHistory.length; ti++) {
-                    xon.trailColHistory[ti] = WEAK_FORCE_COLOR;
-                }
+                // Trail segments keep their original recorded color.
                 // Relinquish face SCs (before mode change)
                 if (xon._assignedFace != null) {
                     const fd = _nucleusTetFaceData[xon._assignedFace];

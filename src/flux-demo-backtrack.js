@@ -83,6 +83,8 @@ function _btRestoreSnapshot(snap) {
         pos[i][1] = snap.pos[i][1];
         pos[i][2] = snap.pos[i][2];
     }
+    // Re-derive frozen trail positions from restored pos[] so trails align with solver state
+    for (const x of _demoXons) _trailInitFrozen(x);
     // Restore opening phase flag
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;
     // Restore T79 state

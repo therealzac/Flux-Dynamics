@@ -706,6 +706,17 @@ function _assignXonToTet(xon, face, quarkType) {
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
         return;
     }
+
+    // Immediate advance: don't stall for one tick at seq[0].
+    // Check Pauli at seq[1] before moving.
+    if (xon._loopStep === 0 && seq[1] !== undefined) {
+        const dest = seq[1];
+        const destOccupied = _demoXons.some(x => x.alive && x !== xon && x.node === dest);
+        if (!destOccupied) {
+            _advanceXon(xon);
+            xon._movedThisTick = true;
+        }
+    }
 }
 
 // Walk xon ONE HOP toward nearest node in targetNodes via connected edges (BFS).
