@@ -13,18 +13,18 @@
 
         /* Bottom hint */
         #hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-            font-size: 10px; color: #7a9aaa; letter-spacing: 0.07em;
+            font-size: 12px; color: #7a9aaa; letter-spacing: 0.07em;
             pointer-events: none; user-select: none; white-space: nowrap;
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
         #toast { position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%);
-            font-size: 10px; color: #ff7755; letter-spacing: 0.07em; opacity: 0;
+            font-size: 12px; color: #ff7755; letter-spacing: 0.07em; opacity: 0;
             transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
         /* Right panel shell */
-        #side-panel { position: fixed; top: 16px; right: 16px; width: 214px;
+        #side-panel { position: fixed; top: 16px; right: 16px; width: 240px;
             display: flex; flex-direction: column; gap: 0;
-            font-size: 10px; letter-spacing: 0.06em; color: #8aacbf;
+            font-size: 12px; letter-spacing: 0.06em; color: #8aacbf;
             user-select: none;
             max-height: calc(100vh - 32px); overflow-y: auto; overflow-x: hidden;
             pointer-events: auto; }
@@ -35,7 +35,7 @@
 
         /* Stats block — inside deuteron-panel when visible, standalone when not */
         #bottom-stats { position: fixed; bottom: 16px; left: 16px; z-index: 1;
-            font-family: 'Courier New', monospace; font-size: 9px; line-height: 1.9;
+            font-family: 'Courier New', monospace; font-size: 11px; line-height: 1.9;
             color: #6a8a9a; pointer-events: none; user-select: none;
             background: rgba(8,14,22,0.6); border: 1px solid rgba(80,120,150,0.15);
             border-radius: 4px; padding: 4px 8px; backdrop-filter: blur(2px); }
@@ -47,13 +47,13 @@
 
         /* Sliders + controls */
         #lattice-row, .ctrl-row { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; pointer-events: all; }
-        .ctrl-label { font-size: 8px; color: #7a9ab0; width: 42px; flex-shrink: 0;
+        .ctrl-label { font-size: 11px; color: #7a9ab0; width: 52px; flex-shrink: 0;
             letter-spacing: 0.1em; text-transform: uppercase; }
-        .ctrl-val { font-size: 8px; color: #9abccc; min-width: 28px; text-align: right; letter-spacing: 0.05em; }
-        #lattice-lv { font-size: 8px; color: #9abccc; min-width: 18px; text-align: right; }
+        .ctrl-val { font-size: 11px; color: #9abccc; min-width: 30px; text-align: right; letter-spacing: 0.05em; }
+        #lattice-lv { font-size: 11px; color: #9abccc; min-width: 20px; text-align: right; }
         .ctrl-slider { flex: 1; height: 2px; appearance: none; -webkit-appearance: none;
             background: rgba(120,160,180,0.2); border-radius: 1px; cursor: pointer; outline: none; }
-        .ctrl-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px;
+        .ctrl-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px;
             border-radius: 50%; background: #5090b8; border: 1px solid #80c0e0;
             cursor: pointer; transition: background 0.15s; }
         .ctrl-slider::-webkit-slider-thumb:hover { background: #70b8e8; }
@@ -62,8 +62,8 @@
         /* jiggle/big-bang styles removed */
 
         /* Buttons */
-        .action-btn { flex: 1; font-family: 'Courier New', monospace; font-size: 9px;
-            letter-spacing: 0.08em; padding: 5px 4px;
+        .action-btn { flex: 1; font-family: 'Courier New', monospace; font-size: 11px;
+            letter-spacing: 0.08em; padding: 7px 8px;
             background: rgba(10,20,35,0.7); border: 1px solid rgba(100,150,180,0.25);
             border-radius: 3px; color: #7aaabf; cursor: pointer; transition: all 0.15s; }
         .action-btn:hover { border-color: rgba(100,180,220,0.6); color: #aaddf0; background: rgba(20,50,70,0.7); }
@@ -86,9 +86,9 @@
         /* Shortcut list */
         #side-shortcuts { pointer-events: all; border-top: 1px solid rgba(60,100,130,0.2); }
         #side-shortcuts.empty { display: none; }
-        #sh-clear { float: right; cursor: pointer; color: #4a7a90; transition: color 0.15s; font-size: 10px; }
+        #sh-clear { float: right; cursor: pointer; color: #4a7a90; transition: color 0.15s; font-size: 11px; }
         #sh-clear:hover { color: #ff6655; }
-        #side-shortcuts .sh-header { padding: 5px 10px; font-size: 9px; color: #6a9ab0;
+        #side-shortcuts .sh-header { padding: 5px 10px; font-size: 11px; color: #6a9ab0;
             letter-spacing: 0.12em; text-transform: uppercase; border-bottom: 1px solid rgba(80,120,150,0.2); }
         .sh-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
             border-bottom: 1px solid rgba(60,100,130,0.15); transition: background 0.1s; }
@@ -97,29 +97,29 @@
         .sh-item.implied { opacity: 0.6; }
         .sh-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
         .sh-dot.implied-dot { border-radius: 0; background: transparent !important; border: 1px dashed currentColor; }
-        .sh-label { flex: 1; color: #88b0c8; font-size: 9px; line-height: 1.5; }
-        .sh-label .sh-sub { color: #5a8870; font-size: 8px; display: block; margin-top: 1px; }
-        .sh-sever { font-size: 8px; color: #a05050; letter-spacing: 0.06em; padding: 2px 5px;
+        .sh-label { flex: 1; color: #88b0c8; font-size: 11px; line-height: 1.5; }
+        .sh-label .sh-sub { color: #5a8870; font-size: 10px; display: block; margin-top: 1px; }
+        .sh-sever { font-size: 10px; color: #a05050; letter-spacing: 0.06em; padding: 2px 5px;
             border: 1px solid rgba(160,80,80,0.3); border-radius: 2px; cursor: pointer;
             transition: all 0.12s; flex-shrink: 0; }
         .sh-item.manual:hover .sh-sever { color: #ff7766; border-color: #884444; background: rgba(40,10,10,0.5); }
         .sh-item.locked { opacity: 0.35; }
-        .sh-sever.sh-locked { font-size: 8px; color: #506070; letter-spacing: 0.06em; padding: 2px 5px;
+        .sh-sever.sh-locked { font-size: 10px; color: #506070; letter-spacing: 0.06em; padding: 2px 5px;
             border: 1px solid rgba(60,80,100,0.3); border-radius: 2px; cursor: default; flex-shrink: 0; }
 
         /* Excitations */
         #side-excitations { pointer-events: all; }
         #side-excitations:empty { display: none; }
-        .el-header { padding: 5px 10px; font-size: 9px; color: #6a9ab0;
+        .el-header { padding: 5px 10px; font-size: 11px; color: #6a9ab0;
             letter-spacing: 0.12em; text-transform: uppercase;
             border-bottom: 1px solid rgba(60,100,130,0.2); }
-        #el-clear { float: right; cursor: pointer; color: #a05050; font-size: 10px; }
+        #el-clear { float: right; cursor: pointer; color: #a05050; font-size: 11px; }
         #el-clear:hover { color: #ff7766; }
         .el-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px;
             border-bottom: 1px solid rgba(60,100,130,0.12); pointer-events: all; }
         .el-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        .el-label { flex: 1; font-size: 9px; color: #88b0c8; letter-spacing: 0.04em; }
-        .el-remove { font-size: 9px; color: #5a7a8a; cursor: pointer;
+        .el-label { flex: 1; font-size: 11px; color: #88b0c8; letter-spacing: 0.04em; }
+        .el-remove { font-size: 11px; color: #5a7a8a; cursor: pointer;
             letter-spacing: 0.05em; transition: color 0.15s; pointer-events: all; }
         .el-remove:hover { color: #ff6655; }
 
@@ -127,27 +127,27 @@
         #violation-banner { display:none; margin-top:6px; padding:6px;
             background: rgba(40,5,5,0.85); border: 1px solid #cc4444;
             border-radius: 3px; pointer-events: all; }
-        #violation-msg { font-size: 8px; color: #ff8877; margin-bottom: 5px; word-break: break-all; }
+        #violation-msg { font-size: 10px; color: #ff8877; margin-bottom: 5px; word-break: break-all; }
     </style>
 </head>
 <body>
     <canvas id="c"></canvas>
     <!-- ═══ DEUTERON PANEL (replaces old legend tabs) ═══ -->
     <div id="deuteron-panel" style="display:none; position:fixed; top:16px; left:16px;
-        font-size:11px; line-height:1.8; letter-spacing:0.04em; color:#a0bccf;
-        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:220px;
+        font-size:12px; line-height:1.8; letter-spacing:0.04em; color:#a0bccf;
+        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:240px;
         pointer-events:auto; background:rgba(12,18,26,0.88);
         border:1px solid rgba(100,140,170,0.2); border-radius:6px; padding:12px 14px;
         backdrop-filter:blur(4px); z-index:100; box-shadow:0 4px 20px rgba(0,0,0,0.4);
         max-height:calc(100vh - 32px); overflow-y:auto;">
-        <div id="dp-title" style="font-size:14px; color:#e0c88a; letter-spacing:0.12em;
+        <div id="dp-title" style="font-size:16px; color:#e0c88a; letter-spacing:0.12em;
             font-weight:bold; margin-bottom:8px; text-align:center;">DEUTERON</div>
 
         <!-- Packing density with alarm -->
         <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
             <span style="color:#6a8a9a;">density</span>
             <span><span id="dp-density-val" style="color:#9abccc; font-weight:bold;">--</span>
-            <span id="dp-density-alarm" style="color:#ff4444; display:none; animation:dp-alarm 0.5s infinite alternate; font-size:8px;"> ALARM</span></span>
+            <span id="dp-density-alarm" style="color:#ff4444; display:none; animation:dp-alarm 0.5s infinite alternate; font-size:10px;"> ALARM</span></span>
         </div>
 
         <!-- Sync health indicator -->
@@ -156,30 +156,30 @@
             <span>
                 <span id="dp-sync-dot" style="display:inline-block; width:7px; height:7px;
                     border-radius:50%; background:#44dd44; vertical-align:middle; margin-right:4px;"></span>
-                <span id="dp-sync-label" style="color:#66dd66; font-size:10px;">OK</span>
-                <span id="dp-sync-detail" style="color:#5a7a8a; font-size:8px; margin-left:3px;"></span>
+                <span id="dp-sync-label" style="color:#66dd66; font-size:12px;">OK</span>
+                <span id="dp-sync-detail" style="color:#5a7a8a; font-size:10px; margin-left:3px;"></span>
             </span>
         </div>
 
         <!-- Quark color legend -->
         <div style="margin-top:4px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
-            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em;">XON TYPES</div>
+            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em;">XON TYPES</div>
             <div id="dp-quark-legend"><!-- populated by JS --></div>
         </div>
 
         <!-- Hadronic ratios per void face -->
         <div style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px;">
-            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em;">HADRONIC RATIO / VOID FACE</div>
-            <div id="dp-coverage-bars" style="font-size:8px; line-height:1.7;"><!-- populated by JS --></div>
+            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em;">HADRONIC RATIO / VOID FACE</div>
+            <div id="dp-coverage-bars" style="font-size:10px; line-height:1.7;"><!-- populated by JS --></div>
         </div>
 
         <!-- Unit test results -->
         <div id="dp-test-section" style="margin-top:8px; border-top:1px solid rgba(80,100,120,0.25); padding-top:8px; display:none;">
-            <div style="color:#8a9a7a; font-size:9px; margin-bottom:4px; letter-spacing:0.1em; display:flex; justify-content:space-between; align-items:center;">
+            <div style="color:#8a9a7a; font-size:11px; margin-bottom:4px; letter-spacing:0.1em; display:flex; justify-content:space-between; align-items:center;">
                 <span>UNIT TESTS</span>
-                <span id="dp-test-summary" style="color:#667788; font-size:8px;"></span>
+                <span id="dp-test-summary" style="color:#667788; font-size:10px;"></span>
             </div>
-            <div id="dp-test-results" style="font-size:8px; line-height:1.6;"><!-- populated by runDemo3Tests --></div>
+            <div id="dp-test-results" style="font-size:10px; line-height:1.6;"><!-- populated by runDemo3Tests --></div>
         </div>
     </div>
     <style>
@@ -233,8 +233,8 @@
             <span id="excitation-speed-val" class="ctrl-val">30ms</span>
         </div>
         <div class="ctrl-row">
-            <span class="ctrl-label">lifespan</span>
-            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="50" value="50" step="1">
+            <span class="ctrl-label">trails</span>
+            <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="50" step="1">
             <span id="tracer-lifespan-val" class="ctrl-val">50</span>
         </div>
         <div class="ctrl-row" style="margin-top:2px;">
@@ -246,11 +246,11 @@
         <!-- ═══ NUCLEUS SIMULATOR PANEL (primary V2 interface) ═══ -->
         <div id="nucleus-panel" style="margin-top:6px; padding:6px; border:1px solid #4a3a1a;
             border-radius:4px; pointer-events:all; background:rgba(30,25,15,0.4);">
-            <div style="font-size:8px; color:#d4a054; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">
+            <div style="font-size:10px; color:#d4a054; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">
                 nucleus simulator
             </div>
-            <div style="font-size:9px; color:#d4b884; margin-bottom:2px; font-weight:bold;">H-2 DEUTERON</div>
-            <div id="atom-desc" style="font-size:8px; color:#8a7a5a; margin:2px 0;">8 tet quarks · 6 xons</div>
+            <div style="font-size:12px; color:#d4b884; margin-bottom:2px; font-weight:bold;">H-2 DEUTERON</div>
+            <div id="atom-desc" style="font-size:11px; color:#8a7a5a; margin:2px 0;">8 tet quarks · 6 xons</div>
             <!-- Hidden model select (kept for compatibility) -->
             <select id="model-select" style="display:none;"></select>
             <div id="model-desc" style="display:none;"></div>
@@ -277,22 +277,41 @@
                         title="Export tick log as JSON">export</button>
                 </div>
             </div>
-            <div id="nucleus-status" style="font-size:7px; color:#5a7a4a; margin-top:3px;
-                text-align:center; min-height:10px; line-height:1.3;">ready</div>
+            <div id="nucleus-status" style="font-size:10px; color:#5a7a4a; margin-top:3px;
+                text-align:center; min-height:12px; line-height:1.3;">ready</div>
             <!-- tournament button/status/playback removed -->
-            <div id="demo-status" style="display:none; font-size:9px; color:#88aacc; margin-top:4px; text-align:center; line-height:1.4;"></div>
-            <div style="margin-top:4px; text-align:center;">
-                <button class="action-btn" id="btn-tune-t22"
-                    style="font-size:8px; padding:3px 10px; border-color:#aa8844; color:#ccaa66;"
-                    title="GA tournament to optimize T22 hadronic ratios">tune T22</button>
-                <span id="tune-status" style="font-size:8px; color:#8899aa; margin-left:4px;"></span>
+            <div id="demo-status" style="display:none; font-size:11px; color:#88aacc; margin-top:4px; text-align:center; line-height:1.4;"></div>
+            <div style="margin-top:8px; border-top:1px solid rgba(170,136,68,0.25); padding-top:8px;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <button class="action-btn" id="btn-tune-t22"
+                        style="flex:1; font-size:10px; padding:5px 12px; border-color:#aa8844; color:#ccaa66;"
+                        title="GA tournament to optimize T22 hadronic ratios">tune T22</button>
+                </div>
+                <div id="tune-status" style="font-size:10px; color:#8899aa; margin-top:4px; text-align:center; min-height:14px;"></div>
+                <div style="margin-top:6px; display:flex; gap:10px; justify-content:center; font-size:10px; color:#7a8a9a;">
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Population size per generation">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">pop</span>
+                        <input id="tournament-pop-size" type="number" value="12" min="2" max="50"
+                            style="width:40px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Number of generations">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">gens</span>
+                        <input id="tournament-generations" type="number" value="10" min="1" max="100"
+                            style="width:40px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; align-items:center; gap:2px;" title="Planck seconds per contestant">
+                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px;">planck</span>
+                        <input id="tournament-ticks" type="number" value="2000" min="100" max="20000" step="100"
+                            style="width:52px; padding:4px 2px; background:#141a22; border:1px solid rgba(170,136,68,0.3); border-radius:2px; color:#ccaa66; font-size:11px; text-align:center; font-family:'Courier New',monospace;">
+                    </label>
+                </div>
             </div>
             <!-- Nucleus info (shown during simulation) -->
             <div id="nucleus-info" style="display:none; margin-top:6px; border-top:1px solid #4a3a1a;
-                padding-top:6px; font-size:8px; color:#8aac8f; line-height:1.8;">
+                padding-top:6px; font-size:10px; color:#8aac8f; line-height:1.8;">
             </div>
             <!-- Live observable metrics -->
-            <div id="nucleus-metrics" style="display:none; margin-top:4px; font-size:7px; color:#7a9a6a; line-height:1.6;">
+            <div id="nucleus-metrics" style="display:none; margin-top:4px; font-size:10px; color:#7a9a6a; line-height:1.6;">
             </div>
             <!-- Quark color legend moved to #deuteron-panel (left side) -->
         </div>
@@ -330,7 +349,7 @@
         </div>
     </div>
     <!-- Current rule title — top center overlay -->
-    <div id="rule-title" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; font-family:monospace; font-size:14px; color:#aaccdd; text-transform:uppercase; letter-spacing:0.15em; text-shadow:0 1px 4px rgba(0,0,0,0.7); white-space:nowrap;"></div>
+    <div id="rule-title" style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:200; pointer-events:none; font-family:monospace; font-size:16px; color:#aaccdd; text-transform:uppercase; letter-spacing:0.15em; text-shadow:0 1px 4px rgba(0,0,0,0.7); white-space:nowrap;"></div>
     <div id="hint">click sphere to select · click candidate (blue) to add shortcut · click edge to sever</div>
     <!-- Scale bar (nucleus mode only) -->
     <div id="scale-bar" style="display:none; position:fixed; bottom:50px; left:50%;
@@ -356,12 +375,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=7"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=9"></script>
+    <script src="src/flux-demo-state.js?v=10"></script>
     <script src="src/flux-demo-xon.js?v=2"></script>
     <script src="src/flux-demo-backtrack.js?v=5"></script>
     <script src="src/flux-demo-planner.js?v=5"></script>
-    <script src="src/flux-demo-ui.js?v=9"></script>
-    <script src="src/flux-demo.js?v=321"></script>
+    <script src="src/flux-demo-ui.js?v=10"></script>
+    <script src="src/flux-demo.js?v=323"></script>
     <script src="src/flux-solver-render.js?v=21"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=1"></script>
@@ -370,7 +389,7 @@
     <script src="src/flux-voids.js?v=12"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=33"></script>
-    <script src="src/flux-tests.js?v=185"></script>
+    <script src="src/flux-tests.js?v=187"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

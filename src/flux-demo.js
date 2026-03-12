@@ -790,8 +790,8 @@ function _tickDemoXons(dt) {
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
 
         // Trail: fading vertex-colored path
-        // Lifespan knob controls how many trail points are visible (0-50).
-        // Always store full 50-tick history; render only the last `visLen` points.
+        // Trails knob controls how many trail points are visible (0-250).
+        // Always store full history; render only the last `visLen` points.
         const lifespan = +document.getElementById('tracer-lifespan-slider').value;
         const fullLen = xon.trail.length;
         const visLen = Math.min(fullLen, lifespan);
@@ -1124,29 +1124,32 @@ function startDemoLoop() {
     const dpTitle = document.getElementById('dp-title');
     if (dpTitle) dpTitle.textContent = '0 Planck seconds';
 
-    // Demo 3.0 visual setup: opacity defaults
-    const spheresSlider = document.getElementById('sphere-opacity-slider');
-    if (spheresSlider) { spheresSlider.value = 3; spheresSlider.dispatchEvent(new Event('input')); }
-    const shapesSlider = document.getElementById('void-opacity-slider');
-    if (shapesSlider) { shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
-    const graphSlider = document.getElementById('graph-opacity-slider');
-    if (graphSlider) { graphSlider.value = 21; graphSlider.dispatchEvent(new Event('input')); }
-    const trailSlider = document.getElementById('trail-opacity-slider');
-    if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
+    // Skip visual/camera resets during tournament — preserve user's view between trials
+    if (!_tournamentRunning) {
+        // Demo 3.0 visual setup: opacity defaults
+        const spheresSlider = document.getElementById('sphere-opacity-slider');
+        if (spheresSlider) { spheresSlider.value = 3; spheresSlider.dispatchEvent(new Event('input')); }
+        const shapesSlider = document.getElementById('void-opacity-slider');
+        if (shapesSlider) { shapesSlider.value = 5; shapesSlider.dispatchEvent(new Event('input')); }
+        const graphSlider = document.getElementById('graph-opacity-slider');
+        if (graphSlider) { graphSlider.value = 21; graphSlider.dispatchEvent(new Event('input')); }
+        const trailSlider = document.getElementById('trail-opacity-slider');
+        if (trailSlider) { trailSlider.value = 55; trailSlider.dispatchEvent(new Event('input')); }
 
-    // Center camera on bosonic cage (oct node centroid) at eye level
-    if (_octNodeSet && _octNodeSet.size > 0 && pos) {
-        let cx = 0, cy = 0, cz = 0, count = 0;
-        for (const n of _octNodeSet) {
-            if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
+        // Center camera on bosonic cage (oct node centroid) at eye level
+        if (_octNodeSet && _octNodeSet.size > 0 && pos) {
+            let cx = 0, cy = 0, cz = 0, count = 0;
+            for (const n of _octNodeSet) {
+                if (pos[n]) { cx += pos[n][0]; cy += pos[n][1]; cz += pos[n][2]; count++; }
+            }
+            if (count > 0) {
+                panTarget.x = cx / count;
+                panTarget.y = cy / count;
+                panTarget.z = cz / count;
+            }
         }
-        if (count > 0) {
-            panTarget.x = cx / count;
-            panTarget.y = cy / count;
-            panTarget.z = cz / count;
-        }
+        applyCamera();
     }
-    applyCamera();
 
     // Default to maximum speed (uncapped)
     const speedSlider = document.getElementById('excitation-speed-slider');

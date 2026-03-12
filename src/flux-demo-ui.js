@@ -435,8 +435,6 @@ function stopDemo() {
 function _playbackStepBack() {
     if (_tickInProgress || _btSnapshots.length < 1) return false;
     if (_demoTick <= 0) return false;
-    // Invalidate stale redo from prior forward pass
-    _redoStack.length = 0;
     // Save current state to redo stack before restoring (for instant step-forward)
     _btSaveSnapshot();
     const redoSnap = _btSnapshots.pop(); // the one we just saved = current state

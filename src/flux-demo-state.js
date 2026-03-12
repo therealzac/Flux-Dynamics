@@ -240,7 +240,7 @@ const QUARK_TOPOLOGY = {
 // Used when a xon breaks confinement and enters the 'weak' mode.
 const WEAK_FORCE_COLOR = 0x7f00ff;
 
-const XON_TRAIL_LENGTH = 50;
+const XON_TRAIL_LENGTH = 250;
 
 // ── Weak Force Lifecycle Recorder ──
 // Records up to 10 full lifecycles of weak force excitations for debugging.

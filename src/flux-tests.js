@@ -1544,8 +1544,13 @@ function runDemo3Tests() {
     // Play/pause button — pauses/resumes the demo tick interval
     document.getElementById('btn-nucleus-pause')?.addEventListener('click', function(){
         if (typeof isDemoPaused === 'function' && _demoActive) {
-            // Cancel reverse playback if active
-            if (_demoReversing) stopReverse();
+            // If reversing, just stop reverse and stay paused — don't toggle
+            if (_demoReversing) {
+                stopReverse();
+                this.textContent = '\u25B6';
+                this.title = 'Resume simulation';
+                return;
+            }
             if (!isDemoPaused()) {
                 pauseDemo();
                 this.textContent = '\u25B6';
@@ -1635,6 +1640,7 @@ function runDemo3Tests() {
 // ╚══════════════════════════════════════════════════════════════════════╝
 
 let _tournamentRunning = false;
+let _tournamentVisualsApplied = false;
 let _tournamentTargetTick = 0; // tick at which current trial ends
 let _tournamentCallback = null; // called when trial reaches target tick
 
@@ -1878,8 +1884,11 @@ function _startVisualTrial(params, maxTicks) {
         // Start the demo — it will run visually using the normal animation loop
         startDemoLoop();
 
-        // Apply tournament visual presets AFTER startDemoLoop (which sets opacity defaults)
-        _applyTournamentVisuals();
+        // Apply tournament visual presets only on the FIRST trial — preserve user's view after that
+        if (!_tournamentVisualsApplied) {
+            _applyTournamentVisuals();
+            _tournamentVisualsApplied = true;
+        }
 
         // Restore trial label (simulateNucleus overwrites rule-title)
         const titleEl = document.getElementById('rule-title');
@@ -1958,9 +1967,16 @@ function _trialDescriptiveName(gen, idx, p) {
 // Main tournament runner — runs each trial visually on-screen (serial, not parallel)
 async function _runTournament() {
     _tournamentRunning = true;
-    const POP_SIZE = 12;
-    const GENERATIONS = 10;
-    const ELITE_COUNT = 4;
+    _tournamentVisualsApplied = false;
+
+    // Read settings from UI (fall back to defaults)
+    const popEl   = document.getElementById('tournament-pop-size');
+    const genEl   = document.getElementById('tournament-generations');
+    const tickEl  = document.getElementById('tournament-ticks');
+
+    const POP_SIZE   = popEl   ? Math.max(2, parseInt(popEl.value)   || 12) : 12;
+    const GENERATIONS= genEl   ? Math.max(1, parseInt(genEl.value)   || 10) : 10;
+    const ELITE_COUNT= Math.max(1, Math.floor(POP_SIZE / 3));
     const statusEl = document.getElementById('tune-status');
 
     const originalParams = { ..._choreoParams };
@@ -1996,12 +2012,12 @@ async function _runTournament() {
             if (!_tournamentRunning) break;
 
             const params = population[i];
-            const maxTicks = 2000;
+            const maxTicks = tickEl ? Math.max(100, parseInt(tickEl.value) || 2000) : 2000;
 
             if (statusEl) {
                 const bestStr = bestFitnessEver > -Infinity ? bestFitnessEver.toFixed(3) : '...';
                 const cleanStr = bestClean ? ' clean' : '';
-                statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | best=${bestStr}${cleanStr}`;
+                statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | ${maxTicks}ps | best=${bestStr}${cleanStr}`;
             }
 
             // Update top-center title with descriptive trial name
@@ -2094,6 +2110,7 @@ async function _runTournament() {
     }
 
     _tournamentRunning = false;
+    _tournamentVisualsApplied = false;
 
     // ── Dump tournament results to JSON file ──
     try {
