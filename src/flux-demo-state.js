@@ -9,6 +9,7 @@ let _reverseInterval = null;   // setInterval ID for reverse playback
 let _tickLog = [];             // lightweight per-tick log for export
 let _tickLogLastGuards = {};   // last full guard state for delta encoding
 let _redoStack = [];           // snapshots saved during rewind for instant step-forward
+let _rlActiveModel = null;     // active RL model for oct scoring (null = use heuristic)
 // T45 bounce guard — prevents A→B→A oscillation for oct AND weak xons.
 // Only tet/idle_tet xons are exempt (actualized hadronic patterns like fork: a→b→a→c→a).
 // Bounces are only allowed in actualized hadronic patterns that require them.
@@ -196,6 +197,44 @@ const LOOP_SEQUENCES = {
 };
 
 const LOOP_TYPE_NAMES = { pu1: 'fork', pu2: 'hook', pd: 'ham_cw', nd1: 'fork', nd2: 'hook', nu: 'ham_ccw' };
+
+// All valid loop permutations per topology.
+// Each topology maps to an array of generator functions.
+// Input: cycle [a,b,c,d] where a=oct entry, b=ext, c=oct, d=oct.
+const LOOP_PERMUTATIONS = {
+    fork: [
+        ([a,b,c,d]) => [a,b,a,c,a],
+        ([a,b,c,d]) => [a,c,a,b,a],
+        ([a,b,c,d]) => [a,b,a,d,a],
+        ([a,b,c,d]) => [a,d,a,b,a],
+        ([a,b,c,d]) => [a,c,a,d,a],
+        ([a,b,c,d]) => [a,d,a,c,a],
+    ],
+    hook: [
+        ([a,b,c,d]) => [a,b,c,b,a],
+        ([a,b,c,d]) => [a,c,b,c,a],
+        ([a,b,c,d]) => [a,b,d,b,a],
+        ([a,b,c,d]) => [a,d,b,d,a],
+        ([a,b,c,d]) => [a,c,d,c,a],
+        ([a,b,c,d]) => [a,d,c,d,a],
+    ],
+    hamCW: [
+        ([a,b,c,d]) => [a,b,c,d,a],
+        ([a,b,c,d]) => [a,c,d,b,a],
+        ([a,b,c,d]) => [a,d,b,c,a],
+    ],
+    hamCCW: [
+        ([a,b,c,d]) => [a,d,c,b,a],
+        ([a,b,c,d]) => [a,c,b,d,a],
+        ([a,b,c,d]) => [a,b,d,c,a],
+    ],
+};
+
+// Map quark type → topology name
+const QUARK_TOPOLOGY = {
+    pu1: 'fork', pu2: 'hook', pd: 'hamCW',
+    nd1: 'fork', nd2: 'hook', nu: 'hamCCW',
+};
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.
 // Used when a xon breaks confinement and enters the 'weak' mode.

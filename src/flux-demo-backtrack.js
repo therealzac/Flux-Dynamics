@@ -15,6 +15,7 @@ function _btSaveSnapshot() {
             _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
             _t60Ejected: !!x._t60Ejected, _weakLeftOct: !!x._weakLeftOct, _pendingWeakEjection: !!x._pendingWeakEjection,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
+            _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0 },
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
             _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
@@ -64,6 +65,7 @@ function _btRestoreSnapshot(snap) {
         x._weakLeftOct = !!s._weakLeftOct;
         x._pendingWeakEjection = !!s._pendingWeakEjection;
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
+        x._modeStats = s._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0 };
         x.trail = s.trail.slice();
         x.trailColHistory = s.trailColHistory.slice();
         x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];

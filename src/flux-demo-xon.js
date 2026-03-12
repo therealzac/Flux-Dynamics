@@ -110,6 +110,7 @@ function _spawnXon(face, quarkType, sign) {
         _lastDir: null,         // last direction index (0-3) for momentum
         _dirHistory: [],        // direction vector history for T16 test
         _dirBalance: new Array(10).fill(0), // xonic movement balance: 4 base + 6 SC dirs
+        _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0 }, // ticks spent in each mode
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
         trail: [seq[0]], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
@@ -304,6 +305,7 @@ function _initPersistentXons() {
             _lastDir: initDir,
             _dirHistory: [],
             _dirBalance: new Array(10).fill(0),
+            _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0 },
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
             trail: [startNode], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,

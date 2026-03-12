@@ -253,13 +253,44 @@ function updateXonPanel() {
             modeLabel = x._quarkType ? QUARK_LABELS[x._quarkType] || x._quarkType : x._mode;
             faceStr = x._assignedFace ? ` f${x._assignedFace}` : '';
         }
+        // Balance bar: 1 - coeffOfVariation(_dirBalance), clamped [0,1]
+        let balPct = 0;
+        let balColor = '#ff8800';
+        if (x._dirBalance) {
+            const counts = x._dirBalance;
+            let sum = 0, n = 0;
+            for (let d = 0; d < 10; d++) { sum += counts[d]; n++; }
+            const mean = sum / n;
+            if (mean > 0) {
+                let variance = 0;
+                for (let d = 0; d < 10; d++) variance += (counts[d] - mean) ** 2;
+                const cv = Math.sqrt(variance / n) / mean;
+                balPct = Math.max(0, Math.min(1, 1 - cv));
+            }
+            balColor = balPct > 0.6 ? '#44cc44' : balPct > 0.4 ? '#cccc44' : '#ff8800';
+        }
+        const barFull = Math.round(balPct * 8);
+        const barEmpty = 8 - barFull;
+        const barStr = '\u2588'.repeat(barFull) + '\u2591'.repeat(barEmpty);
+        const balStr = `${Math.round(balPct * 100)}%`;
+
+        // Mode stats line
+        const ms = x._modeStats || { oct: 0, tet: 0, idle_tet: 0, weak: 0 };
+        const msStr = `o:${ms.oct} t:${ms.tet} i:${ms.idle_tet}` + (ms.weak > 0 ? ` w:${ms.weak}` : '');
+
+        // Tooltip: full 10-direction breakdown
+        const db = x._dirBalance || new Array(10).fill(0);
+        const tipDirs = `base[0-3]: ${db.slice(0, 4).join(',')} sc[4-9]: ${db.slice(4).join(',')}`;
+
         const highlighted = _xonHighlightTimers.has(i);
         const border = highlighted ? `2px solid ${modeCol}` : '1px solid #334455';
         const bg = highlighted ? 'rgba(255,255,255,0.15)' : '#0d1520';
-        html += `<button class="xon-btn" data-xon-idx="${i}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:42px; height:36px; padding:2px; cursor:pointer; border-radius:4px; background:${bg}; border:${border}; font-family:monospace; outline:none;" title="X${i}: n${x.node} ${modeLabel}${faceStr}">`
+        html += `<button class="xon-btn" data-xon-idx="${i}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:48px; height:52px; padding:2px; cursor:pointer; border-radius:4px; background:${bg}; border:${border}; font-family:monospace; outline:none;" title="X${i}: n${x.node} ${modeLabel}${faceStr}\n${tipDirs}">`
             + `<span style="color:${modeCol}; font-weight:bold; font-size:11px;">X${i}</span>`
             + `<span style="color:#88aacc; font-size:8px;">n${x.node}</span>`
             + `<span style="color:#667788; font-size:7px;">${modeLabel}${faceStr}</span>`
+            + `<span style="color:${balColor}; font-size:6px; letter-spacing:-0.5px;">${barStr} ${balStr}</span>`
+            + `<span style="color:#556677; font-size:6px;">${msStr}</span>`
             + `</button>`;
     }
     listEl.innerHTML = html;

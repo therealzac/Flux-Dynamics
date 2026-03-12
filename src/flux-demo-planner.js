@@ -1,5 +1,33 @@
 // flux-demo-planner.js — Move planner: bipartite matching, lookahead, face scoring, tet assignment
 
+// Select the best loop permutation for a given quark type on a face.
+// Scores each valid permutation by how well it balances the xon's direction counters.
+// Returns a 5-node sequence (or falls back to LOOP_SEQUENCES if no permutations).
+function _selectBestPermutation(xon, cycle, quarkType) {
+    const topo = QUARK_TOPOLOGY[quarkType];
+    const perms = topo ? LOOP_PERMUTATIONS[topo] : null;
+    if (!perms || perms.length === 0) {
+        return LOOP_SEQUENCES[quarkType](cycle);
+    }
+    let bestSeq = null, bestScore = -Infinity;
+    for (const gen of perms) {
+        const seq = gen(cycle);
+        if (!seq || seq.length !== 5) continue;
+        // Compute direction indices for the 4 edges
+        const dirs = [];
+        for (let s = 0; s < 4; s++) {
+            const d = _identifyMoveDir(seq[s], seq[s + 1]);
+            if (d >= 0) dirs.push(d);
+        }
+        const score = _dirBalanceScoreMulti(xon, dirs) + (_sRng() - 0.5) * 0.1;
+        if (score > bestScore) {
+            bestScore = score;
+            bestSeq = seq;
+        }
+    }
+    return bestSeq || LOOP_SEQUENCES[quarkType](cycle);
+}
+
 // Maximum bipartite matching for oct xon move assignment (Kuhn's algorithm).
 // Finds an augmenting path of arbitrary depth so that the maximum number of
 // xons get a valid destination. This prevents deadlocks that greedy assignment misses.
@@ -403,7 +431,7 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     //    indices for those edges and sum the balance deficits.
     if (fd.cycle && fd.cycle.length === 4) {
         // Get the loop sequence for the chosen quark type
-        const loopSeq = LOOP_SEQUENCES[quarkType] ? LOOP_SEQUENCES[quarkType](fd.cycle) : null;
+        const loopSeq = _selectBestPermutation(xon, fd.cycle, quarkType);
         if (loopSeq && loopSeq.length === 5) {
             const loopDirs = [];
             for (let s = 0; s < 4; s++) {
@@ -493,15 +521,22 @@ function _getOctCandidates(xon, occupied, blocked) {
 
     if (allOctNeighbors.length === 0) return [];
 
-    // Score candidates by xonic movement balance (least-used direction = highest score)
+    // Score candidates — RL model if available, else xonic movement balance heuristic
+    const useRL = _rlActiveModel && typeof extractRLFeatures === 'function' && typeof scoreCandidateRL === 'function';
     const candidates = [];
     for (const nb of allOctNeighbors) {
         if (occupied.has(nb.node)) continue; // Pauli: already occupied
         if (blocked && blocked.has(nb.node)) continue; // Pauli: reserved by another planned move
         // No bouncing: don't go back to the node we just came from
         if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
-        const balScore = _dirBalanceScore(xon, nb.dirIdx);
-        candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: balScore, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
+        let score;
+        if (useRL) {
+            const features = extractRLFeatures(xon, nb, occupied);
+            score = scoreCandidateRL(features, _rlActiveModel);
+        } else {
+            score = _dirBalanceScore(xon, nb.dirIdx);
+        }
+        candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
     }
 
     // 2-step awareness SCORING — penalize candidates that appear to lack a
@@ -641,45 +676,35 @@ function _assignXonToTet(xon, face, quarkType) {
     _demoTetAssignments++;  // track for hit rate
     _promoteFaceSCs(face, xon);
 
-    let seq = LOOP_SEQUENCES[quarkType](fd.cycle);
     const col = QUARK_COLORS[quarkType];
     const cycle = fd.cycle; // [a, b, c, d]
 
-    // If xon is already at seq[0], use the sequence as-is.
-    // If xon is at a different oct node on this face, rotate the cycle
-    // so the xon starts from where it already is (no teleportation / Pauli safe).
-    if (xon.node !== seq[0]) {
-        const octNodesOnFace = cycle.filter(n => _octNodeSet.has(n));
-        const currentIdx = octNodesOnFace.indexOf(xon.node);
-        if (currentIdx >= 0) {
-            // Rotate cycle so xon's current node is in position 0
-            const a = cycle[0], b = cycle[1], c = cycle[2], d = cycle[3];
-            let rotated;
-            if (xon.node === a) rotated = [a, b, c, d];
-            else if (xon.node === c) rotated = [c, b, a, d]; // swap a↔c
-            else if (xon.node === d) rotated = [d, b, c, a]; // swap a↔d
-            else rotated = cycle; // fallback
-            seq = LOOP_SEQUENCES[quarkType](rotated);
-        } else {
-            // Xon is NOT on this face — walk ONE HOP toward nearest face oct node.
-            const faceOctNodes = new Set(octNodesOnFace);
-            const target = _walkToFace(xon, faceOctNodes);
-            if (target !== null) {
-                // Reached a face node in one hop — rotate cycle
-                const a = cycle[0], b = cycle[1], c = cycle[2], d = cycle[3];
-                let rotated;
-                if (target === a) rotated = [a, b, c, d];
-                else if (target === c) rotated = [c, b, a, d];
-                else if (target === d) rotated = [d, b, c, a];
-                else rotated = cycle;
-                seq = LOOP_SEQUENCES[quarkType](rotated);
-            } else {
-                // Didn't reach face in one hop — abort assignment (no teleportation).
-                // Xon stays in oct mode; assignment will retry next window.
-                return;
-            }
+    // Determine the rotated cycle so position 0 = xon's current node.
+    let rotated = cycle;
+    const octNodesOnFace = cycle.filter(n => _octNodeSet.has(n));
+
+    if (!octNodesOnFace.includes(xon.node)) {
+        // Xon is NOT on this face — walk ONE HOP toward nearest face oct node.
+        const faceOctNodes = new Set(octNodesOnFace);
+        const target = _walkToFace(xon, faceOctNodes);
+        if (target === null) {
+            // Didn't reach face in one hop — abort assignment (no teleportation).
+            return;
         }
+        // Rotate cycle so target node is in position 0
+        const [a, b, c, d] = cycle;
+        if (target === a) rotated = [a, b, c, d];
+        else if (target === c) rotated = [c, b, a, d];
+        else if (target === d) rotated = [d, b, c, a];
+    } else {
+        // Rotate cycle so xon's current node is in position 0
+        const [a, b, c, d] = cycle;
+        if (xon.node === a) rotated = [a, b, c, d];
+        else if (xon.node === c) rotated = [c, b, a, d];
+        else if (xon.node === d) rotated = [d, b, c, a];
     }
+
+    let seq = _selectBestPermutation(xon, rotated, quarkType);
 
     _clearModeProps(xon);
     xon._mode = 'tet';
@@ -913,7 +938,7 @@ function _startIdleTetLoop(xon, occupied) {
             else continue;
 
             for (const qType of shuffledTypes) {
-                const seq = LOOP_SEQUENCES[qType](rotated);
+                const seq = _selectBestPermutation(xon, rotated, qType);
                 const dest = seq[1];
                 if (occupied && occupied.has(dest)) continue;
                 _promoteFaceSCs(face, xon);
@@ -933,7 +958,7 @@ function _startIdleTetLoop(xon, occupied) {
                 const fallbackType = existingXon
                     ? shuffledTypes.find(t => QUARK_COLORS[t] === existingXon.col) || shuffledTypes[0]
                     : shuffledTypes[0];
-                bestSeq = LOOP_SEQUENCES[fallbackType](rotated);
+                bestSeq = _selectBestPermutation(xon, rotated, fallbackType);
                 bestFace = face;
                 bestType = fallbackType;
             }

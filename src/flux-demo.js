@@ -2126,7 +2126,7 @@ async function demoTick() {
                 if (!canMaterialize) continue;
 
                 // Lookahead viability: can the loop complete?
-                const seq = LOOP_SEQUENCES[prop.quarkType](fd.cycle);
+                const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
                 const tmpOcc = new Map(occupied);
                 if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
 
@@ -2958,6 +2958,16 @@ async function demoTick() {
     break; // exit retry loop
 
     } // end backtracking retry loop
+
+    // Increment per-xon mode stats
+    for (const x of _demoXons) {
+        if (!x.alive || !x._modeStats) continue;
+        const m = x._mode;
+        if (m === 'oct' || m === 'oct_formation') x._modeStats.oct++;
+        else if (m === 'tet') x._modeStats.tet++;
+        else if (m === 'idle_tet') x._modeStats.idle_tet++;
+        else if (m === 'weak') x._modeStats.weak++;
+    }
 
     // Update UI — every tick (un-throttled)
     updateDemoPanel();

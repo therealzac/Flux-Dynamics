@@ -35,15 +35,25 @@ function _computeOctCapacity() {
     return OCT_CAPACITY_MAX;
 }
 
-// Helper: check if actual loop matches any valid cycle rotation for a given quark type.
+// Helper: check if actual loop matches any valid permutation for a given quark type.
 // _assignXonToTet rotates the cycle so the xon's starting oct node is in position 0.
 // Valid rotations: [a,b,c,d], [c,b,a,d], [d,b,c,a] (oct nodes a,c,d can each be start).
+// With LOOP_PERMUTATIONS, also checks all permutations for the quark's topology.
 function _loopMatchesAnyRotation(actual, quarkType, cycle) {
     const [a, b, c, d] = cycle;
     const rotations = [[a,b,c,d], [c,b,a,d], [d,b,c,a]];
+    const topo = QUARK_TOPOLOGY[quarkType];
+    const perms = topo ? LOOP_PERMUTATIONS[topo] : null;
     for (const rot of rotations) {
-        const expected = LOOP_SEQUENCES[quarkType](rot);
-        if (actual.length === expected.length && actual.every((n, i) => n === expected[i])) return true;
+        if (perms) {
+            for (const gen of perms) {
+                const expected = gen(rot);
+                if (actual.length === expected.length && actual.every((n, i) => n === expected[i])) return true;
+            }
+        } else {
+            const expected = LOOP_SEQUENCES[quarkType](rot);
+            if (actual.length === expected.length && actual.every((n, i) => n === expected[i])) return true;
+        }
     }
     return false;
 }
@@ -1057,6 +1067,115 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T-DirBal: Directional balance convergence ──
+    // After 64 ticks, each alive xon must have used >= 3 distinct direction
+    // indices in _dirBalance. Validates the balance tracking is working and
+    // xons are exploring multiple directions, not stuck in ruts.
+    {
+      id: 'T-DirBal', name: 'Xon direction balance (>=3 dirs)',
+      convergence: true,
+      check(tick, g) {
+        if (tick < 64) return null;
+        if (g.ok === true) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (!x._dirBalance) return `X${i} missing _dirBalance`;
+          let distinct = 0;
+          for (let d = 0; d < 10; d++) {
+            if (x._dirBalance[d] > 0) distinct++;
+          }
+          if (distinct < 3) {
+            g.msg = `X${i}: ${distinct}/3 dirs`;
+            return null; // not yet converged, keep checking
+          }
+        }
+        g.ok = true;
+        g.msg = 'all xons >=3 dirs';
+        if (typeof _liveGuardRender === 'function') _liveGuardRender();
+        return null;
+      }
+    },
+
+    // ── T-PermValid: Every tet loop uses a valid permutation ──
+    // On every tick, check that each tet/idle_tet xon's _loopSeq matches one of
+    // the valid permutations for its quark type's topology + face cycle.
+    {
+      id: 'T-PermValid', name: 'Tet loops use valid permutations',
+      check(tick, g) {
+        if (tick < 12) return null; // grace period
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'tet' && x._mode !== 'idle_tet') continue;
+          if (!x._loopSeq || !x._quarkType || x._assignedFace == null) continue;
+          const fd = _nucleusTetFaceData[x._assignedFace];
+          if (!fd || !fd.cycle) continue;
+          if (!_loopMatchesAnyRotation(x._loopSeq, x._quarkType, fd.cycle)) {
+            return `tick ${tick}: X${i} loop ${x._loopSeq.join(',')} invalid for ${x._quarkType} on face ${x._assignedFace}`;
+          }
+        }
+        return null;
+      }
+    },
+
+    // ── T-PermBalance: Permutation selection favors balance ──
+    // After 128 ticks, verify permutation diversity: at least 2 distinct permutations
+    // have been used across all tet assignments. Validates smart selection is active.
+    {
+      id: 'T-PermBalance', name: 'Permutation diversity (>=2 used)',
+      convergence: true,
+      init: { _seenPerms: new Set() },
+      check(tick, g) {
+        if (tick < 128) return null;
+        if (g.ok === true) return null;
+        // Accumulate seen permutation signatures
+        for (const x of _demoXons) {
+          if (!x.alive || !x._loopSeq || x._mode !== 'tet') continue;
+          g._seenPerms.add(x._loopSeq.join(','));
+        }
+        if (g._seenPerms.size >= 2) {
+          g.ok = true;
+          g.msg = `${g._seenPerms.size} perms seen`;
+          if (typeof _liveGuardRender === 'function') _liveGuardRender();
+        } else {
+          g.msg = `${g._seenPerms.size}/2 perms`;
+        }
+        return null;
+      }
+    },
+
+    // ── T-RLInference: RL model produces finite scores when active ──
+    // Only fires when _rlActiveModel is set. Checks that scoreCandidateRL
+    // returns finite numbers (not NaN/Infinity).
+    {
+      id: 'T-RLInference', name: 'RL model inference validity',
+      convergence: true,
+      check(tick, g) {
+        if (tick < 24) return null;
+        if (g.ok === true) return null;
+        if (!_rlActiveModel || typeof scoreCandidateRL !== 'function' || typeof extractRLFeatures !== 'function') {
+          g.ok = true; g.msg = 'RL not active';
+          return null;
+        }
+        // Test inference on a dummy xon-like object
+        const dummyXon = {
+          _dirBalance: new Array(10).fill(1),
+          _modeStats: { oct: 10, tet: 5, idle_tet: 2, weak: 0 },
+          prevNode: -1,
+        };
+        const dummyCand = { node: 0, dirIdx: 0, _needsMaterialise: false };
+        const features = extractRLFeatures(dummyXon, dummyCand, new Map());
+        const score = scoreCandidateRL(features, _rlActiveModel);
+        if (!isFinite(score)) {
+          return `RL model produced non-finite score: ${score}`;
+        }
+        g.ok = true; g.msg = `RL ok (${score.toFixed(2)})`;
+        if (typeof _liveGuardRender === 'function') _liveGuardRender();
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1520,7 +1639,14 @@ let _tournamentTargetTick = 0; // tick at which current trial ends
 let _tournamentCallback = null; // called when trial reaches target tick
 
 // Evaluate fitness from current _demoVisits state.
-// Returns { puPd, ndNu, evenness, totalVisits, fitness, criticalFail }
+// 7 priority metrics aligned with user's optimization goals:
+//   1. Anchor quark evenness (pd/nu across 8 faces)     — 25%
+//   2. Follower quark evenness (pu1/pu2/nd1/nd2)        — 20%
+//   3. Anchor:follower ratio (1:2 per orientation)       — 15%
+//   4. Follower:follower ratio (1:1 pu1:pu2, nd1:nd2)   — 12%
+//   5. Quark frequency (loops completed per tick)        — 12%
+//   6. Periodicity (regularity of oct changes)           — 8%
+//   7. Xonic balance (direction + mode balance)          — 8%
 function _evaluateFitness() {
     const vals = Object.values(_demoVisits);
     const gPu1 = vals.reduce((s, v) => s + (v.pu1 || 0), 0);
@@ -1532,36 +1658,139 @@ function _evaluateFitness() {
     const pTotal = gPu1 + gPu2 + gPd;
     const nTotal = gNd1 + gNd2 + gNu;
     const total = pTotal + nTotal;
-    // 3-way evenness: how close each type is to 1/3 of its hadron
-    const pEven = pTotal > 0 ? 1 - (Math.abs(gPu1/pTotal - 1/3) + Math.abs(gPu2/pTotal - 1/3) + Math.abs(gPd/pTotal - 1/3)) : 0;
-    const nEven = nTotal > 0 ? 1 - (Math.abs(gNd1/nTotal - 1/3) + Math.abs(gNd2/nTotal - 1/3) + Math.abs(gNu/nTotal - 1/3)) : 0;
 
-    const totals = [];
-    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
-    const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
-    const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
-    const cv = mean > 0 ? (stddev / mean) : 1;
-    const evenness = Math.max(0, 1 - cv);
+    // 1. ANCHOR EVENNESS: pd and nu should be even across all 8 faces
+    let anchorEvenness = 0;
+    {
+        const pdPerFace = [], nuPerFace = [];
+        for (let f = 1; f <= 8; f++) {
+            const v = _demoVisits[f] || {};
+            pdPerFace.push(v.pd || 0);
+            nuPerFace.push(v.nu || 0);
+        }
+        const pdMean = pdPerFace.reduce((a, b) => a + b, 0) / 8;
+        const nuMean = nuPerFace.reduce((a, b) => a + b, 0) / 8;
+        const pdCV = pdMean > 0 ? Math.sqrt(pdPerFace.reduce((s, v) => s + (v - pdMean) ** 2, 0) / 8) / pdMean : 1;
+        const nuCV = nuMean > 0 ? Math.sqrt(nuPerFace.reduce((s, v) => s + (v - nuMean) ** 2, 0) / 8) / nuMean : 1;
+        anchorEvenness = Math.max(0, 1 - (pdCV + nuCV) / 2);
+    }
 
-    // Check for ANY guard failure — algo must pass all tests
+    // 2. FOLLOWER EVENNESS: pu1/pu2/nd1/nd2 across faces
+    let followerEvenness = 0;
+    {
+        const types = ['pu1', 'pu2', 'nd1', 'nd2'];
+        let totalCV = 0;
+        for (const t of types) {
+            const perFace = [];
+            for (let f = 1; f <= 8; f++) perFace.push((_demoVisits[f] || {})[t] || 0);
+            const m = perFace.reduce((a, b) => a + b, 0) / 8;
+            const cv = m > 0 ? Math.sqrt(perFace.reduce((s, v) => s + (v - m) ** 2, 0) / 8) / m : 1;
+            totalCV += cv;
+        }
+        followerEvenness = Math.max(0, 1 - totalCV / 4);
+    }
+
+    // 3. ANCHOR:FOLLOWER RATIO — 1:2 per orientation (pd:pu1+pu2, nu:nd1+nd2)
+    let anchorFollowerRatio = 0;
+    {
+        const pFollower = gPu1 + gPu2;
+        const nFollower = gNd1 + gNd2;
+        const pRatio = pFollower > 0 ? gPd / pFollower : 0; // target: 0.5 (1:2)
+        const nRatio = nFollower > 0 ? gNu / nFollower : 0;
+        const pErr = Math.abs(pRatio - 0.5);
+        const nErr = Math.abs(nRatio - 0.5);
+        anchorFollowerRatio = Math.max(0, 1 - (pErr + nErr));
+    }
+
+    // 4. FOLLOWER:FOLLOWER RATIO — 1:1 pu1:pu2 and nd1:nd2
+    let followerRatio = 0;
+    {
+        const puMax = Math.max(gPu1, gPu2, 1);
+        const puMin = Math.min(gPu1, gPu2);
+        const ndMax = Math.max(gNd1, gNd2, 1);
+        const ndMin = Math.min(gNd1, gNd2);
+        followerRatio = (puMin / puMax + ndMin / ndMax) / 2;
+    }
+
+    // 5. QUARK FREQUENCY — loops completed per tick
+    let quarkFrequency = 0;
+    {
+        const loopsPerTick = _demoTick > 0 ? total / _demoTick : 0;
+        quarkFrequency = Math.min(1, loopsPerTick / 0.5); // normalize: 0.5 loops/tick = perfect
+    }
+
+    // 6. PERIODICITY — regularity of oct orientation changes (from _octWindingDirection changes)
+    // Approximated by face coverage evenness (how regularly faces are visited)
+    let periodicity = 0;
+    {
+        const totals = [];
+        for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+        const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+        const cv = mean > 0 ? Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length) / mean : 1;
+        periodicity = Math.max(0, 1 - cv);
+    }
+
+    // 7. XONIC BALANCE — direction + mode balance across all xons
+    let xonicBalance = 0;
+    {
+        let totalBal = 0, count = 0;
+        for (const x of _demoXons) {
+            if (!x.alive || !x._dirBalance) continue;
+            const db = x._dirBalance;
+            let sum = 0;
+            for (let d = 0; d < 10; d++) sum += db[d];
+            const mean = sum / 10;
+            if (mean > 0) {
+                let variance = 0;
+                for (let d = 0; d < 10; d++) variance += (db[d] - mean) ** 2;
+                totalBal += 1 - Math.sqrt(variance / 10) / mean;
+            }
+            count++;
+        }
+        xonicBalance = count > 0 ? totalBal / count : 0;
+    }
+
+    // Check for ANY guard failure
     const failedGuards = Object.entries(_liveGuards)
         .filter(([, g]) => g.failed)
         .map(([id]) => id);
     const anyFail = failedGuards.length > 0 || simHalted;
 
-    // Hit rate: completions / assignments (how often does assignment → actualized tet?)
+    // Hit rate (kept for backward compat)
     const hitRate = _demoTetAssignments > 0 ? total / _demoTetAssignments : 0;
-    // Fitness = 3-way ratio accuracy + face evenness + hit rate
-    // pEven, nEven ∈ [0,1], evenness ∈ [0,1], hitRate ∈ [0,1]
-    // Weights: 30% pEven + 30% nEven + 20% evenness + 20% hitRate = max 1.0
-    const balance = pEven * 0.3 + nEven * 0.3 + evenness * 0.2 + hitRate * 0.2;
-    // Fitness tiers: clean survivors > failed candidates > zero-visit candidates
+
+    // Legacy evenness metrics (for logging)
+    const pEven = pTotal > 0 ? 1 - (Math.abs(gPu1/pTotal - 1/3) + Math.abs(gPu2/pTotal - 1/3) + Math.abs(gPd/pTotal - 1/3)) : 0;
+    const nEven = nTotal > 0 ? 1 - (Math.abs(gNd1/nTotal - 1/3) + Math.abs(gNd2/nTotal - 1/3) + Math.abs(gNu/nTotal - 1/3)) : 0;
+    const totals = [];
+    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+    const fMean = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const fCV = fMean > 0 ? Math.sqrt(totals.reduce((s, v) => s + (v - fMean) ** 2, 0) / totals.length) / fMean : 1;
+    const evenness = Math.max(0, 1 - fCV);
+
+    // Weighted fitness (7 priorities)
+    const fitness7 = 0.25 * anchorEvenness
+                   + 0.20 * followerEvenness
+                   + 0.15 * anchorFollowerRatio
+                   + 0.12 * followerRatio
+                   + 0.12 * quarkFrequency
+                   + 0.08 * periodicity
+                   + 0.08 * xonicBalance;
+
+    // Fitness tiers
     let fitness;
     if (total === 0) fitness = -20;
-    else if (anyFail) fitness = balance - 10;
-    else fitness = balance;
+    else if (anyFail) fitness = fitness7 - 10;
+    else fitness = fitness7;
 
-    return { pEven, nEven, evenness, hitRate, totalVisits: total, assignments: _demoTetAssignments, fitness, failedGuards, survivedTicks: _demoTick, clean: !anyFail && total > 0 };
+    return {
+        pEven, nEven, evenness, hitRate,
+        anchorEvenness, followerEvenness, anchorFollowerRatio,
+        followerRatio, quarkFrequency, periodicity, xonicBalance,
+        totalVisits: total, assignments: _demoTetAssignments,
+        fitness, failedGuards, survivedTicks: _demoTick,
+        clean: !anyFail && total > 0,
+    };
 }
 
 // Hook into demoTick to detect when trial reaches target tick.
@@ -1619,7 +1848,20 @@ function _startVisualTrial(params, maxTicks) {
         simHalted = false;
 
         // Apply candidate params
-        Object.assign(_choreoParams, params);
+        const { _rlGenome, ...choreoOnly } = params;
+        Object.assign(_choreoParams, choreoOnly);
+
+        // Load RL genome into model if available
+        if (_rlGenome && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
+            if (!_rlActiveModel && typeof createPolicyModel === 'function') {
+                _rlActiveModel = createPolicyModel();
+            }
+            if (_rlActiveModel && typeof genomeToModel === 'function') {
+                genomeToModel(_rlGenome, _rlActiveModel);
+            }
+        } else {
+            _rlActiveModel = null; // fall back to heuristic scoring
+        }
 
         // Use whatever lattice level is already on the slider
 
@@ -1651,6 +1893,14 @@ function _tournamentCrossover(a, b) {
     for (const key of Object.keys(_choreoParamRanges)) {
         child[key] = Math.random() < 0.5 ? a[key] : b[key];
     }
+    // RL genome crossover (if both parents have genomes)
+    if (a._rlGenome && b._rlGenome && typeof rlCrossoverGenome === 'function') {
+        child._rlGenome = rlCrossoverGenome(a._rlGenome, b._rlGenome);
+    } else if (a._rlGenome) {
+        child._rlGenome = new Float32Array(a._rlGenome);
+    } else if (b._rlGenome) {
+        child._rlGenome = new Float32Array(b._rlGenome);
+    }
     return child;
 }
 
@@ -1668,6 +1918,10 @@ function _tournamentMutate(params) {
         val = Math.max(lo, Math.min(hi, val));
         m[key] = isFloat ? val : Math.round(val);
     }
+    // RL genome mutation
+    if (params._rlGenome && typeof rlMutateGenome === 'function') {
+        m._rlGenome = rlMutateGenome(params._rlGenome);
+    }
     return m;
 }
 
@@ -1681,6 +1935,10 @@ function _tournamentRandomCandidate() {
         } else {
             c[key] = lo + Math.floor(Math.random() * (hi - lo + 1));
         }
+    }
+    // RL genome: random initialization
+    if (typeof rlRandomGenome === 'function' && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
+        c._rlGenome = rlRandomGenome();
     }
     return c;
 }
@@ -1708,11 +1966,17 @@ async function _runTournament() {
     const originalParams = { ..._choreoParams };
     const titleEl = document.getElementById('rule-title');
 
+    // Initialize RL if available
+    const rlEnabled = typeof initRL === 'function' && initRL();
+    if (rlEnabled) console.log('[TOURNAMENT] RL scoring enabled — evolving NN genomes');
+
     // Initial population: current config + mutations + random
-    let population = [{ ..._choreoParams }];
+    const seed = { ..._choreoParams };
+    if (rlEnabled && typeof rlRandomGenome === 'function') seed._rlGenome = rlRandomGenome();
+    let population = [seed];
     for (let i = 1; i < POP_SIZE; i++) {
         if (i < POP_SIZE / 2) {
-            population.push(_tournamentMutate({ ..._choreoParams }));
+            population.push(_tournamentMutate({ ..._choreoParams, _rlGenome: rlEnabled ? rlRandomGenome() : undefined }));
         } else {
             population.push(_tournamentRandomCandidate());
         }
@@ -1806,9 +2070,20 @@ async function _runTournament() {
 
     // Apply best params and restart demo with winner
     if (bestEver) {
-        Object.assign(_choreoParams, bestEver);
-        console.log('[Tournament] Best params applied:', bestEver, 'fitness:', bestFitnessEver.toFixed(3));
-        localStorage.setItem('flux_choreo_params', JSON.stringify(bestEver));
+        const { _rlGenome: bestGenome, ...bestChoreo } = bestEver;
+        Object.assign(_choreoParams, bestChoreo);
+        // Load best RL genome into active model for live demo
+        if (bestGenome && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
+            if (!_rlActiveModel && typeof createPolicyModel === 'function') {
+                _rlActiveModel = createPolicyModel();
+            }
+            if (_rlActiveModel && typeof genomeToModel === 'function') {
+                genomeToModel(bestGenome, _rlActiveModel);
+                console.log('[Tournament] Best RL genome loaded into active model');
+            }
+        }
+        console.log('[Tournament] Best params applied:', bestChoreo, 'fitness:', bestFitnessEver.toFixed(3));
+        localStorage.setItem('flux_choreo_params', JSON.stringify(bestChoreo));
         localStorage.setItem('flux_choreo_fitness', bestFitnessEver.toFixed(3));
     }
 
