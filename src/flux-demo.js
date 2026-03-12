@@ -1053,6 +1053,7 @@ function startDemoLoop() {
         _demoVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 };
     }
     _demoTick = 0;
+    _planckSeconds = 0;
     _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
     _demoTetAssignments = 0;
@@ -2662,6 +2663,7 @@ async function demoTick() {
     if (_advanceGluons()) _solverNeeded = true;
 
     // ── Run solver if any SCs changed (unified architecture) ──
+    if (_solverNeeded) _planckSeconds++;
     if (_solverNeeded) {
         bumpState();
         const scPairs = [];
@@ -2829,11 +2831,11 @@ async function demoTick() {
 
     _demoTick++;
 
-    // Update Planck-second ticker (both right-panel status and left-panel title)
+    // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
-    if (_tickerEl) _tickerEl.textContent = `${_demoTick} Planck seconds`;
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.textContent = `${_demoTick} Planck seconds`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons

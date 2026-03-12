@@ -9,6 +9,7 @@ let _demoPaused = false;  // true when user has paused via pause button
 // Bounces are only allowed in actualized hadronic patterns that require them.
 const _T45_BOUNCE_GUARD = false;
 let _demoTick = 0;
+let _planckSeconds = 0;  // ticks where lattice deformation occurred (SC adds/removes)
 let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 

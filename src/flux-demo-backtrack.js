@@ -32,6 +32,8 @@ function _btSaveSnapshot() {
         demoVisits: _demoVisits ? JSON.parse(JSON.stringify(_demoVisits)) : null,
         // Matter/antimatter winding direction
         octWindingDirection: _octWindingDirection,
+        // Planck second counter (deformation events)
+        planckSeconds: _planckSeconds,
     };
     _btSnapshots.push(snap);
 }
@@ -93,6 +95,8 @@ function _btRestoreSnapshot(snap) {
     if (snap.demoVisits) _demoVisits = JSON.parse(JSON.stringify(snap.demoVisits));
     // Restore matter/antimatter winding direction
     if ('octWindingDirection' in snap) _octWindingDirection = snap.octWindingDirection;
+    // Restore Planck second counter
+    if ('planckSeconds' in snap) _planckSeconds = snap.planckSeconds;
     // Clear tick-level state
     _moveRecord.clear();
     _moveTrace.length = 0;

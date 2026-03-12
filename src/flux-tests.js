@@ -1013,6 +1013,21 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T82: Planck second counter integrity ──
+    // _planckSeconds counts only ticks with lattice deformation (SC adds/removes).
+    // Must always satisfy: 0 < _planckSeconds <= _demoTick after grace period.
+    {
+      id: 'T82', name: 'Planck second counter',
+      convergence: true,
+      check(tick, g) {
+        if (tick < 12) return null; // grace period
+        if (typeof _planckSeconds === 'undefined') return 'missing _planckSeconds variable';
+        if (_planckSeconds > _demoTick) return `_planckSeconds (${_planckSeconds}) > _demoTick (${_demoTick})`;
+        if (_planckSeconds === 0) return '_planckSeconds still 0 after 12 ticks';
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1327,6 +1342,7 @@ function runDemo3Tests() {
 
     // ── Reset demo state after tests so visual demo starts clean ──
     _demoTick = 0;
+    _planckSeconds = 0;
     _demoVisitedFaces = new Set();
     _demoTypeBalanceHistory = [];
     _demoPrevFaces = new Set();
