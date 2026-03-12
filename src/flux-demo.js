@@ -2940,6 +2940,13 @@ async function demoTick() {
             while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
                 _btSnapshots.pop();
             }
+            // Also trim tick log — entries past the anchor tick will be
+            // re-generated when the BFS replays forward with different moves.
+            while (_tickLog.length > 0 && _tickLog[_tickLog.length - 1].tick >= targetTick) {
+                _tickLog.pop();
+            }
+            // Reset guard delta baseline so replayed ticks get full guard state
+            _tickLogLastGuards = {};
             _btRetryCount = 0;
             _btRestoreSnapshot(anchorSnap);
             _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}`);

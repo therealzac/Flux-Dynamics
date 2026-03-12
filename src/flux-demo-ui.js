@@ -331,13 +331,40 @@ function resumeDemo() {
     _demoPaused = false;
     simHalted = false;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
-        // Always re-execute fresh ticks (redo stack is no longer used)
-        _redoStack.length = 0;
-        const intervalMs = _getDemoIntervalMs();
-        if (intervalMs === 0) {
-            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        if (_redoStack.length > 0) {
+            // Drain redo stack at playback speed (deterministic replay)
+            const intervalMs = Math.max(4, _getDemoIntervalMs());
+            _demoInterval = setInterval(() => {
+                if (_demoPaused || !_demoActive) {
+                    clearInterval(_demoInterval); _demoInterval = null;
+                    return;
+                }
+                if (_redoStack.length > 0) {
+                    _btSaveSnapshot(); // save current state so rewind can reach it
+                    const snap = _redoStack.pop();
+                    _btRestoreSnapshot(snap);
+                    simHalted = false;
+                    _playbackUpdateDisplay();
+                } else {
+                    // Redo exhausted — switch to live execution
+                    clearInterval(_demoInterval); _demoInterval = null;
+                    _bfsReset(); _btReset();
+                    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+                    const liveMs = _getDemoIntervalMs();
+                    if (liveMs === 0) {
+                        _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+                    } else {
+                        _demoInterval = setInterval(demoTick, liveMs);
+                    }
+                }
+            }, intervalMs);
         } else {
-            _demoInterval = setInterval(demoTick, intervalMs);
+            const intervalMs = _getDemoIntervalMs();
+            if (intervalMs === 0) {
+                _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+            } else {
+                _demoInterval = setInterval(demoTick, intervalMs);
+            }
         }
     }
 }
@@ -404,13 +431,14 @@ function stopDemo() {
 // Step back one tick by restoring the previous snapshot.
 // Snapshot {tick: N} = state before tick N ran = state after tick N-1 completed.
 // Pop it and restore → _demoTick becomes N, undoing tick N's effects.
-// When user steps forward, demoTick() re-executes the tick fresh (no redo replay).
+// Forward replay uses redo stack for deterministic replay of the same path.
 function _playbackStepBack() {
     if (_tickInProgress || _btSnapshots.length < 1) return false;
     if (_demoTick <= 0) return false;
-    // Discard redo stack — forward replay should re-execute ticks fresh,
-    // not replay the same (possibly failed) sequence from the original run.
-    _redoStack.length = 0;
+    // Save current state to redo stack (for deterministic forward replay)
+    _btSaveSnapshot();
+    const redoSnap = _btSnapshots.pop(); // the one we just saved = current state
+    _redoStack.push(redoSnap);
     // Now pop the actual previous state
     const snap = _btSnapshots.pop();
     _btRestoreSnapshot(snap);
@@ -429,10 +457,20 @@ function _playbackStepBack() {
     return true;
 }
 
-// Step forward one tick — always re-execute fresh (backtracker can find better paths).
+// Step forward one tick — instant from redo stack if available, else re-execute.
 async function _playbackStepForward() {
     if (_tickInProgress || !_demoActive) return;
     simHalted = false;
+    if (_redoStack.length > 0) {
+        // Deterministic replay from redo stack (no solver, no choreography)
+        _btSaveSnapshot(); // save current state so rewind can reach it
+        const redoSnap = _redoStack.pop();
+        _btRestoreSnapshot(redoSnap);
+        simHalted = false;
+        _playbackUpdateDisplay();
+        return;
+    }
+    // No redo available — re-execute tick (live path)
     const wasPaused = _demoPaused;
     _demoPaused = false;
     await demoTick();
@@ -455,7 +493,10 @@ function startReverse() {
             stopReverse();
             return;
         }
-        // Restore previous state (no redo stack — forward replay re-executes fresh)
+        // Save current state to redo stack before restoring
+        _btSaveSnapshot();
+        _redoStack.push(_btSnapshots.pop());
+        // Restore previous state
         const snap = _btSnapshots.pop();
         _btRestoreSnapshot(snap);
         simHalted = false;
