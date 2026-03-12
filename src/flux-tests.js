@@ -2346,7 +2346,7 @@ async function _runTournament() {
     const epochsEl = document.getElementById('tournament-generations');
     const tickEl   = document.getElementById('tournament-ticks');
     const EPOCHS   = epochsEl ? Math.max(1, parseInt(epochsEl.value) || 10) : 10;
-    const TICKS_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 500) : 500;
+    const PLANCK_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 2000) : 2000;
     const statusEl = document.getElementById('tune-status');
     const titleEl  = document.getElementById('rule-title');
 
@@ -2358,7 +2358,12 @@ async function _runTournament() {
         : _NETWORK_NAMES[Math.floor(Math.random() * _NETWORK_NAMES.length)];
     _networkGen = 0;
     _networkLeaderboard = [];
-    if (titleEl) { titleEl.textContent = _networkName; titleEl.style.textTransform = 'uppercase'; }
+    // Set title + trialLabel so it persists across simulateNucleus() calls
+    if (titleEl) {
+        titleEl.textContent = `Current Algo: ${_networkName}`;
+        titleEl.style.textTransform = 'uppercase';
+        titleEl.dataset.trialLabel = `Current Algo: ${_networkName}`;
+    }
 
     // Initialize RL models
     const rlReady = typeof initRL === 'function' && await initRL();
@@ -2400,7 +2405,7 @@ async function _runTournament() {
     // Clear metrics history for fresh run
     if (typeof _ppoMetricsHistory !== 'undefined') _ppoMetricsHistory.length = 0;
 
-    console.log(`[PPO] Starting: ${EPOCHS} epochs × ${TICKS_PER_EPOCH} ticks, rollout=${PPO_ROLLOUT_LENGTH}`);
+    console.log(`[PPO] Starting: ${EPOCHS} epochs × ${PLANCK_PER_EPOCH} Planck-seconds, rollout=${PPO_ROLLOUT_LENGTH}`);
     const tensorsBefore = tf.memory().numTensors;
 
     let bestFitness = -Infinity;
@@ -2430,6 +2435,16 @@ async function _runTournament() {
         applyCamera();
         _tournamentVisualsApplied = true;
 
+        // Re-show playback controls (stopDemo hides them; enterNucleusMode
+        // only runs on first simulateNucleus call, not on epoch 2+)
+        const pbCtrl = document.getElementById('playback-controls');
+        if (pbCtrl) pbCtrl.style.display = '';
+
+        // Restore network name (simulateNucleus overwrites rule-title)
+        if (titleEl && titleEl.dataset.trialLabel) {
+            titleEl.textContent = titleEl.dataset.trialLabel;
+        }
+
         _ppoStrategicBuffer.clear();
         _ppoTacticalBuffer.clear();
         resetTickRewardState();
@@ -2437,9 +2452,15 @@ async function _runTournament() {
         let epochRewardSum = 0;
         let epochTicks = 0;
         let guardFailures = 0;
+        // Must read AFTER startDemoLoop() which resets _planckSeconds to 0
+        const epochStartPlanck = _planckSeconds;
 
-        // Run ticks for this epoch
-        for (let tick = 0; tick < TICKS_PER_EPOCH; tick++) {
+        // Run until we accumulate PLANCK_PER_EPOCH Planck seconds (deformation events).
+        // Backtrack retries don't count — only successful deformations advance the epoch.
+        // Safety: cap raw ticks at 10x Planck target to prevent infinite loops if
+        // the simulation gets stuck producing no deformations.
+        const MAX_RAW_TICKS = PLANCK_PER_EPOCH * 10;
+        for (let tick = 0; (_planckSeconds - epochStartPlanck) < PLANCK_PER_EPOCH && tick < MAX_RAW_TICKS; tick++) {
             if (!_tournamentRunning) break;
 
             // During PPO training, guard halts are non-fatal — reset and penalize
@@ -2480,8 +2501,6 @@ async function _runTournament() {
                     _redoStack.length = 0;
                     _bfsReset(); _btReset();
                     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
-                    // Adjust epoch tick counter to match rewound position
-                    tick = Math.max(0, tick - (tickBeforePause - _demoTick));
                 }
             }
             if (!_tournamentRunning) break;
@@ -2567,8 +2586,8 @@ async function _runTournament() {
             statusEl.textContent = `${_networkName} · Gen ${_networkGen}/${EPOCHS} | fitness ${fitness.fitness.toFixed(3)} | best ${bestFitness.toFixed(3)}`;
         }
         if (titleEl) {
-            titleEl.textContent = `${_networkName} · Gen ${_networkGen}`;
-            titleEl.dataset.trialLabel = `${_networkName} · Gen ${_networkGen}`;
+            titleEl.textContent = `Current Algo: ${_networkName} · Gen ${_networkGen}`;
+            titleEl.dataset.trialLabel = `Current Algo: ${_networkName} · Gen ${_networkGen}`;
         }
     }
 
@@ -2596,7 +2615,7 @@ async function _runTournament() {
     if (tuneBtn) { tuneBtn.textContent = 'Train RL'; }
 
     if (titleEl) {
-        titleEl.textContent = _networkName || 'NUCLEUS: DEUTERON';
+        titleEl.textContent = _networkName ? `Current Algo: ${_networkName}` : 'NUCLEUS: DEUTERON';
         titleEl.title = '';
         delete titleEl.dataset.trialLabel;
     }
