@@ -50,6 +50,19 @@ const _ratioTracker = {
         return 0;
     }
 };
+// ── Temporal state for RL strategic features ──
+// Updated each tick in demoTick. Read by extractStrategicFeatures.
+const _rlTemporalState = {
+    faceLastVisitTick: {},   // face → tick when last tet loop completed on this face
+    prevFaceCV: {},          // face → CV of quark types from 64 ticks ago (for velocity)
+    globalPressure: 0,       // fraction of faces below-target on balance
+    reset() {
+        this.faceLastVisitTick = {};
+        this.prevFaceCV = {};
+        this.globalPressure = 0;
+    }
+};
+
 let _demoPauliViolations = 0;
 let _demoSpreadViolations = 0;
 let _demoTypeBalanceHistory = [];  // type balance % at each cycle boundary

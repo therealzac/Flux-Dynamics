@@ -1459,6 +1459,112 @@ function runDemo3Tests() {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-RLStrategicInference: strategic model returns finite scores
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (typeof _rlAvailable !== 'undefined' && _rlAvailable && typeof createStrategicModel === 'function') {
+        try {
+            const testModel = createStrategicModel();
+            const testFeatures = new Float32Array(RL_STRATEGIC_FEATURES);
+            for (let i = 0; i < RL_STRATEGIC_FEATURES; i++) testFeatures[i] = Math.random();
+            const score = scoreStrategicRL(testFeatures, testModel);
+            assert('T-RLStrat Strategic inference', isFinite(score), `score=${score} not finite`);
+            testModel.dispose();
+        } catch (e) {
+            fail('T-RLStrat Strategic inference', e.message);
+        }
+    } else {
+        skip('T-RLStrat Strategic inference', 'TF.js unavailable');
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-HadronicFitness: hadronic ratio fitness on known inputs
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (typeof _evaluateHadronicRatioFitness === 'function') {
+        // Uniform visits → fitness near 1.0
+        const uniformVisits = {};
+        for (let f = 1; f <= 8; f++) uniformVisits[f] = { pu1: 10, pu2: 10, pd: 10, nd1: 10, nd2: 10, nu: 10, total: 60 };
+        const uniformF = _evaluateHadronicRatioFitness(uniformVisits);
+        assert('T-HadFit Uniform → ~1.0', uniformF.fitness > 0.85, `uniform fitness=${uniformF.fitness.toFixed(3)} should be > 0.85`);
+
+        // Single-type visits → fitness near 0.0
+        const singleVisits = {};
+        for (let f = 1; f <= 8; f++) singleVisits[f] = { pu1: 60, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 60 };
+        const singleF = _evaluateHadronicRatioFitness(singleVisits);
+        assert('T-HadFit Single-type → low', singleF.fitness < 0.3, `single-type fitness=${singleF.fitness.toFixed(3)} should be < 0.3`);
+
+        // Empty visits → penalty
+        const emptyVisits = {};
+        for (let f = 1; f <= 8; f++) emptyVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 };
+        const emptyF = _evaluateHadronicRatioFitness(emptyVisits);
+        assert('T-HadFit Empty → -20', emptyF.fitness === -20, `empty fitness=${emptyF.fitness} should be -20`);
+    } else {
+        skip('T-HadFit Hadronic fitness', 'function not defined yet');
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-GenomeSplit: 2858 genome round-trips through model→genome→model
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (typeof _rlAvailable !== 'undefined' && _rlAvailable &&
+        typeof createStrategicModel === 'function' && typeof createPolicyModel === 'function') {
+        try {
+            const s1 = createStrategicModel();
+            const t1 = createPolicyModel();
+            const genome1 = modelToGenome(s1, t1);
+            assert('T-GenSplit Genome size', genome1.length === getGenomeSize(),
+                `genome.length=${genome1.length} != ${getGenomeSize()}`);
+
+            // Load into fresh models and extract again — should match
+            const s2 = createStrategicModel();
+            const t2 = createPolicyModel();
+            genomeToModel(genome1, s2, t2);
+            const genome2 = modelToGenome(s2, t2);
+            let maxDiff = 0;
+            for (let i = 0; i < genome1.length; i++) {
+                maxDiff = Math.max(maxDiff, Math.abs(genome1[i] - genome2[i]));
+            }
+            assert('T-GenSplit Round-trip fidelity', maxDiff < 1e-6,
+                `max diff=${maxDiff} (should be < 1e-6)`);
+            s1.dispose(); t1.dispose(); s2.dispose(); t2.dispose();
+        } catch (e) {
+            fail('T-GenSplit Genome round-trip', e.message);
+        }
+    } else {
+        skip('T-GenSplit Genome round-trip', 'TF.js unavailable');
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-Temporal: strategic features include 6 temporal features (f[16]-f[21])
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (typeof extractStrategicFeatures === 'function' && typeof RL_STRATEGIC_FEATURES !== 'undefined') {
+        assert('T-Temporal Feature count', RL_STRATEGIC_FEATURES === 22,
+            `RL_STRATEGIC_FEATURES=${RL_STRATEGIC_FEATURES} should be 22`);
+        // Create a mock xon with temporal state
+        const mockXon = {
+            node: 0, prevNode: 0, alive: true, _mode: 'oct',
+            _dirBalance: new Array(10).fill(5),
+            _modeStats: { oct: 50, tet: 30, idle_tet: 10, weak: 10 },
+            _octModeSince: 10,
+        };
+        const mockOccupied = new Map();
+        // Ensure temporal state exists
+        if (typeof _rlTemporalState !== 'undefined') {
+            _rlTemporalState.faceLastVisitTick[1] = 100;
+            _rlTemporalState.prevFaceCV[1] = 0.5;
+        }
+        const feats = extractStrategicFeatures(mockXon, 1, 'pu1', mockOccupied);
+        assert('T-Temporal Feature length', feats.length === 22,
+            `feature vector length=${feats.length} should be 22`);
+        // f[16]-f[21] should be finite numbers
+        let allFinite = true;
+        for (let i = 16; i < 22; i++) {
+            if (!isFinite(feats[i])) { allFinite = false; break; }
+        }
+        assert('T-Temporal All finite', allFinite, 'temporal features contain non-finite values');
+    } else {
+        skip('T-Temporal Temporal features', 'function not defined yet');
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // RESULTS
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     const passed = results.filter(r => r.ok === true).length;
@@ -1629,7 +1735,14 @@ function runDemo3Tests() {
 
     // ── "Tune T22" button ──────────────────────────────────────────────
     document.getElementById('btn-tune-t22')?.addEventListener('click', function () {
-        if (_tournamentRunning) return;
+        if (_tournamentRunning) {
+            _tournamentRunning = false;
+            this.textContent = 'train RL';
+            this.style.borderColor = '#aa8844';
+            return;
+        }
+        this.textContent = 'stop RL';
+        this.style.borderColor = '#cc4444';
         _runTournament();
     });
 })();
@@ -1799,6 +1912,44 @@ function _evaluateFitness() {
     };
 }
 
+// ── NEW: Hadronic ratio fitness — single metric for RL training ──
+// Fitness = 1 - avgCV of [pu1, pu2, pd, nd1, nd2, nu] across 8 faces.
+// Perfect balance → 1.0, complete imbalance → ~0.0, no visits → -20.
+function _evaluateHadronicRatioFitness(visits) {
+    visits = visits || _demoVisits;
+    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+    let totalVisits = 0;
+    let cvSum = 0;
+
+    for (let f = 1; f <= 8; f++) {
+        const v = visits[f] || {};
+        const counts = types.map(t => v[t] || 0);
+        const sum = counts.reduce((a, b) => a + b, 0);
+        totalVisits += sum;
+        if (sum === 0) { cvSum += 1; continue; }
+        const mean = sum / 6;
+        let variance = 0;
+        for (let i = 0; i < 6; i++) variance += (counts[i] - mean) ** 2;
+        const cv = Math.sqrt(variance / 6) / mean;
+        cvSum += cv;
+    }
+
+    const avgCV = cvSum / 8;
+
+    if (totalVisits === 0) return { fitness: -20, avgCV: 1, totalVisits: 0 };
+
+    // Guard failure penalty
+    const failedGuards = Object.entries(_liveGuards)
+        .filter(([, g]) => g.failed)
+        .map(([id]) => id);
+    const anyFail = failedGuards.length > 0 || simHalted;
+
+    let fitness = 1 - avgCV;
+    if (anyFail) fitness -= 10;
+
+    return { fitness, avgCV, totalVisits, failedGuards, clean: !anyFail && totalVisits > 0 };
+}
+
 // Hook into demoTick to detect when trial reaches target tick.
 // Called from demoTick's UI update path (at end of each tick).
 function _tournamentTickCheck() {
@@ -1857,16 +2008,17 @@ function _startVisualTrial(params, maxTicks) {
         const { _rlGenome, ...choreoOnly } = params;
         Object.assign(_choreoParams, choreoOnly);
 
-        // Load RL genome into model if available
+        // Load RL genome into both models
         if (_rlGenome && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
-            if (!_rlActiveModel && typeof createPolicyModel === 'function') {
-                _rlActiveModel = createPolicyModel();
+            if (!_rlModel && typeof createPolicyModel === 'function') _rlModel = createPolicyModel();
+            if (!_rlStrategicModel && typeof createStrategicModel === 'function') _rlStrategicModel = createStrategicModel();
+            if (_rlModel && _rlStrategicModel && typeof genomeToModel === 'function') {
+                genomeToModel(_rlGenome, _rlStrategicModel, _rlModel);
             }
-            if (_rlActiveModel && typeof genomeToModel === 'function') {
-                genomeToModel(_rlGenome, _rlActiveModel);
-            }
+            _rlActiveModel = _rlModel;
         } else {
-            _rlActiveModel = null; // fall back to heuristic scoring
+            _rlActiveModel = null;
+            _rlStrategicModel = null;
         }
 
         // Use whatever lattice level is already on the slider
@@ -1877,7 +2029,7 @@ function _startVisualTrial(params, maxTicks) {
         // Set target tick and callback
         _tournamentTargetTick = maxTicks;
         _tournamentCallback = () => {
-            const result = _evaluateFitness();
+            const result = _evaluateHadronicRatioFitness();
             resolve(result);
         };
 
@@ -1893,290 +2045,211 @@ function _startVisualTrial(params, maxTicks) {
     });
 }
 
-// GA operators
-function _tournamentCrossover(a, b) {
-    const child = {};
-    for (const key of Object.keys(_choreoParamRanges)) {
-        child[key] = Math.random() < 0.5 ? a[key] : b[key];
+// ── Fitness curve state ──
+let _rlFitnessCurve = [];  // [{gen, best, avg}]
+
+function _drawFitnessCurve() {
+    const canvas = document.getElementById('rl-fitness-canvas');
+    if (!canvas || _rlFitnessCurve.length === 0) return;
+    canvas.style.display = '';
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = 'rgba(10, 14, 20, 0.9)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Axes
+    ctx.strokeStyle = '#334455';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(30, 5); ctx.lineTo(30, H - 18); ctx.lineTo(W - 5, H - 18);
+    ctx.stroke();
+
+    const data = _rlFitnessCurve;
+    const maxGen = data.length;
+    const maxFit = Math.max(0.01, ...data.map(d => d.best));
+    const minFit = Math.min(0, ...data.map(d => Math.min(d.best, d.avg)));
+    const range = maxFit - minFit || 0.01;
+
+    const xScale = (W - 40) / Math.max(1, maxGen - 1);
+    const yScale = (H - 28) / range;
+    const toX = (i) => 30 + i * xScale;
+    const toY = (v) => H - 18 - (v - minFit) * yScale;
+
+    // Average line (grey)
+    ctx.strokeStyle = '#556677';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+        const x = toX(i), y = toY(data[i].avg);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
-    // RL genome crossover (if both parents have genomes)
-    if (a._rlGenome && b._rlGenome && typeof rlCrossoverGenome === 'function') {
-        child._rlGenome = rlCrossoverGenome(a._rlGenome, b._rlGenome);
-    } else if (a._rlGenome) {
-        child._rlGenome = new Float32Array(a._rlGenome);
-    } else if (b._rlGenome) {
-        child._rlGenome = new Float32Array(b._rlGenome);
+    ctx.stroke();
+
+    // Best line (gold)
+    ctx.strokeStyle = '#ccaa44';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = 0; i < data.length; i++) {
+        const x = toX(i), y = toY(data[i].best);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
-    return child;
+    ctx.stroke();
+
+    // Labels
+    ctx.fillStyle = '#8899aa';
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'left';
+    const last = data[data.length - 1];
+    ctx.fillText(`gen ${maxGen}  best=${last.best.toFixed(3)}  avg=${last.avg.toFixed(3)}`, 34, 12);
+
+    // Y-axis labels
+    ctx.textAlign = 'right';
+    ctx.fillText(maxFit.toFixed(2), 28, 12);
+    ctx.fillText(minFit.toFixed(2), 28, H - 20);
 }
 
-function _tournamentMutate(params) {
-    const m = { ...params };
-    const keys = Object.keys(_choreoParamRanges);
-    const nMutations = 1 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < nMutations; i++) {
-        const key = keys[Math.floor(Math.random() * keys.length)];
-        const range = _choreoParamRanges[key];
-        const [lo, hi] = range;
-        const isFloat = range[2] === 'float';
-        const noise = (Math.random() - 0.5) * (hi - lo) * 0.3;
-        let val = m[key] + noise;
-        val = Math.max(lo, Math.min(hi, val));
-        m[key] = isFloat ? val : Math.round(val);
-    }
-    // RL genome mutation
-    if (params._rlGenome && typeof rlMutateGenome === 'function') {
-        m._rlGenome = rlMutateGenome(params._rlGenome);
-    }
-    return m;
-}
-
-function _tournamentRandomCandidate() {
-    const c = {};
-    for (const [key, range] of Object.entries(_choreoParamRanges)) {
-        const [lo, hi] = range;
-        const isFloat = range[2] === 'float';
-        if (isFloat) {
-            c[key] = lo + Math.random() * (hi - lo);
-        } else {
-            c[key] = lo + Math.floor(Math.random() * (hi - lo + 1));
-        }
-    }
-    // RL genome: random initialization
-    if (typeof rlRandomGenome === 'function' && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
-        c._rlGenome = rlRandomGenome();
-    }
-    return c;
-}
-
-// Generate a descriptive name for a trial based on its parameter personality
-function _trialDescriptiveName(gen, idx, p) {
-    // Lookahead personality
-    const la = p.lookahead <= 5 ? 'impulsive' : p.lookahead <= 12 ? 'cautious' : p.lookahead <= 20 ? 'strategic' : 'prophetic';
-    // Congestion style
-    const cg = p.congestionMax <= 2 ? 'tight' : p.congestionMax <= 4 ? 'balanced' : 'loose';
-    // Ratio sensitivity
-    const rt = p.ratioDeficitWeight <= 5 ? 'passive' : p.ratioDeficitWeight <= 20 ? 'active' : 'aggressive';
-
-    return `G${gen+1}.${idx+1}  ${la} ${cg} ${rt}`;
-}
-
-// Main tournament runner — runs each trial visually on-screen (serial, not parallel)
+// Main tournament runner — pure RL genome evolution with live fitness curve
 async function _runTournament() {
     _tournamentRunning = true;
     _tournamentVisualsApplied = false;
+    _rlFitnessCurve = [];
 
-    // Read settings from UI (fall back to defaults)
     const popEl   = document.getElementById('tournament-pop-size');
     const genEl   = document.getElementById('tournament-generations');
     const tickEl  = document.getElementById('tournament-ticks');
 
-    const POP_SIZE   = popEl   ? Math.max(2, parseInt(popEl.value)   || 12) : 12;
-    const GENERATIONS= genEl   ? Math.max(1, parseInt(genEl.value)   || 10) : 10;
-    const ELITE_COUNT= Math.max(1, Math.floor(POP_SIZE / 3));
+    const POP_SIZE    = popEl  ? Math.max(2, parseInt(popEl.value)   || 8) : 8;
+    const GENERATIONS = genEl  ? Math.max(1, parseInt(genEl.value)   || 10) : 10;
+    const ELITE_COUNT = Math.max(1, Math.floor(POP_SIZE / 3));
     const statusEl = document.getElementById('tune-status');
-
-    const originalParams = { ..._choreoParams };
     const titleEl = document.getElementById('rule-title');
 
-    // Initialize RL if available
-    const rlEnabled = typeof initRL === 'function' && initRL();
-    if (rlEnabled) console.log('[TOURNAMENT] RL scoring enabled — evolving NN genomes');
+    // Initialize RL — required for this tournament
+    const rlReady = typeof initRL === 'function' && await initRL();
+    if (!rlReady) {
+        if (statusEl) { statusEl.textContent = 'TF.js required for RL training'; statusEl.style.color = '#ff6644'; }
+        _tournamentRunning = false;
+        return;
+    }
+    console.log(`[RL Train] Starting: ${GENERATIONS} gens × ${POP_SIZE} pop, genome=${getGenomeSize()} params`);
 
-    // Initial population: current config + mutations + random
-    const seed = { ..._choreoParams };
-    if (rlEnabled && typeof rlRandomGenome === 'function') seed._rlGenome = rlRandomGenome();
-    let population = [seed];
-    for (let i = 1; i < POP_SIZE; i++) {
-        if (i < POP_SIZE / 2) {
-            population.push(_tournamentMutate({ ..._choreoParams, _rlGenome: rlEnabled ? rlRandomGenome() : undefined }));
-        } else {
-            population.push(_tournamentRandomCandidate());
-        }
+    // Show fitness canvas
+    const fitnessCanvas = document.getElementById('rl-fitness-canvas');
+    if (fitnessCanvas) fitnessCanvas.style.display = '';
+
+    // Build initial population of pure genomes
+    let population = [];
+    // Try loading saved genome as seed
+    const saved = await rlLoadGenome();
+    if (saved && saved.genome.length === getGenomeSize()) {
+        population.push({ _rlGenome: saved.genome, ..._choreoParams });
+        console.log(`[RL Train] Seeded with saved genome (fitness=${saved.fitness?.toFixed(3)})`);
+    } else {
+        population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
+    }
+    for (let i = population.length; i < POP_SIZE; i++) {
+        population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
     }
 
-    let bestEver = null;
+    let bestGenome = null;
     let bestFitnessEver = -Infinity;
     let bestClean = false;
-    const genSummaries = [];  // per-generation summary for JSON dump
-    let finalGenResults = []; // full trial results from last generation
 
     for (let gen = 0; gen < GENERATIONS; gen++) {
-        if (!_tournamentRunning) break; // allow cancel
+        if (!_tournamentRunning) break;
 
         const results = [];
         for (let i = 0; i < population.length; i++) {
             if (!_tournamentRunning) break;
 
             const params = population[i];
-            const maxTicks = tickEl ? Math.max(100, parseInt(tickEl.value) || 2000) : 2000;
+            const maxTicks = tickEl ? Math.max(100, parseInt(tickEl.value) || 500) : 500;
 
             if (statusEl) {
                 const bestStr = bestFitnessEver > -Infinity ? bestFitnessEver.toFixed(3) : '...';
-                const cleanStr = bestClean ? ' clean' : '';
-                statusEl.textContent = `gen ${gen + 1}/${GENERATIONS} | ${i + 1}/${POP_SIZE} | ${maxTicks}ps | best=${bestStr}${cleanStr}`;
+                statusEl.textContent = `gen ${gen+1}/${GENERATIONS} | ${i+1}/${POP_SIZE} | best=${bestStr}`;
             }
-
-            // Update top-center title with descriptive trial name
             if (titleEl) {
-                const label = _trialDescriptiveName(gen, i, params);
-                titleEl.textContent = label;
-                titleEl.dataset.trialLabel = label;
+                titleEl.textContent = `RL gen ${gen+1}.${i+1}`;
+                titleEl.dataset.trialLabel = `RL gen ${gen+1}.${i+1}`;
             }
 
-            // Run this trial visually — demo renders on screen
-            console.log(`[TOURNAMENT] Gen ${gen+1} trial ${i+1}/${POP_SIZE} — launching...`);
             const result = await _startVisualTrial(params, maxTicks);
-            console.log(`[TOURNAMENT] Gen ${gen+1} trial ${i+1}/${POP_SIZE} — finished: fitness=${result.fitness.toFixed(3)}, ticks=${result.survivedTicks}, clean=${result.clean}`);
-            results.push({ params, ...result });
+            results.push({ genome: params._rlGenome, ...result });
 
             if (result.fitness > bestFitnessEver) {
                 bestFitnessEver = result.fitness;
-                bestEver = { ...params };
+                bestGenome = new Float32Array(params._rlGenome);
                 bestClean = result.clean;
             }
         }
 
-        // Sort by fitness descending (clean candidates naturally rank above failed ones due to tier gap)
+        // Sort by fitness
         results.sort((a, b) => b.fitness - a.fitness);
 
         const top = results[0];
-        const cleanCount = results.filter(r => r.clean).length;
         const avgFitness = results.reduce((s, r) => s + r.fitness, 0) / results.length;
-        const worstFitness = results[results.length - 1].fitness;
-        const failStr = top.failedGuards?.length ? ` FAIL[${top.failedGuards.join(',')}]@${top.survivedTicks}` : ` survived ${top.survivedTicks}`;
-        console.log(`[Tournament] Gen ${gen + 1}: best=${top.fitness.toFixed(3)} pEven=${top.pEven.toFixed(2)} nEven=${top.nEven.toFixed(2)} even=${top.evenness.toFixed(2)} hit=${(top.hitRate*100).toFixed(0)}% (${top.totalVisits}/${top.assignments}) visits=${top.totalVisits}${failStr} (${cleanCount}/${POP_SIZE} clean)`, top.params);
+        console.log(`[RL Train] Gen ${gen+1}: best=${top.fitness.toFixed(3)} avg=${avgFitness.toFixed(3)} visits=${top.totalVisits} clean=${top.clean}`);
 
-        genSummaries.push({
-            gen: gen + 1,
-            bestFitness: top.fitness,
-            avgFitness,
-            worstFitness,
-            cleanCount,
-            bestParams: { ...top.params },
-        });
-        // Keep full results from last generation for dump
-        if (gen === GENERATIONS - 1 || !_tournamentRunning) {
-            finalGenResults = results.map(r => ({
-                fitness: r.fitness, clean: r.clean, pEven: r.pEven, nEven: r.nEven,
-                evenness: r.evenness, hitRate: r.hitRate, totalVisits: r.totalVisits,
-                assignments: r.assignments, survivedTicks: r.survivedTicks,
-                failedGuards: r.failedGuards || [], params: r.params,
-            }));
+        // Update fitness curve
+        _rlFitnessCurve.push({ gen: gen + 1, best: top.fitness, avg: avgFitness });
+        _drawFitnessCurve();
+
+        // Build next generation from genomes only
+        const eliteGenomes = results.slice(0, ELITE_COUNT).map(r => r.genome);
+        population = [];
+        // Elites carry forward
+        for (const g of eliteGenomes) {
+            population.push({ _rlGenome: new Float32Array(g), ..._choreoParams });
         }
-
-        // Select elite
-        const elites = results.slice(0, ELITE_COUNT).map(r => r.params);
-
-        // Build next generation
-        population = [...elites];
-        for (let i = 0; i < ELITE_COUNT; i++) {
-            const a = elites[i % ELITE_COUNT];
-            const b = elites[(i + 1) % ELITE_COUNT];
-            population.push(_tournamentCrossover(a, b));
+        // Crossovers
+        for (let i = 0; i < ELITE_COUNT && population.length < POP_SIZE; i++) {
+            const a = eliteGenomes[i % ELITE_COUNT];
+            const b = eliteGenomes[(i + 1) % ELITE_COUNT];
+            population.push({ _rlGenome: rlCrossoverGenome(a, b), ..._choreoParams });
         }
-        for (let i = 0; i < POP_SIZE - ELITE_COUNT * 2; i++) {
-            const base = elites[Math.floor(Math.random() * ELITE_COUNT)];
-            population.push(_tournamentMutate(base));
+        // Mutations
+        while (population.length < POP_SIZE - 1) {
+            const base = eliteGenomes[Math.floor(Math.random() * ELITE_COUNT)];
+            population.push({ _rlGenome: rlMutateGenome(base), ..._choreoParams });
+        }
+        // One random genome for exploration
+        if (population.length < POP_SIZE) {
+            population.push({ _rlGenome: rlRandomGenome(), ..._choreoParams });
         }
     }
 
-    // Apply best params and restart demo with winner
-    if (bestEver) {
-        const { _rlGenome: bestGenome, ...bestChoreo } = bestEver;
-        Object.assign(_choreoParams, bestChoreo);
-        // Load best RL genome into active model for live demo
-        if (bestGenome && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
-            if (!_rlActiveModel && typeof createPolicyModel === 'function') {
-                _rlActiveModel = createPolicyModel();
-            }
-            if (_rlActiveModel && typeof genomeToModel === 'function') {
-                genomeToModel(bestGenome, _rlActiveModel);
-                console.log('[Tournament] Best RL genome loaded into active model');
-            }
-        }
-        console.log('[Tournament] Best params applied:', bestChoreo, 'fitness:', bestFitnessEver.toFixed(3));
-        localStorage.setItem('flux_choreo_params', JSON.stringify(bestChoreo));
-        localStorage.setItem('flux_choreo_fitness', bestFitnessEver.toFixed(3));
+    // Save and apply best genome
+    if (bestGenome) {
+        await rlSaveGenome(bestGenome, bestFitnessEver);
+        if (!_rlModel) _rlModel = createPolicyModel();
+        if (!_rlStrategicModel) _rlStrategicModel = createStrategicModel();
+        genomeToModel(bestGenome, _rlStrategicModel, _rlModel);
+        _rlActiveModel = _rlModel;
+        console.log(`[RL Train] Best genome saved (fitness=${bestFitnessEver.toFixed(3)}, ${bestGenome.length} params)`);
     }
 
     if (statusEl) {
-        const cleanTag = bestClean ? ' CLEAN' : ' (failed guards)';
-        statusEl.textContent = `done! fitness=${bestFitnessEver.toFixed(3)}${cleanTag}`;
+        const tag = bestClean ? ' CLEAN' : '';
+        statusEl.textContent = `done! fitness=${bestFitnessEver.toFixed(3)}${tag}`;
         statusEl.style.color = bestClean ? '#66dd66' : '#ccaa44';
     }
 
     _tournamentRunning = false;
     _tournamentVisualsApplied = false;
+    const tuneBtn = document.getElementById('btn-tune-t22');
+    if (tuneBtn) { tuneBtn.textContent = 'train RL'; tuneBtn.style.borderColor = '#aa8844'; }
 
-    // ── Dump tournament results to JSON file ──
-    try {
-        const dumpData = {
-            timestamp: new Date().toISOString(),
-            generations: GENERATIONS,
-            populationSize: POP_SIZE,
-            eliteCount: ELITE_COUNT,
-            bestFitness: bestFitnessEver,
-            bestClean,
-            bestParams: bestEver,
-            genSummaries,
-            finalGenResults,
-        };
-        const blob = new Blob([JSON.stringify(dumpData, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `tournament-results-${Date.now()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        console.log('[Tournament] Results dumped to', a.download);
-    } catch (e) {
-        console.error('[Tournament] Failed to dump results:', e);
-    }
-
-    // ── Download winning RL model (genome + architecture metadata) ──
-    if (bestEver && bestEver._rlGenome) {
-        try {
-            const modelData = {
-                timestamp: new Date().toISOString(),
-                fitness: bestFitnessEver,
-                clean: bestClean,
-                architecture: {
-                    inputSize: typeof RL_NUM_FEATURES !== 'undefined' ? RL_NUM_FEATURES : 22,
-                    hidden1: typeof RL_HIDDEN_1 !== 'undefined' ? RL_HIDDEN_1 : 32,
-                    hidden2: typeof RL_HIDDEN_2 !== 'undefined' ? RL_HIDDEN_2 : 32,
-                    outputSize: 1,
-                    activation: 'relu',
-                    genomeSize: bestEver._rlGenome.length,
-                },
-                choreoParams: (() => { const { _rlGenome, ...cp } = bestEver; return cp; })(),
-                genome: Array.from(bestEver._rlGenome),
-            };
-            const mBlob = new Blob([JSON.stringify(modelData, null, 2)], { type: 'application/json' });
-            const mUrl = URL.createObjectURL(mBlob);
-            const mA = document.createElement('a');
-            mA.href = mUrl;
-            mA.download = `flux-rl-model-${Date.now()}.json`;
-            document.body.appendChild(mA);
-            mA.click();
-            document.body.removeChild(mA);
-            URL.revokeObjectURL(mUrl);
-            console.log('[Tournament] Winning RL model downloaded:', mA.download);
-        } catch (e) {
-            console.error('[Tournament] Failed to download RL model:', e);
-        }
-    }
-
-    // Restore top-center title
     if (titleEl) {
         titleEl.textContent = 'NUCLEUS: DEUTERON';
         titleEl.title = '';
         delete titleEl.dataset.trialLabel;
     }
 
-    // Restart demo with winning params
+    // Restart demo with trained model
     if (typeof stopDemo === 'function') stopDemo();
     simHalted = false;
     if (typeof startDemoLoop === 'function') startDemoLoop();

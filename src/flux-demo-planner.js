@@ -411,20 +411,26 @@ function _scoreFaceOpportunity(xon, face, occupied) {
         if (!nearFace) return null; // unreachable this tick
     }
 
-    let score = 0;
-
-    // 1. QUARK TYPE SELECTION (hadronic ratio deficit — weighted 10×)
-    // PRNG jitter diversifies type assignment across backtracker retries
-    // (seed incorporates retry count so each attempt gets different sequence).
+    // Quark type selection (always needed for return value)
     const isProtonFace = A_SET.has(face);
     const candidates = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
-    // Pick type with highest deficit (+ PRNG jitter to break ties across retries)
     let quarkType = candidates[0];
     let bestDeficit = -Infinity;
     for (const t of candidates) {
         const d = _ratioTracker.deficit(t) + (_sRng() - 0.5) * 0.15;
         if (d > bestDeficit) { bestDeficit = d; quarkType = t; }
     }
+
+    // RL STRATEGIC SCORING: if strategic model is active, use it instead of heuristic
+    if (typeof _rlStrategicModel !== 'undefined' && _rlStrategicModel &&
+        typeof scoreStrategicRL === 'function' && typeof extractStrategicFeatures === 'function') {
+        const features = extractStrategicFeatures(xon, face, quarkType, occupied);
+        const rlScore = scoreStrategicRL(features, _rlStrategicModel);
+        return { face, quarkType, score: rlScore, onFace };
+    }
+
+    // HEURISTIC FALLBACK (original scoring)
+    let score = 0;
     score += Math.max(0, bestDeficit) * _choreoParams.ratioDeficitWeight * 10;
 
     // 2. XONIC MOVEMENT BALANCE: score by how much the loop's directions

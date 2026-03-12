@@ -1077,6 +1077,7 @@ function startDemoLoop() {
     _demoTetAssignments = 0;
     _demoPauliViolations = 0;
     _demoSpreadViolations = 0;
+    if (typeof _rlTemporalState !== 'undefined') _rlTemporalState.reset();
     _demoTypeBalanceHistory = [];
     _demoVisitedFaces = new Set();  // track which faces have been activated
     _demoOctRevealed = false;       // oct only renders once all 8 faces visited
@@ -2980,14 +2981,60 @@ async function demoTick() {
 
     } // end backtracking retry loop
 
-    // Increment per-xon mode stats
+    // Increment per-xon mode stats + track oct idle duration
     for (const x of _demoXons) {
         if (!x.alive || !x._modeStats) continue;
         const m = x._mode;
-        if (m === 'oct' || m === 'oct_formation') x._modeStats.oct++;
-        else if (m === 'tet') x._modeStats.tet++;
-        else if (m === 'idle_tet') x._modeStats.idle_tet++;
-        else if (m === 'weak') x._modeStats.weak++;
+        if (m === 'oct' || m === 'oct_formation') {
+            x._modeStats.oct++;
+            if (!x._octModeSince) x._octModeSince = _demoTick;
+        } else {
+            if (m === 'tet') x._modeStats.tet++;
+            else if (m === 'idle_tet') x._modeStats.idle_tet++;
+            else if (m === 'weak') x._modeStats.weak++;
+            x._octModeSince = 0;
+        }
+    }
+
+    // Update RL temporal state (for strategic feature extraction)
+    if (typeof _rlTemporalState !== 'undefined') {
+        // Record face visit ticks (when tet loops complete)
+        for (const x of _demoXons) {
+            if (x.alive && x._loopStep === 4 && x._tetActualized && x._assignedFace != null) {
+                _rlTemporalState.faceLastVisitTick[x._assignedFace] = _demoTick;
+            }
+        }
+        // Every 64 ticks: snapshot per-face CV for ratio velocity calculation
+        if (_demoTick % 64 === 0 && _demoVisits) {
+            for (let face = 1; face <= 8; face++) {
+                const v = _demoVisits[face] || {};
+                const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+                const counts = types.map(t => v[t] || 0);
+                const s = counts.reduce((a, b) => a + b, 0);
+                if (s > 0) {
+                    const m = s / 6;
+                    let var_ = 0;
+                    for (let i = 0; i < 6; i++) var_ += (counts[i] - m) ** 2;
+                    _rlTemporalState.prevFaceCV[face] = Math.sqrt(var_ / 6) / m;
+                }
+            }
+        }
+        // Global pressure: fraction of faces with CV > 0.5 (below target)
+        if (_demoVisits) {
+            let belowTarget = 0;
+            for (let face = 1; face <= 8; face++) {
+                const v = _demoVisits[face] || {};
+                const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+                const counts = types.map(t => v[t] || 0);
+                const s = counts.reduce((a, b) => a + b, 0);
+                if (s === 0) { belowTarget++; continue; }
+                const m = s / 6;
+                let var_ = 0;
+                for (let i = 0; i < 6; i++) var_ += (counts[i] - m) ** 2;
+                if (Math.sqrt(var_ / 6) / m > 0.5) belowTarget++;
+            }
+            _rlTemporalState.globalPressure = belowTarget / 8;
+        }
     }
 
     // Update UI — throttled to every 4th tick (panels show cumulative stats)
