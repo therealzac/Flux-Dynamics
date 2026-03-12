@@ -350,7 +350,8 @@ const LIVE_GUARD_REGISTRY = [
             const isWhite = c === 0xffffff;
             const isQuark = Object.values(QUARK_COLORS).includes(c);
             const isWeak = c === WEAK_FORCE_COLOR;
-            if (!isWhite && !isQuark && !isWeak) return `tick ${tick}: color 0x${c.toString(16)}`;
+            const isGluon = c === GLUON_COLOR;
+            if (!isWhite && !isQuark && !isWeak && !isGluon) return `tick ${tick}: color 0x${c.toString(16)}`;
           }
           if (xon.trailColHistory.length !== xon.trail.length) return `tick ${tick}: trail/color desync`;
         }

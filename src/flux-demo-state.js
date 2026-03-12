@@ -149,7 +149,7 @@ let _nucleusFaceNodes = null;    // union of _nucleusTetFaceData[1..8].allNodes 
 let _ejectionForbidden = null;   // _octNodeSet ∪ _actualizedTetNodes — DYNAMIC
 let _purelyTetNodes = null;      // _actualizedTetNodes \ _octNodeSet — DYNAMIC
 // ── Gluon mode ──
-const GLUON_COLOR = 0xff8800;   // orange — cage maintenance mode
+const GLUON_COLOR = 0x7f00ff;   // violet — cage maintenance mode (formerly weak color)
 
 // ── SC attribution ──
 const _scAttribution = new Map();
@@ -257,7 +257,7 @@ const QUARK_TOPOLOGY = {
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.
 // Used when a xon breaks confinement and enters the 'weak' mode.
-const WEAK_FORCE_COLOR = 0x7f00ff;
+const WEAK_FORCE_COLOR = 0x333344; // dark charcoal — visually suppressed but still visible
 
 const XON_TRAIL_LENGTH = 250;
 

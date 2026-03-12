@@ -48,8 +48,8 @@ function updateDemoPanel() {
         ds.innerHTML = `<span style="color:#88bbdd;">epoch ${epoch}</span>`;
     }
 
-    // ── Update left panel coverage bars (skip during test execution) ──
-    if (_testRunning) return;
+    // ── Update left panel coverage bars (skip during non-PPO test execution) ──
+    if (_testRunning && !_ppoTraining) return;
     const el = document.getElementById('dp-coverage-bars');
     if (!el) return;
 

@@ -795,9 +795,11 @@ function _tickDemoXons(dt) {
         xon.flashT = Math.max(0, xon.flashT - dt * 6.0);
         const flicker = 0.85 + Math.random() * 0.3;
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
-        const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost;
+        const isGluon = xon.col === GLUON_COLOR;
+        const gluonBoost = isGluon ? 2.0 : 1.0;
+        const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost * gluonBoost;
         xon.spark.scale.set(pulse, pulse, 1);
-        xon.sparkMat.opacity = Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost);
+        xon.sparkMat.opacity = Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
         // Decay highlight timer
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
@@ -847,6 +849,13 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
+            // Gluon segments: 2x brightness, no alpha fade (stand out from everything)
+            if (segCol === GLUON_COLOR) {
+                xon.trailCol[vi * 3] = Math.min(1, cr * 2);
+                xon.trailCol[vi * 3 + 1] = Math.min(1, cg * 2);
+                xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 2);
+                continue;
+            }
             const baseAlpha = 0.5 + 0.5 * (vi / Math.max(bodyLen, 1)) ** 0.8;
             // Flash boost: head segments get up to 40% brighter during flash
             const headProximity = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head

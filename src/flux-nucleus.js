@@ -374,8 +374,8 @@ const NucleusSimulator = (function(){
             { label: 'nd\u2082 (hook)',    color: 0xff00bf },
             { label: 'nu (ham CCW)',       color: 0xff0000 },
             { label: 'bosonic',            color: 0xffffff },
-            { label: 'gluon (cage)',       color: 0x80ff00 },
-            { label: 'weak',              color: 0x7f00ff },
+            { label: 'gluon (cage)',       color: 0x7f00ff },
+            { label: 'weak',              color: 0x333344 },
         ];
         let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;
         for(const e of entries){
