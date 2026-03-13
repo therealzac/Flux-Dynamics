@@ -275,9 +275,6 @@ function _enumerateAllMatchings(plans, blocked) {
             return;
         }
 
-        // Cap results to prevent combinatorial explosion
-        if (results.length >= 500) return;
-
         // Option A: assign plan[idx] to each available candidate
         for (const node of adj[idx]) {
             if (used.has(node)) continue;
@@ -286,7 +283,6 @@ function _enumerateAllMatchings(plans, blocked) {
             enumerate(idx + 1, matched + 1);
             current[idx] = null;
             used.delete(node);
-            if (results.length >= 500) return;
         }
 
         // Option B: skip plan[idx] (only if we can still reach maxCard without it)
@@ -360,6 +356,24 @@ function _btRecordFingerprint() {
     const fpSet = _btTriedFingerprints.get(tick);
     if (fpSet.has(fp)) return false;
     fpSet.add(fp);
+
+    // ── Live comparison during Test 2 (random) ──
+    // If we're in Test 2 and have a reference set from Test 1, check for novel fingerprints
+    if (_bfsTestActive && _bfsTestRunIdx === 1 && _bfsTestReferenceFingerprints) {
+        const refSet = _bfsTestReferenceFingerprints.get(tick);
+        if (!refSet || !refSet.has(fp)) {
+            // Novel fingerprint! Test 1 (choreographer) missed this solution
+            _bfsTestEarlyAbort = true;
+            _bfsTestNovelDetail = { tick, fingerprint: fp };
+            console.log(`%c[DFS TEST] EARLY ABORT: Random found novel fingerprint at tick ${tick}`,
+                'color:red;font-weight:bold');
+            console.log(`  Fingerprint: ${fp}`);
+            console.log(`  Reference set at tick ${tick}: ${refSet ? refSet.size : 0} entries`);
+            // Stop the demo — the poll loop in _executeBfsTestRun will detect !_demoActive
+            if (typeof stopDemo === 'function') stopDemo();
+        }
+    }
+
     return true;
 }
 

@@ -421,6 +421,10 @@ let _bfsTestResults = [null, null]; // captured results for Run A and Run B
 let _bfsTestSeeds = [0, 0];      // seeds for the two runs
 let _bfsTestMaxTick = 200;       // max ticks before forced termination
 let _bfsTestComparison = null;   // comparison result after both runs complete
+let _bfsTestRandomChoreographer = false; // true = totally random decisions (no heuristic scoring)
+let _bfsTestReferenceFingerprints = null; // Map<tick, Set<string>> from Test 1 (choreographer)
+let _bfsTestEarlyAbort = false;           // true if Test 2 found a novel fingerprint
+let _bfsTestNovelDetail = null;           // {tick, fingerprint} of the offending novel solution
 
 // Save run result to localStorage for DFS audit. Appends to a history array
 // so multiple runs can be compared. Key: 'flux_run_history'.

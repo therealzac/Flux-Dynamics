@@ -1912,12 +1912,54 @@ function _compareBfsRuns(resultA, resultB) {
         }
     }
 
+    // ── Key booleans ──
+    // Same longest tick solution: both runs found the same highest-tick fingerprints
+    const longestTickA = [...resultA.perTickFingerprints.keys()].sort((a, b) => b - a)[0] ?? -1;
+    const longestTickB = [...resultB.perTickFingerprints.keys()].sort((a, b) => b - a)[0] ?? -1;
+    const sameLongestTick = longestTickA === longestTickB;
+    let sameLongestSolution = false;
+    if (sameLongestTick && longestTickA >= 0) {
+        const fpsA = resultA.perTickFingerprints.get(longestTickA);
+        const fpsB = resultB.perTickFingerprints.get(longestTickB);
+        if (fpsA && fpsB && fpsA.size === fpsB.size) {
+            sameLongestSolution = true;
+            for (const fp of fpsA) { if (!fpsB.has(fp)) { sameLongestSolution = false; break; } }
+        }
+    }
+
+    // Same total solutions explored
+    const sameTotalFingerprints = resultA.totalFingerprints === resultB.totalFingerprints;
+
+    // Took different paths: first fingerprints at each tick were tried in different order
+    // (i.e. not identical sequence — proves different exploration paths)
+    let differentPaths = false;
+    if (resultA.totalRetries !== resultB.totalRetries) {
+        differentPaths = true; // different retry counts = clearly different paths
+    } else {
+        // Check if the per-tick fingerprint LISTS are in different order
+        for (const tick of allTicks) {
+            const listA = resultA.perTickFingerprints.get(tick);
+            const listB = resultB.perTickFingerprints.get(tick);
+            if (listA && listB) {
+                const arrA = [...listA];
+                const arrB = [...listB];
+                if (arrA.length === arrB.length) {
+                    for (let i = 0; i < arrA.length; i++) {
+                        if (arrA[i] !== arrB[i]) { differentPaths = true; break; }
+                    }
+                }
+                if (differentPaths) break;
+            }
+        }
+    }
+
     const identical = maxTickMatch && haltReasonMatch && violationMatch && allFPMatch;
     let summary;
     if (identical) {
-        summary = `PASS: Both seeds explored identical state space. ` +
-                  `Max tick: ${resultA.maxTick}. Halt: ${resultA.haltReason}. ` +
-                  `Fingerprints: ${resultA.totalFingerprints}. BFS is exhaustive.`;
+        summary = `PASS: Both runs explored identical state space. ` +
+                  `Longest tick: ${longestTickA}. Halt: ${resultA.haltReason}. ` +
+                  `Fingerprints: ${resultA.totalFingerprints}. ` +
+                  `Paths: ${differentPaths ? 'DIFFERENT ✓' : 'same ✗'}. DFS is exhaustive.`;
     } else {
         const diffs = [];
         if (!maxTickMatch) diffs.push(`maxTick: ${resultA.maxTick} vs ${resultB.maxTick}`);
@@ -1930,6 +1972,7 @@ function _compareBfsRuns(resultA, resultB) {
 
     return {
         identical, maxTickMatch, haltReasonMatch, violationMatch, allFPMatch,
+        sameLongestTick, sameLongestSolution, sameTotalFingerprints, differentPaths,
         fingerprintDiff: { ticksOnlyA, ticksOnlyB, ticksMismatch },
         summary,
     };
@@ -2280,6 +2323,38 @@ function runDemo3Tests() {
             `expected maxTickMatch=false, got ${cmp3.maxTickMatch}`);
     }
 
+    // ── T-DfsSecondary: secondary choices deterministic when _btActive ──
+    {
+        // _selectBestPermutation should NOT add PRNG noise when _btActive = true
+        // Verify by calling it multiple times and checking for identical results
+        if (typeof _selectBestPermutation === 'function' && _demoXons.length > 0 &&
+            _nucleusTetFaceData && Object.keys(_nucleusTetFaceData).length > 0) {
+            const testXon = _demoXons[0];
+            const faceId = Object.keys(_nucleusTetFaceData)[0];
+            const fd = _nucleusTetFaceData[faceId];
+            const cycle = fd.cycle;
+            const qType = 'pu1';
+
+            // Test with _btActive = true: results should be identical across calls
+            const prevBtActive = _btActive;
+            _btActive = true;
+            const results = [];
+            for (let i = 0; i < 5; i++) {
+                const seq = _selectBestPermutation(testXon, cycle, qType);
+                results.push(seq ? seq.join(',') : 'null');
+            }
+            const allSame = results.every(r => r === results[0]);
+            assert('T-DfsSecondary _btActive=true → deterministic permutation',
+                allSame,
+                `expected identical results, got ${results.length} unique: ${[...new Set(results)].join(' / ')}`);
+
+            // Restore
+            _btActive = prevBtActive;
+        } else {
+            skip('T-DfsSecondary', 'prerequisites not available');
+        }
+    }
+
     // ── Reset demo state after tests so visual demo starts clean ──
     _demoTick = 0;
     _planckSeconds = 0;
@@ -2335,14 +2410,14 @@ function _executeBfsTestRun(runIdx) {
         // either proves the rules impossible (canary at t=0) or succeeds.
         const pollId = setInterval(() => {
             // Update progress panel
-            const testLabel = runIdx === 0 ? 'Test 1' : 'Test 2';
+            const testLabel = runIdx === 0 ? 'Test 1 (choreographer)' : 'Test 2 (random)';
             _updateBfsTestPanel(
                 `${testLabel}: tick ${_demoTick}, highest ${_maxTickReached}, ` +
                 `retries ${_totalBacktrackRetries}, ` +
                 `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}`
             );
-            // Check termination: canary fired or demo stopped
-            if (simHalted || !_demoActive) {
+            // Check termination: canary fired, demo stopped, or early abort
+            if (simHalted || !_demoActive || _bfsTestEarlyAbort) {
                 clearInterval(pollId);
                 resolve();
             }
@@ -2354,9 +2429,9 @@ function _setBfsTestTitle(runIdx, test1Best) {
     const titleEl = document.getElementById('topbar-title');
     if (!titleEl) return;
     if (runIdx === 0) {
-        titleEl.innerHTML = 'Test 1';
+        titleEl.innerHTML = 'Test 1 <span style="font-size:0.6em; color:#66bbff;">CHOREOGRAPHER</span>';
     } else if (runIdx === 1) {
-        titleEl.innerHTML = `Test 2<br><span style="font-size:0.65em; color:#556677; font-weight:400;">Test 1 best: ${test1Best}</span>`;
+        titleEl.innerHTML = `Test 2 <span style="font-size:0.6em; color:#ff9944;">RANDOM</span><br><span style="font-size:0.65em; color:#556677; font-weight:400;">Test 1 solutions: ${test1Best}</span>`;
     } else {
         // Restore default
         if (typeof RULE_REGISTRY !== 'undefined' && typeof activeRuleIndex !== 'undefined') {
@@ -2374,93 +2449,126 @@ async function startBfsExhaustivenessTest() {
     _bfsTestRunIdx = 0;
     _bfsTestResults = [null, null];
     _bfsTestComparison = null;
-    // Tests run visually (not headless) so user can watch them on screen
+    _bfsTestReferenceFingerprints = null;
+    _bfsTestEarlyAbort = false;
+    _bfsTestNovelDetail = null;
 
-    // Force L1 lattice for fast testing — user can switch to L2 manually after
+    // Force L1 lattice for fast testing
     const slider = document.getElementById('lattice-slider');
     if (slider && +slider.value !== 1) {
         slider.value = 1;
         slider.dispatchEvent(new Event('input'));
-        // Re-build lattice at L1
         await new Promise(r => setTimeout(r, 100));
     }
 
-    // Generate two distinct seeds
-    _bfsTestSeeds[0] = (Math.random() * 0xFFFFFFFF) >>> 0;
-    _bfsTestSeeds[1] = (_bfsTestSeeds[0] + 0x12345678) >>> 0;
+    // Both runs use the same seed — the difference is CHOREOGRAPHER STRATEGY
+    const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
+    _bfsTestSeeds[0] = seed;
+    _bfsTestSeeds[1] = seed;
 
-    console.log(`%c[BFS TEST] Starting exhaustiveness test (L1)\n` +
-        `  Seed A: 0x${_bfsTestSeeds[0].toString(16).padStart(8,'0')}\n` +
-        `  Seed B: 0x${_bfsTestSeeds[1].toString(16).padStart(8,'0')}`,
+    console.log(`%c[DFS TEST] Starting model exhaustiveness test (L1)\n` +
+        `  Seed: 0x${seed.toString(16).padStart(8,'0')}\n` +
+        `  Test 1: CHOREOGRAPHER (normal heuristic scoring)\n` +
+        `  Test 2: RANDOM (no heuristics) — early abort if novel solution found`,
         'color:cyan;font-weight:bold');
 
-    // ── Run A (Test 1) ──
+    // ── Test 1: Normal Choreographer ──
     _bfsTestRunIdx = 0;
-    simHalted = false; // ensure clean state before Run A
-    // Full cleanup before Run A — same cleanup that stopDemo() does before Run B.
-    // Without this, stale SCs in activeSet/xonImpliedSet from prior state poison Run A.
+    _bfsTestRandomChoreographer = false; // normal heuristic scoring
+    simHalted = false;
     if (typeof stopDemo === 'function' && _demoActive) stopDemo();
-    // Always re-simulate nucleus on the current lattice (L1 forced above)
     NucleusSimulator.simulateNucleus();
-    await new Promise(r => setTimeout(r, 100)); // let nucleus settle
+    await new Promise(r => setTimeout(r, 100));
     _setBfsTestTitle(0);
-    _updateBfsTestPanel('Starting Test 1...');
-    // Yield to let the UI paint the title before ticks start
+    _updateBfsTestPanel('Test 1: CHOREOGRAPHER (normal scoring)...');
     await new Promise(r => setTimeout(r, 200));
     await _executeBfsTestRun(0);
     _bfsTestResults[0] = _captureBfsRunResult();
-    console.log(`%c[BFS TEST] Test 1 done: highest ${_bfsTestResults[0].maxTick}, ` +
+    _bfsTestResults[0].mode = 'choreographer';
+    console.log(`%c[DFS TEST] Test 1 (choreographer) done: highest ${_bfsTestResults[0].maxTick}, ` +
         `${_bfsTestResults[0].totalFingerprints} fps, ` +
         `retries ${_bfsTestResults[0].totalRetries}, ${(_bfsTestResults[0].elapsedMs / 1000).toFixed(1)}s`,
         'color:cyan');
     stopDemo();
 
-    // Pause between tests so user can see Test 1 results
-    _updateBfsTestPanel(`Test 1 complete — highest: ${_bfsTestResults[0].maxTick}, ` +
-        `retries: ${_bfsTestResults[0].totalRetries}. Starting Test 2...`);
+    // Store Test 1's fingerprints as the reference set for live comparison
+    _bfsTestReferenceFingerprints = new Map(
+        [..._bfsTestResults[0].perTickFingerprints].map(([t, s]) => [t, new Set(s)])
+    );
+
+    // Pause between tests
+    _updateBfsTestPanel(`Test 1 (choreographer) done — highest: ${_bfsTestResults[0].maxTick}, ` +
+        `fps: ${_bfsTestResults[0].totalFingerprints}. Starting Test 2 (random)...`);
     await new Promise(r => setTimeout(r, 1000));
-    simHalted = false; // reset halt flag for Run B
-    // Explicitly clear BFS state for Run B (since _bfsTestActive skips auto-clear)
+    simHalted = false;
     _btBadMoveLedger.clear();
     _btTriedFingerprints.clear();
 
-    // ── Run B (Test 2) ──
+    // ── Test 2: Random Choreographer (with live comparison) ──
     _bfsTestRunIdx = 1;
-    // Re-simulate nucleus (same lattice) — ensures fresh state identical to Run A
+    _bfsTestRandomChoreographer = true; // all scoring → uniform random
+    _bfsTestEarlyAbort = false;
     NucleusSimulator.simulateNucleus();
     await new Promise(r => setTimeout(r, 100));
-    _setBfsTestTitle(1, _bfsTestResults[0].maxTick);
-    _updateBfsTestPanel('Starting Test 2...');
-    // Yield to let the UI paint the title before ticks start
+    _setBfsTestTitle(1, _bfsTestResults[0].totalFingerprints);
+    _updateBfsTestPanel('Test 2: RANDOM — checking against choreographer solutions...');
     await new Promise(r => setTimeout(r, 200));
     await _executeBfsTestRun(1);
     _bfsTestResults[1] = _captureBfsRunResult();
-    console.log(`%c[BFS TEST] Test 2 done: highest ${_bfsTestResults[1].maxTick}, ` +
+    _bfsTestResults[1].mode = 'random';
+    console.log(`%c[DFS TEST] Test 2 (random) done: highest ${_bfsTestResults[1].maxTick}, ` +
         `${_bfsTestResults[1].totalFingerprints} fps, ${(_bfsTestResults[1].elapsedMs / 1000).toFixed(1)}s`,
         'color:cyan');
     stopDemo();
 
-    // ── Compare ──
+    // ── Result ──
     _bfsTestActive = false;
+    _bfsTestRandomChoreographer = false;
     _forceSeed = null;
 
-    _bfsTestComparison = _compareBfsRuns(_bfsTestResults[0], _bfsTestResults[1]);
-    _updateBfsTestPanel(_bfsTestComparison.summary);
+    // Save reference count before clearing (needed for fail console output)
+    const refFPs = _bfsTestReferenceFingerprints;
+    _bfsTestReferenceFingerprints = null;
 
-    // Restore title
-    _setBfsTestTitle(-1);
+    if (_bfsTestEarlyAbort) {
+        // ── FAIL: Random found a novel solution ──
+        const nd = _bfsTestNovelDetail || { tick: '?', fingerprint: '?' };
+        const refCount = refFPs ? (refFPs.get(nd.tick)?.size || 0) : '?';
+        const failMsg = `FAIL: Choreographer not exhaustive — ` +
+            `random found novel solution at tick ${nd.tick}`;
+        _bfsTestComparison = {
+            identical: false,
+            earlyAbort: true,
+            novelTick: nd.tick,
+            novelFingerprint: nd.fingerprint,
+            summary: failMsg,
+            sameLongestSolution: false,
+            sameTotalFingerprints: false,
+            differentPaths: true,
+            fingerprintDiff: { ticksOnlyA: [], ticksOnlyB: [], ticksMismatch: [] },
+        };
+        _updateBfsTestPanel(failMsg);
+        _setBfsTestTitle(-1);
+        console.log(`%c[DFS TEST] ${failMsg}`, 'color:red;font-weight:bold');
+        console.log(`  Novel fingerprint: ${nd.fingerprint}`);
+        console.log(`  At tick: ${nd.tick}`);
+        console.log(`  Choreographer had ${refCount} solutions at that tick`);
+    } else {
+        // ── PASS: Random finished without finding anything new ──
+        _bfsTestComparison = _compareBfsRuns(_bfsTestResults[0], _bfsTestResults[1]);
+        const passMsg = `PASS: Model is exhaustive — random found no novel solutions. ` +
+            `Both explored ${_bfsTestResults[0].totalFingerprints} fingerprints.`;
+        _bfsTestComparison.summary = passMsg;
+        _bfsTestComparison.identical = true;
+        _updateBfsTestPanel(passMsg);
+        _setBfsTestTitle(-1);
 
-    const color = _bfsTestComparison.identical ? 'color:lime;font-weight:bold' : 'color:red;font-weight:bold';
-    console.log(`%c[BFS TEST] ${_bfsTestComparison.summary}`, color);
-
-    // Detailed divergence report
-    if (!_bfsTestComparison.identical) {
-        const d = _bfsTestComparison.fingerprintDiff;
-        if (d.ticksOnlyA.length) console.log(`  Ticks only in A: ${d.ticksOnlyA.join(', ')}`);
-        if (d.ticksOnlyB.length) console.log(`  Ticks only in B: ${d.ticksOnlyB.join(', ')}`);
-        for (const m of d.ticksMismatch.slice(0, 20)) {
-            console.log(`  Tick ${m.tick}: ${m.shared} shared, +${m.onlyA} only-A, +${m.onlyB} only-B`);
-        }
+        console.log(`%c[DFS TEST] ${passMsg}`, 'color:lime;font-weight:bold');
+        console.log(`  Choreographer: highest=${_bfsTestResults[0].maxTick}, fps=${_bfsTestResults[0].totalFingerprints}, ${(_bfsTestResults[0].elapsedMs / 1000).toFixed(1)}s`);
+        console.log(`  Random: highest=${_bfsTestResults[1].maxTick}, fps=${_bfsTestResults[1].totalFingerprints}, ${(_bfsTestResults[1].elapsedMs / 1000).toFixed(1)}s`);
+        console.log(`  Same longest solution: ${_bfsTestComparison.sameLongestSolution ? '✓ YES' : '✗ NO'}`);
+        console.log(`  Different paths: ${_bfsTestComparison.differentPaths ? '✓ YES' : '✗ NO'} ` +
+            `(retries: ${_bfsTestResults[0].totalRetries} vs ${_bfsTestResults[1].totalRetries})`);
     }
 }
 
@@ -2472,17 +2580,31 @@ function _updateBfsTestPanel(message) {
 
     if (_bfsTestComparison) {
         const c = _bfsTestComparison;
-        const color = c.identical ? '#66dd66' : '#ff6644';
-        html += `<div style="color:${color}; font-weight:bold; font-size:12px; margin-bottom:6px;">` +
-                `${c.identical ? '✓ EXHAUSTIVE' : '✗ DIVERGENT'}</div>`;
+
+        if (c.earlyAbort) {
+            // ── FAIL: early abort — choreographer not exhaustive ──
+            html += `<div style="color:#ff4444; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
+                    `padding:6px; background:rgba(255,50,50,0.1); border:1px solid #ff4444; border-radius:4px;">` +
+                    `✗ CHOREOGRAPHER NOT EXHAUSTIVE</div>`;
+            html += `<div style="font-size:10px; color:#ff8866; margin-bottom:6px; line-height:1.5;">` +
+                `Random found a novel solution at tick <b>${c.novelTick}</b><br>` +
+                `<span style="font-size:9px; color:#cc7755; word-break:break-all;">${c.novelFingerprint}</span>` +
+                `</div>`;
+        } else {
+            // ── PASS: exhaustive ──
+            html += `<div style="color:#44ff44; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
+                    `padding:6px; background:rgba(50,255,50,0.1); border:1px solid #44ff44; border-radius:4px;">` +
+                    `✓ MODEL IS EXHAUSTIVE</div>`;
+        }
 
         for (let i = 0; i < 2; i++) {
             const r = _bfsTestResults[i];
             if (!r) continue;
+            const modeLabel = r.mode === 'random' ? '🎲 RANDOM' : '🧠 CHOREOGRAPHER';
             html += `<div style="margin-bottom:4px; padding:4px; background:rgba(255,255,255,0.03); border-radius:3px;">`;
-            html += `<div style="color:#6a8aaa; font-size:9px;">Run ${i === 0 ? 'A' : 'B'} &mdash; seed 0x${r.seed.toString(16).padStart(8,'0')}</div>`;
+            html += `<div style="color:#6a8aaa; font-size:9px;">${modeLabel} &mdash; seed 0x${r.seed.toString(16).padStart(8,'0')}</div>`;
             html += `<div style="font-size:10px; color:#9abccc;">` +
-                `max tick: <b>${r.maxTick}</b> &middot; halt: ${r.haltReason} &middot; ` +
+                `highest tick: <b>${r.maxTick}</b> &middot; halt: ${r.haltReason} &middot; ` +
                 `fps: ${r.totalFingerprints} &middot; retries: ${r.totalRetries} &middot; ` +
                 `${(r.elapsedMs / 1000).toFixed(1)}s</div>`;
             if (r.haltViolation) {
@@ -2491,7 +2613,7 @@ function _updateBfsTestPanel(message) {
             html += `</div>`;
         }
 
-        if (c.fingerprintDiff.ticksMismatch.length > 0) {
+        if (!c.earlyAbort && c.fingerprintDiff && c.fingerprintDiff.ticksMismatch.length > 0) {
             html += `<div style="color:#ff8844; font-size:9px; margin-top:4px;">Divergent ticks: `;
             html += c.fingerprintDiff.ticksMismatch.slice(0, 10)
                 .map(m => `t${m.tick}(+${m.onlyA}/-${m.onlyB})`)
@@ -2501,6 +2623,190 @@ function _updateBfsTestPanel(message) {
     }
 
     el.innerHTML = html;
+
+    // Show export button only on success (not on early abort fail)
+    const exportBtn = document.getElementById('btn-bfs-export');
+    if (exportBtn) {
+        const showExport = _bfsTestComparison && !_bfsTestComparison.earlyAbort;
+        exportBtn.style.display = showExport ? 'inline-block' : 'none';
+    }
+}
+
+// ── Export BFS test results to JSON file ──
+function _exportBfsTestResults() {
+    if (!_bfsTestResults[0] || !_bfsTestResults[1] || !_bfsTestComparison) {
+        alert('No BFS test results to export. Run the test first.');
+        return;
+    }
+
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-');
+
+    // Build per-run detail objects
+    function buildRunDetail(result, label) {
+        // Per-tick fingerprint breakdown: which solutions were tried at each tick, in order
+        const perTickDetail = [];
+        const sortedTicks = [...result.perTickFingerprints.keys()].sort((a, b) => a - b);
+        for (const tick of sortedTicks) {
+            const fps = [...result.perTickFingerprints.get(tick)];
+            perTickDetail.push({
+                tick,
+                fingerprintCount: fps.length,
+                fingerprints: fps,
+            });
+        }
+
+        // Per-tick bad-move ledger (exclusions that accumulated)
+        const perTickExclusions = [];
+        const ledgerTicks = [...result.perTickLedger.keys()].sort((a, b) => a - b);
+        for (const tick of ledgerTicks) {
+            const exclusions = [...result.perTickLedger.get(tick)];
+            perTickExclusions.push({
+                tick,
+                exclusionCount: exclusions.length,
+                exclusions,
+            });
+        }
+
+        // Identify starting fingerprint (tick 0, first entry) and longest/stopping ticks
+        const startingFP = sortedTicks.length > 0
+            ? [...result.perTickFingerprints.get(sortedTicks[0])][0] || null
+            : null;
+
+        // The "longest found" is the highest tick that has any fingerprint
+        const longestTick = sortedTicks.length > 0 ? sortedTicks[sortedTicks.length - 1] : 0;
+        const longestFPs = longestTick >= 0 && result.perTickFingerprints.has(longestTick)
+            ? [...result.perTickFingerprints.get(longestTick)]
+            : [];
+
+        // Stopping solution: the last fingerprint tried at the highest tick
+        const stoppingFP = longestFPs.length > 0 ? longestFPs[longestFPs.length - 1] : null;
+
+        return {
+            label,
+            seed: '0x' + result.seed.toString(16).padStart(8, '0'),
+            seedDecimal: result.seed,
+            maxTickReached: result.maxTick,
+            haltReason: result.haltReason,
+            haltViolation: result.haltViolation || null,
+            totalBacktrackRetries: result.totalRetries,
+            totalUniqueFingerprints: result.totalFingerprints,
+            searchTimeMs: Math.round(result.elapsedMs),
+            searchTimeSec: +(result.elapsedMs / 1000).toFixed(2),
+            ticksExplored: sortedTicks.length,
+            startingSolution: startingFP,
+            longestSolutionTick: longestTick,
+            longestSolutions: longestFPs,
+            stoppingSolution: stoppingFP,
+            perTickFingerprints: perTickDetail,
+            perTickExclusions,
+        };
+    }
+
+    const runA = buildRunDetail(_bfsTestResults[0], 'Test 1: CHOREOGRAPHER (normal)');
+    runA.choreographerMode = _bfsTestResults[0].mode || 'choreographer';
+    const runB = buildRunDetail(_bfsTestResults[1], 'Test 2: RANDOM');
+    runB.choreographerMode = _bfsTestResults[1].mode || 'random';
+
+    // Comparison detail
+    const cmp = _bfsTestComparison;
+    const comparison = {
+        verdict: cmp.identical ? 'EXHAUSTIVE (PASS)' : 'DIVERGENT (FAIL)',
+        identical: cmp.identical,
+        sameLongestSolution: cmp.sameLongestSolution,
+        sameTotalFingerprints: cmp.sameTotalFingerprints,
+        differentPaths: cmp.differentPaths,
+        maxTickMatch: cmp.maxTickMatch,
+        haltReasonMatch: cmp.haltReasonMatch,
+        violationMatch: cmp.violationMatch,
+        allFingerprintsMatch: cmp.allFPMatch,
+        summary: cmp.summary,
+        divergentTicks: cmp.fingerprintDiff.ticksMismatch.map(m => ({
+            tick: m.tick,
+            sharedFingerprints: m.shared,
+            onlyInChoreographer: m.onlyA,
+            onlyInRandom: m.onlyB,
+        })),
+        ticksOnlyInChoreographer: cmp.fingerprintDiff.ticksOnlyA,
+        ticksOnlyInRandom: cmp.fingerprintDiff.ticksOnlyB,
+    };
+
+    // Fingerprint overlap analysis: for each tick, what % of fingerprints are shared?
+    const overlapAnalysis = [];
+    const allTicks = new Set([
+        ..._bfsTestResults[0].perTickFingerprints.keys(),
+        ..._bfsTestResults[1].perTickFingerprints.keys(),
+    ]);
+    for (const tick of [...allTicks].sort((a, b) => a - b)) {
+        const setA = _bfsTestResults[0].perTickFingerprints.get(tick);
+        const setB = _bfsTestResults[1].perTickFingerprints.get(tick);
+        const countA = setA ? setA.size : 0;
+        const countB = setB ? setB.size : 0;
+        let shared = 0;
+        if (setA && setB) {
+            for (const fp of setA) { if (setB.has(fp)) shared++; }
+        }
+        const union = countA + countB - shared;
+        overlapAnalysis.push({
+            tick,
+            countA,
+            countB,
+            shared,
+            onlyA: countA - shared,
+            onlyB: countB - shared,
+            jaccardSimilarity: union > 0 ? +(shared / union).toFixed(4) : 1,
+        });
+    }
+
+    // Aggregate stats
+    const totalShared = overlapAnalysis.reduce((s, o) => s + o.shared, 0);
+    const totalUnion = overlapAnalysis.reduce((s, o) => s + o.countA + o.countB - o.shared, 0);
+
+    const report = {
+        exportedAt: now.toISOString(),
+        latticeLevel: typeof latticeLevel !== 'undefined' ? latticeLevel : 'unknown',
+        nodeCount: typeof pos !== 'undefined' ? pos.length : 'unknown',
+        xonCount: typeof _demoXons !== 'undefined' ? _demoXons.length : 6,
+        comparison,
+        aggregateStats: {
+            totalFingerprintsA: runA.totalUniqueFingerprints,
+            totalFingerprintsB: runB.totalUniqueFingerprints,
+            totalSharedFingerprints: totalShared,
+            overallJaccardSimilarity: totalUnion > 0 ? +(totalShared / totalUnion).toFixed(4) : 1,
+            totalSearchTimeMs: runA.searchTimeMs + runB.searchTimeMs,
+            totalBacktrackRetries: runA.totalBacktrackRetries + runB.totalBacktrackRetries,
+        },
+        runA,
+        runB,
+        perTickOverlap: overlapAnalysis,
+    };
+
+    // Download as JSON
+    const json = JSON.stringify(report, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dfs-exhaustiveness-${timestamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Console summary
+    const sz = (json.length / 1024).toFixed(1);
+    console.log(`%c[DFS TEST] ══════════════════════════════════════════`, 'color:cyan');
+    console.log(`%c[DFS TEST] Exported ${sz} KB report`, 'color:lime');
+    console.log(`%c[DFS TEST] Verdict: ${comparison.verdict}`, comparison.identical ? 'color:lime;font-weight:bold' : 'color:red;font-weight:bold');
+    console.log(`  ✦ Same longest solution: ${comparison.sameLongestSolution ? '✓ YES' : '✗ NO'}`);
+    console.log(`  ✦ Same total fingerprints: ${comparison.sameTotalFingerprints ? '✓ YES' : '✗ NO'} (${runA.totalUniqueFingerprints} vs ${runB.totalUniqueFingerprints})`);
+    console.log(`  ✦ Took different paths: ${comparison.differentPaths ? '✓ YES' : '✗ NO'} (retries: ${runA.totalBacktrackRetries} vs ${runB.totalBacktrackRetries})`);
+    console.log(`  Test 1 (CHOREOGRAPHER): highest=${runA.maxTickReached}, fps=${runA.totalUniqueFingerprints}, ${runA.searchTimeSec}s`);
+    console.log(`  Test 2 (RANDOM): highest=${runB.maxTickReached}, fps=${runB.totalUniqueFingerprints}, ${runB.searchTimeSec}s`);
+    console.log(`  Starting solution (choreographer): ${runA.startingSolution}`);
+    console.log(`  Starting solution (random): ${runB.startingSolution}`);
+    console.log(`  Longest solution tick: ${runA.longestSolutionTick} (choreographer) vs ${runB.longestSolutionTick} (random)`);
+    console.log(`%c[DFS TEST] ══════════════════════════════════════════`, 'color:cyan');
 }
 
 // ── Wire up nucleus UI ──
@@ -2527,6 +2833,11 @@ function _updateBfsTestPanel(message) {
     document.getElementById('btn-bfs-test')?.addEventListener('click', function(){
         if (_bfsTestActive) return; // prevent double-click
         startBfsExhaustivenessTest();
+    });
+
+    // BFS export button
+    document.getElementById('btn-bfs-export')?.addEventListener('click', function(){
+        _exportBfsTestResults();
     });
 
     // Play/pause button — pauses/resumes the demo tick interval

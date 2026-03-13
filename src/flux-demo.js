@@ -1949,7 +1949,9 @@ async function demoTick() {
         }
         // Shuffle first for random tiebreaking, then stable-sort by priority.
         // This avoids a non-transitive comparator (_sRng() - 0.5 violates contract).
-        _sRngShuffle(bestSteps);
+        // During backtracking, use canonical order for reproducible fingerprints.
+        if (!_btActive) _sRngShuffle(bestSteps);
+        else bestSteps.sort((a, b) => a - b);
         bestSteps.sort((a, b) => {
             const aInTrail = recentTrail.has(a) ? 1 : 0;
             const bInTrail = recentTrail.has(b) ? 1 : 0;
@@ -2006,7 +2008,9 @@ async function demoTick() {
             // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
             // — weak xons have freedom to roam the full lattice.
             // Shuffle to prevent lattice-order bias in fallback selection.
-            const allNbs = _sRngShuffle((baseNeighbors[xon.node] || []).slice());
+            const allNbs = _btActive
+                ? (baseNeighbors[xon.node] || []).slice().sort((a, b) => a.node - b.node)
+                : _sRngShuffle((baseNeighbors[xon.node] || []).slice());
             const hadronFilter = nb => !_isHadronOccupied(nb.node);
             // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
@@ -2263,9 +2267,14 @@ async function demoTick() {
             }
 
             // Shuffle proposals — no xon gets priority by index order
-            for (let i = proposals.length - 1; i > 0; i--) {
-                const j = Math.floor(_sRng() * (i + 1));
-                [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+            // During backtracking, sort by face ID for deterministic fingerprints
+            if (_btActive) {
+                proposals.sort((a, b) => a.face - b.face);
+            } else {
+                for (let i = proposals.length - 1; i > 0; i--) {
+                    const j = Math.floor(_sRng() * (i + 1));
+                    [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+                }
             }
 
             // Resolve conflicts: one xon per face, first-after-shuffle wins
@@ -2322,10 +2331,14 @@ async function demoTick() {
         let excess = allOnOct - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Priority 1: oct-mode xons (easiest to redirect)
-            const octCandidates = _sRngShuffle(_demoXons.filter(x =>
-                x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
-                _octNodeSet.has(x.node)
-            ));
+            const octCandidates = _btActive
+                ? _demoXons.filter(x =>
+                    x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
+                    _octNodeSet.has(x.node))
+                : _sRngShuffle(_demoXons.filter(x =>
+                    x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
+                    _octNodeSet.has(x.node)
+                ));
             for (const xon of octCandidates) {
                 if (excess <= 0) break;
                 if (_startIdleTetLoop(xon, occupied)) {
@@ -2340,10 +2353,14 @@ async function demoTick() {
             }
             // Priority 2: idle_tet xons on oct nodes (interrupt loop, mark for ejection)
             if (excess > 0) {
-                const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
+                const idleCandidates = _btActive
+                    ? _demoXons.filter(x =>
+                        x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
+                        _octNodeSet.has(x.node))
+                    : _sRngShuffle(_demoXons.filter(x =>
+                        x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
+                        _octNodeSet.has(x.node)
+                    ));
                 for (const xon of idleCandidates) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -2358,10 +2375,14 @@ async function demoTick() {
             }
             // Priority 3: weak xons on oct nodes (force off-oct movement)
             if (excess > 0) {
-                const weakOnOct = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'weak' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
+                const weakOnOct = _btActive
+                    ? _demoXons.filter(x =>
+                        x.alive && x._mode === 'weak' && !x._movedThisTick &&
+                        _octNodeSet.has(x.node))
+                    : _sRngShuffle(_demoXons.filter(x =>
+                        x.alive && x._mode === 'weak' && !x._movedThisTick &&
+                        _octNodeSet.has(x.node)
+                    ));
                 for (const xon of weakOnOct) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -3337,7 +3358,7 @@ function _xonStep(e, freeOpts, costlyOpts, tetSCsOpen, faceData, ctx) {
         }
     }
     if (!chosen && freeOpts.length > 0) {
-        chosen = freeOpts[Math.floor(_sRng() * freeOpts.length)];
+        chosen = _btActive ? freeOpts[0] : freeOpts[Math.floor(_sRng() * freeOpts.length)];
     }
     if (!chosen && costlyOpts.length > 0) {
         for (const opt of costlyOpts) {
@@ -3437,7 +3458,8 @@ QUARK_ALGO_REGISTRY.push({
 
         // Hop probability ∝ gradient (leave hot spots, stay in cold spots)
         const prob = Math.min(0.8, Math.max(0.05, 0.1 + gradient * 0.6));
-        if (_sRng() >= prob) return null;
+        if (!_btActive && _sRng() >= prob) return null;
+        // During backtracking, always fire (deterministic)
 
         const unoccupied = groupFaces.filter(f => !occupiedFaces.has(f));
         if (unoccupied.length === 0) return null;
@@ -3448,6 +3470,9 @@ QUARK_ALGO_REGISTRY.push({
             cov: actMap[f]?.totalCov || 0
         }));
         candidates.sort((a, b) => a.cov - b.cov);
+
+        // During backtracking, deterministic: always pick coldest
+        if (_btActive) return { targetFace: candidates[0].face };
 
         // Boltzmann: P(f) ∝ exp(-cov/T), T = temperature parameter
         const T = Math.max(1, avgCov * 0.3);
@@ -3616,7 +3641,8 @@ QUARK_ALGO_REGISTRY.push({
             if (cov < minCov) { minCov = cov; bestFace = f; }
         }
 
-        if (_sRng() >= 0.35) return null;
+        if (!_btActive && _sRng() >= 0.35) return null;
+        // During backtracking, always fire (deterministic)
         return { targetFace: bestFace };
     }
 });

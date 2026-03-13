@@ -42,6 +42,12 @@ If a change causes the Planck-second counter to run ~25x faster than normal, **y
 ### NEVER gut the framework to bypass tests
 **We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
 
+### NEVER sacrifice accuracy or completeness
+**This is an actual particle physics simulation. No performance heuristics, no artificial tick limits, no corner-cutting of any kind.** Every possibility must be checked. Every value must be calculated to full precision. Never introduce caps, early exits, sampling, or approximations that reduce the completeness of the search or the accuracy of the physics. If the search takes longer, it takes longer. Correctness is non-negotiable.
+
+### Unit tests are sacred
+**Unit tests may NEVER be altered without the explicit written permission of Zac.** Tests define the physics we are trying to satisfy. If a test fails, the fix is in the choreography/movement logic — never in the test itself. Modifying a test to make it pass is the same as lying about whether the physics works.
+
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
 

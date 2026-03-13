@@ -330,6 +330,7 @@
             <div id="bfs-test-results" style="font-size:10px; line-height:1.5; color:#6a8aaa;">
                 Press Test to run two BFS searches with different seeds.
             </div>
+            <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
     </div>
     <style>
@@ -424,7 +425,7 @@
             <!-- Action buttons -->
             <div style="display:flex; gap:6px; margin-top:4px;">
                 <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
-                <button id="btn-bfs-test" style="flex:0 0 auto; padding:7px 14px; font-size:12px; font-weight:600; background:rgba(100,180,255,0.12); border:1px solid rgba(100,180,255,0.25); color:#7ab8d0; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Test</button>
+                <button id="btn-bfs-test" style="flex:0 0 auto; padding:7px 14px; font-size:11px; font-weight:600; background:rgba(100,180,255,0.12); border:1px solid rgba(100,180,255,0.25); color:#7ab8d0; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Test model exhaustiveness</button>
                 <button class="btn-secondary" id="btn-nucleus-pause"
                     style="flex:0 0 auto; padding:7px 12px; display:none;"
                     title="Pause/resume simulation">⏸</button>
@@ -516,12 +517,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=40"></script>
+    <script src="src/flux-demo-state.js?v=42"></script>
     <script src="src/flux-demo-xon.js?v=6"></script>
-    <script src="src/flux-demo-backtrack.js?v=12"></script>
-    <script src="src/flux-demo-planner.js?v=18"></script>
+    <script src="src/flux-demo-backtrack.js?v=14"></script>
+    <script src="src/flux-demo-planner.js?v=20"></script>
     <script src="src/flux-demo-ui.js?v=47"></script>
-    <script src="src/flux-demo.js?v=372"></script>
+    <script src="src/flux-demo.js?v=373"></script>
     <script src="src/flux-solver-render.js?v=38"></script>
     <script src="src/flux-tournament.js?v=1"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -529,7 +530,7 @@
     <script src="src/flux-electrons.js?v=15"></script>
     <script src="src/flux-voids.js?v=30"></script>
     <script src="src/flux-nucleus.js?v=40"></script>
-    <script src="src/flux-tests.js?v=233"></script>
+    <script src="src/flux-tests.js?v=237"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
