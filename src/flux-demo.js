@@ -1594,8 +1594,19 @@ async function demoTick() {
     // No artificial cap — L2 lattice is inherently finite.
     // Only true failure: BFS reaches t=0 (canary for impossible rules).
     for (let _btAttempt = 0; ; _btAttempt++) {
-    // Yield to event loop every 32 retries to prevent browser freeze
-    if (_btAttempt > 0 && _btAttempt % 32 === 0) await new Promise(r => setTimeout(r, 0));
+    // Yield to event loop every 8 retries so the browser can paint & stay responsive
+    if (_btAttempt > 0 && _btAttempt % 8 === 0) {
+        // Update left panel during long backtrack grinds so user sees progress
+        if (_demoPanelDirty) {
+            _demoPanelDirty = false;
+            updateDemoPanel();
+            _updateEdgeBalancePanel();
+            _updateEjectionBalancePanel();
+            updateStatus();
+            updateXonPanel();
+        }
+        await new Promise(r => setTimeout(r, 0));
+    }
 
     // Seed PRNG from tick number + retry context. The retry count and BFS layer
     // ensure each backtracker attempt gets a different PRNG sequence, so type
