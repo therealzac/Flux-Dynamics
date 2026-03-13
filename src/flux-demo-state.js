@@ -29,7 +29,8 @@ let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completio
 // Tracks how evenly all 6 quark types traverse each edge connected to the oct.
 // "White" = perfectly balanced (all 6 types equal). Tinted = imbalanced.
 // _octEdgeSet: Set of pairId strings for all edges with ≥1 oct endpoint
-// _edgeBalance: Map<pairId, {pu1,pu2,pd,nd1,nd2,nu,total}>
+// _edgeBalance: Map<pairId, {pu1,pu2,pd,nd1,nd2,nu,total,fwd,rev}>
+// fwd = traversals from min-node → max-node, rev = max → min
 let _octEdgeSet = null;
 let _edgeBalance = null;
 
@@ -50,7 +51,7 @@ function _initEdgeBalance() {
         const pid = pairId(a, b);
         if (!_octEdgeSet.has(pid)) {
             _octEdgeSet.add(pid);
-            _edgeBalance.set(pid, { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 });
+            _edgeBalance.set(pid, { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0, fwd: 0, rev: 0 });
         }
     };
 
@@ -86,28 +87,37 @@ function _recordEdgeTraversal(fromNode, toNode, quarkType) {
         entry[quarkType]++;
         entry.total++;
     }
+    // Track directionality: fwd = min→max, rev = max→min
+    if (fromNode < toNode) entry.fwd++;
+    else entry.rev++;
 }
 
 // Compute scalar edge-evenness score [0,1] — 1.0 = all 6 quark types visit each edge equally
+// in both directions. Blends quark-type evenness (70%) with directional evenness (30%).
 function _computeEdgeEvenness() {
     if (!_edgeBalance || _edgeBalance.size === 0) return 0;
     const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
-    let totalScore = 0;
+    let totalTypeScore = 0, totalDirScore = 0;
     let edgesWithData = 0;
     for (const [pid, counts] of _edgeBalance) {
         if (counts.total === 0) continue;
         edgesWithData++;
-        // Perfect balance = each type is 1/6 of total
+        // Quark-type evenness: perfect = each type is 1/6 of total
         const ideal = counts.total / 6;
         let deviation = 0;
         for (const t of types) deviation += Math.abs(counts[t] - ideal);
-        // Normalize: max deviation is when all traversals are one type = 5/6 * total * 2
-        // But simpler: deviation / (2 * total * (1 - 1/6)) = deviation / (5/3 * total)
-        // Score = 1 - normalized deviation
         const maxDev = counts.total * (10 / 6); // worst case: all one type
-        totalScore += 1 - (deviation / maxDev);
+        totalTypeScore += 1 - (deviation / maxDev);
+        // Directional evenness: perfect = fwd ≈ rev (50/50)
+        const dirIdeal = counts.total / 2;
+        const dirDev = Math.abs(counts.fwd - dirIdeal);
+        const maxDirDev = counts.total / 2; // worst case: all one direction
+        totalDirScore += maxDirDev > 0 ? 1 - (dirDev / maxDirDev) : 1;
     }
-    return edgesWithData > 0 ? totalScore / edgesWithData : 0;
+    if (edgesWithData === 0) return 0;
+    const typeEvenness = totalTypeScore / edgesWithData;
+    const dirEvenness = totalDirScore / edgesWithData;
+    return typeEvenness * 0.7 + dirEvenness * 0.3;
 }
 
 // ── Ejection Balance — track weak xon traversals through tet-face edges ──
@@ -166,7 +176,6 @@ function _computeEjectionEvenness() {
 
 // ── Balance History — ring buffer for time-series chart ──
 // Records one sample per planck second: {ps, quark, edge, ejection} as percentages [0-100]
-const _BALANCE_HISTORY_MAX = 5000;
 let _balanceHistory = [];
 let _balanceTimeframe = 'all';  // 'all' | '1000' | '250'
 
@@ -184,7 +193,6 @@ function _recordBalanceSample() {
     const ejection = _computeEjectionEvenness() * 100;
 
     _balanceHistory.push({ ps: _planckSeconds, quark, edge, ejection });
-    if (_balanceHistory.length > _BALANCE_HISTORY_MAX) _balanceHistory.shift();
 }
 
 // ── Oct Center Bias — xon movement prefers proximity to geometric oct center ──

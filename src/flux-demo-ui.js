@@ -139,12 +139,11 @@ function updateDemoPanel() {
         + `<span style="color:${nEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(nEven * 100).toFixed(1)}%</span>`
         + `</div>`;
 
-    // ── Ratio accuracy history sparkline ──
+    // ── Ratio accuracy history sparkline (fixed single row, sliding window) ──
     _demoTypeBalanceHistory.push(ratioAccuracy * 100);
+    const SPARK_SLOTS = 28;  // fits one row at 22px in ~345px panel
     const hist = _demoTypeBalanceHistory;
-    const sparkLen = Math.min(hist.length, 24);  // show last 24 cycles
-    const sparkData = hist.slice(-sparkLen);
-    // Scale: map [min..100] to 8-level block chars
+    const sparkData = hist.slice(-SPARK_SLOTS);
     const sparkMin = Math.min(...sparkData, 90);
     const sparkMax = 100;
     const SPARK = ['\u2581', '\u2582', '\u2583', '\u2584', '\u2585', '\u2586', '\u2587', '\u2588'];
@@ -152,14 +151,13 @@ function updateDemoPanel() {
     for (const v of sparkData) {
         const norm = Math.max(0, Math.min(1, (v - sparkMin) / (sparkMax - sparkMin)));
         const idx = Math.min(7, Math.floor(norm * 7.99));
-        // Color: green at 100, yellow at 95, orange below
         const c = v >= 99.5 ? '#66dd66' : v >= 96 ? '#ccaa66' : '#cc8855';
         sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
     }
-    html += `<div style="margin-top:4px; overflow:hidden;">`
-        + `<div style="font-size:7px; color:var(--text-3); margin-bottom:1px;">ratio accuracy (last ${sparkLen} windows)</div>`
-        + `<div style="font-size:10px; letter-spacing:-1px; line-height:1; font-family:monospace; overflow:hidden;">${sparkline}</div>`
-        + `<div style="display:flex; justify-content:space-between; font-size:6px; color:#445566; margin-top:1px;">`
+    html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
+        + `<div style="font-size:8px; color:var(--text-3); margin-bottom:2px;">ratio accuracy (last ${Math.min(hist.length, SPARK_SLOTS)} windows)</div>`
+        + `<div style="font-size:22px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+        + `<div style="display:flex; justify-content:space-between; font-size:7px; color:#445566; margin-top:2px;">`
         + `<span>${sparkMin.toFixed(0)}%</span><span>100%</span></div>`
         + `</div>`;
     // Rule compliance indicators
@@ -224,7 +222,7 @@ function _updateEdgeBalancePanel() {
             return;
         }
         const maxT = Math.max(1, ...types.map(t => counts[t]));
-        // Compute per-edge evenness (how balanced this single edge is)
+        // Compute per-edge type evenness
         const ideal = counts.total / 6;
         let dev = 0;
         for (const t of types) dev += Math.abs(counts[t] - ideal);
@@ -232,12 +230,21 @@ function _updateEdgeBalancePanel() {
         const edgeW = 1 - (dev / maxDev);
         const eColor = edgeW > 0.95 ? '#66dd66' : edgeW > 0.8 ? '#ccaa66' : '#ff6644';
 
+        // Directional balance indicator
+        const fwd = counts.fwd || 0, rev = counts.rev || 0;
+        const dirTotal = fwd + rev;
+        const dirPct = dirTotal > 0 ? (fwd / dirTotal * 100) : 50;
+        const dirSkew = Math.abs(dirPct - 50);
+        const dirColor = dirSkew < 10 ? '#66dd66' : dirSkew < 25 ? '#ccaa66' : '#ff6644';
+        const dirArrow = dirPct > 55 ? '→' : dirPct < 45 ? '←' : '⇄';
+
         html += `<div style="display:flex; align-items:center; gap:1px;">`;
         html += `<span style="width:36px; color:${eColor}; font-size:7px; font-family:var(--font-mono);">${label}</span>`;
         for (const t of types) {
             const pct = (counts[t] / maxT * 100).toFixed(1);
             html += `<div class="dp-bar-bg" style="flex:1;" title="${t}: ${counts[t]}"><div class="dp-bar-fill" style="width:${pct}%; background:${typeColors[t]};"></div></div>`;
         }
+        html += `<span style="width:14px; text-align:center; font-size:7px; color:${dirColor};" title="fwd ${fwd} / rev ${rev} (${dirPct.toFixed(0)}%→)">${dirArrow}</span>`;
         html += `<span style="width:20px; text-align:right; font-size:6px; color:var(--text-3);">${counts.total}</span>`;
         html += `</div>`;
     };
