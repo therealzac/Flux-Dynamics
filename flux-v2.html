@@ -321,6 +321,16 @@
             </div>
             <div id="dp-test-results" style="font-size:10px; line-height:1.7;"><!-- populated by runDemo3Tests --></div>
         </div>
+
+        <!-- BFS Exhaustiveness Test (results shown here during/after test) -->
+        <div class="panel-section" style="padding:10px;">
+            <div class="panel-section-header" style="margin-bottom:6px;">
+                <span>BFS EXHAUSTIVENESS</span>
+            </div>
+            <div id="bfs-test-results" style="font-size:10px; line-height:1.5; color:#6a8aaa;">
+                Press Test to run two BFS searches with different seeds.
+            </div>
+        </div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -414,14 +424,10 @@
             <!-- Action buttons -->
             <div style="display:flex; gap:6px; margin-top:4px;">
                 <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
+                <button id="btn-bfs-test" style="flex:0 0 auto; padding:7px 14px; font-size:12px; font-weight:600; background:rgba(100,180,255,0.12); border:1px solid rgba(100,180,255,0.25); color:#7ab8d0; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Test</button>
                 <button class="btn-secondary" id="btn-nucleus-pause"
                     style="flex:0 0 auto; padding:7px 12px; display:none;"
                     title="Pause/resume simulation">⏸</button>
-            </div>
-            <div class="ctrl-row" style="margin-top:6px;">
-                <span class="ctrl-label" style="min-width:32px;">jitter</span>
-                <input type="range" id="quark-jitter-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
-                <span id="quark-jitter-val" class="ctrl-val" style="min-width:28px;">0</span>
             </div>
             <div id="playback-controls" style="display:none; margin-top:6px;">
                 <div style="display:flex; gap:4px; margin-bottom:6px;">
@@ -446,51 +452,6 @@
             <div id="nucleus-status" style="display:none;">ready</div>
             <div id="demo-status" style="display:none;"></div>
 
-            <!-- ── Training Section ── -->
-            <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
-                <button class="btn-primary" id="btn-tune-t22" style="width:100%; font-size:11px; padding:8px 12px;"
-                    title="Train RL model to optimize quark balance">Train RL</button>
-                <div id="tune-status" style="font-size:10px; color:var(--text-3); margin-top:6px; text-align:center; min-height:14px; font-family:var(--font-mono);"></div>
-                <div style="margin-top:8px; display:flex; gap:10px; justify-content:center; font-size:10px; color:var(--text-3);">
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Population size per generation">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">pop</span>
-                        <input id="tournament-pop-size" type="number" value="8" min="2" max="50"
-                            style="width:44px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
-                    </label>
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Number of generations">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">gens</span>
-                        <input id="tournament-generations" type="number" value="10" min="1" max="100"
-                            style="width:44px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
-                    </label>
-                    <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Planck seconds per contestant">
-                        <span style="text-transform:uppercase; letter-spacing:0.08em; font-size:9px; font-weight:500;">planck</span>
-                        <input id="tournament-ticks" type="number" value="2000" min="100" max="20000" step="100"
-                            style="width:56px; padding:5px 3px; background:rgba(255,255,255,0.04); border:1px solid var(--border-accent); border-radius:4px; color:var(--text-1); font-size:11px; text-align:center; font-family:var(--font-mono);">
-                    </label>
-                </div>
-                <!-- Leaderboard -->
-                <div id="leaderboard-panel" style="display:none;">
-                    <div class="panel-section-header" style="margin-top:10px;">Leaderboard</div>
-                    <div id="leaderboard-list" style="max-height:260px; overflow-y:auto;"></div>
-                </div>
-                <!-- Charts -->
-                <div id="rl-fitness-wrap" class="chart-container" style="display:none;">
-                    <div class="chart-label">Fitness Curve</div>
-                    <canvas id="rl-fitness-canvas" width="320" height="180" style="pointer-events:none;"></canvas>
-                </div>
-                <div id="rl-policy-wrap" class="chart-container" style="display:none;">
-                    <div class="chart-label">Policy Heatmap</div>
-                    <canvas id="rl-policy-canvas" width="320" height="160" style="pointer-events:none;"></canvas>
-                </div>
-                <div id="rl-weights-wrap" class="chart-container" style="display:none;">
-                    <div class="chart-label">Weight Distributions</div>
-                    <canvas id="rl-weights-canvas" width="320" height="220" style="pointer-events:none;"></canvas>
-                </div>
-                <div id="rl-metrics-wrap" class="chart-container" style="display:none;">
-                    <div class="chart-label">Training Metrics</div>
-                    <canvas id="rl-metrics-canvas" width="320" height="160" style="pointer-events:none;"></canvas>
-                </div>
-            </div>
             <!-- Nucleus info (shown during simulation) -->
             <div id="nucleus-info"></div>
             <div id="nucleus-metrics"></div>
@@ -555,21 +516,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=37"></script>
+    <script src="src/flux-demo-state.js?v=40"></script>
     <script src="src/flux-demo-xon.js?v=6"></script>
-    <script src="src/flux-demo-backtrack.js?v=11"></script>
-    <script src="src/flux-demo-planner.js?v=16"></script>
-    <script src="src/flux-demo-ui.js?v=44"></script>
-    <script src="src/flux-demo.js?v=366"></script>
-    <script src="src/flux-solver-render.js?v=35"></script>
-    <script src="src/flux-tournament.js?v=9"></script>
-    <script src="src/flux-rl.js?v=17"></script>
+    <script src="src/flux-demo-backtrack.js?v=12"></script>
+    <script src="src/flux-demo-planner.js?v=18"></script>
+    <script src="src/flux-demo-ui.js?v=47"></script>
+    <script src="src/flux-demo.js?v=372"></script>
+    <script src="src/flux-solver-render.js?v=38"></script>
+    <script src="src/flux-tournament.js?v=1"></script>
+    <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=14"></script>
     <script src="src/flux-electrons.js?v=15"></script>
     <script src="src/flux-voids.js?v=30"></script>
-    <script src="src/flux-rules-v2.js?v=2"></script>
-    <script src="src/flux-nucleus.js?v=38"></script>
-    <script src="src/flux-tests.js?v=225"></script>
+    <script src="src/flux-nucleus.js?v=40"></script>
+    <script src="src/flux-tests.js?v=233"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -614,17 +574,6 @@
         slider.before(mkBtn('◂', -1));
         slider.after(mkBtn('▸', 1));
     });
-
-    // ── Quark jitter slider ─────────────────
-    const _jitterSlider = document.getElementById('quark-jitter-slider');
-    const _jitterVal = document.getElementById('quark-jitter-val');
-    if (_jitterSlider) {
-        _jitterSlider.addEventListener('input', () => {
-            const v = +_jitterSlider.value / 100;
-            _quarkJitter = v;
-            _jitterVal.textContent = v.toFixed(2);
-        });
-    }
 
     // ── Topbar sidebar toggles ─────────────────
     const _dpPanel = document.getElementById('deuteron-panel');

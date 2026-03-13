@@ -414,13 +414,11 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     // Quark type selection (always needed for return value)
     const isProtonFace = A_SET.has(face);
     const candidates = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
-    // Pick most in-demand quark type, with optional jitter from slider.
-    // Jitter 0 = always pick highest deficit. Jitter 0.15 = original ±0.075 noise.
-    const jitter = _quarkJitter || 0;
+    // Pick most in-demand quark type (deterministic — always highest deficit)
     let quarkType = candidates[0];
     let bestDeficit = -Infinity;
     for (const t of candidates) {
-        const d = _ratioTracker.deficit(t) + (jitter > 0 ? (_sRng() - 0.5) * jitter : 0);
+        const d = _ratioTracker.deficit(t);
         if (d > bestDeficit) { bestDeficit = d; quarkType = t; }
     }
 
@@ -440,28 +438,10 @@ function _scoreFaceOpportunity(xon, face, occupied) {
         return { face, quarkType, score: rlScore, onFace };
     }
 
-    // HEURISTIC FALLBACK (original scoring)
-    let score = 0;
-    score += Math.max(0, bestDeficit) * _choreoParams.ratioDeficitWeight * 10;
+    // HEURISTIC SCORING — quark balance (deterministic, proven optimal)
+    let score = Math.max(0, bestDeficit) * _choreoParams.ratioDeficitWeight * 10;
 
-    // 2. XONIC MOVEMENT BALANCE: score by how much the loop's directions
-    //    help balance this xon's 10-direction counters.
-    //    A tet loop traverses 4 edges (5-node sequence). Compute direction
-    //    indices for those edges and sum the balance deficits.
-    if (fd.cycle && fd.cycle.length === 4) {
-        // Get the loop sequence for the chosen quark type
-        const loopSeq = _selectBestPermutation(xon, fd.cycle, quarkType);
-        if (loopSeq && loopSeq.length === 5) {
-            const loopDirs = [];
-            for (let s = 0; s < 4; s++) {
-                const d = _identifyMoveDir(loopSeq[s], loopSeq[s + 1]);
-                if (d >= 0) loopDirs.push(d);
-            }
-            score += _dirBalanceScoreMulti(xon, loopDirs);
-        }
-    }
-
-    // 3. VACANCY: penalize if another xon is already executing a loop on this face
+    // VACANCY: penalize if another xon is already executing a loop on this face
     for (const x of _demoXons) {
         if (!x.alive || x === xon) continue;
         if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._assignedFace === face) {

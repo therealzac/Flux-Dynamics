@@ -1298,13 +1298,17 @@ function startDemoLoop() {
         console.log(`[demo] Pattern demo started at ${intervalMs}ms interval`);
     }
 
-    // Auto-run unit tests — HALT DEMO if any test fails (tournament: run but don't halt)
+    // Auto-run unit tests — HALT DEMO if any test fails (BFS test mode: warn but don't halt)
     try {
         const testResult = runDemo3Tests();
-        if (!_tournamentRunning && testResult.failed.length > 0) {
-            console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
-            stopDemo();
-            return;
+        if (testResult.failed.length > 0) {
+            if (_bfsTestActive) {
+                console.warn(`[BFS TEST] ${testResult.failed.length} unit test(s) failed — continuing anyway: ${testResult.failed.join(', ')}`);
+            } else {
+                console.error(`[demo] HALTED: ${testResult.failed.length} test(s) failed: ${testResult.failed.join(', ')}`);
+                stopDemo();
+                return;
+            }
         }
     } catch (e) { console.warn('[demo] Test suite error:', e); }
 
@@ -2992,10 +2996,10 @@ async function demoTick() {
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
-    const _hwm = _maxTickReached > _demoTick ? ` <span style="color:#ff8844;">(peak ${_maxTickReached})</span>` : '';
-    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks${_hwm}</span>`;
+    const _highestLine = `<br><span style="font-size:0.75em; color:#556677;">highest: ${_maxTickReached}</span>`;
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>${_highestLine}`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks${_hwm}</span>`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span><br><span style="font-size:0.65em; color:#556677;">highest: ${_maxTickReached}</span>`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons

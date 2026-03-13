@@ -323,7 +323,7 @@ const NucleusSimulator = (function(){
         _updateNucleusInfo();
 
         const titleEl = document.getElementById('topbar-title');
-        if(titleEl) titleEl.textContent = 'NUCLEUS: DEUTERON';
+        if(titleEl) titleEl.textContent = 'Flux Dynamics';
 
         if(typeof updateVoidSpheres === 'function') updateVoidSpheres();
         if(typeof updateCandidates === 'function') updateCandidates();

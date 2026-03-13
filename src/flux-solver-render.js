@@ -1139,13 +1139,9 @@ function rebuildBaseLines(){
 function _updateLatticeSliderLock(){
     const slider = document.getElementById('lattice-slider');
     if(!slider) return;
-    const isRL = typeof _tournamentRunning !== 'undefined' && _tournamentRunning;
-    const locked = (typeof _demoActive !== 'undefined' && _demoActive && !_demoPaused) || isRL;
+    const locked = (typeof _demoActive !== 'undefined' && _demoActive && !_demoPaused);
     slider.disabled = locked;
     slider.style.opacity = locked ? '0.4' : '1';
-    // Hide demo lattice toggle (L2/L3/L4 buttons) during RL training
-    const demoToggle = document.getElementById('demo-lattice-toggle');
-    if(demoToggle) demoToggle.style.display = isRL ? 'none' : '';
 }
 function updateLatticeLevel(){
     // Lock slider during active (non-paused) demo — changing lattice resets everything

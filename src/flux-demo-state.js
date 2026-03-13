@@ -25,7 +25,7 @@ let _planckSeconds = 0;  // ticks where lattice deformation occurred (SC adds/re
 let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 let _actualizationVisits = null; // {face: {pu1:0,...}} — counts per-Planck-second tet actualization
-let _quarkJitter = 0; // quark type selection jitter (0 = deterministic, 0.15 = ±0.075 noise)
+// Choreographer always uses quark balance (jitter and emphasis dropdown removed)
 
 // ── Per-Face Edge Epoch — tracks edge traversals since last manifestation ──
 // _faceEdgeEpoch[faceId] = { pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0 }
@@ -413,6 +413,14 @@ let _maxTickReached = 0; // high-water mark for current run
 let _searchStartTime = 0; // performance.now() when demo started
 let _totalBacktrackRetries = 0; // total retries across all ticks/layers
 let _bestPathFingerprint = ''; // fingerprint of the tick that achieved _maxTickReached
+
+// ── BFS Exhaustiveness Test Mode ──
+let _bfsTestActive = false;       // true while BFS exhaustiveness test is running
+let _bfsTestRunIdx = 0;           // 0 = Run A, 1 = Run B
+let _bfsTestResults = [null, null]; // captured results for Run A and Run B
+let _bfsTestSeeds = [0, 0];      // seeds for the two runs
+let _bfsTestMaxTick = 200;       // max ticks before forced termination
+let _bfsTestComparison = null;   // comparison result after both runs complete
 
 // Save run result to localStorage for DFS audit. Appends to a history array
 // so multiple runs can be compared. Key: 'flux_run_history'.

@@ -1465,6 +1465,72 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
+    // ── T92: First-place hadron ejection ──
+    // If proton face-evenness > neutron face-evenness (or vice versa), any
+    // actualized tet producing the leading hadron's quark type must be torn
+    // down. Keeps proton and neutron scores in lockstep.
+    {
+      id: 'T92', name: 'First-place hadron ejection',
+      init: { _prevActualized: null, _prevHadronLeading: null },
+      snapshot(g) {
+        if (!_nucleusTetFaceData || !_actualizationVisits) return;
+        g._prevActualized = {};
+        g._prevHadronLeading = {}; // faceId → 'proton'|'neutron'|null
+
+        // Compute per-hadron face-evenness from _actualizationVisits
+        const protonPerFace = [], neutronPerFace = [];
+        for (let f = 1; f <= 8; f++) {
+          const fv = _actualizationVisits[f];
+          protonPerFace.push(fv ? (fv.pu1 || 0) + (fv.pu2 || 0) + (fv.pd || 0) : 0);
+          neutronPerFace.push(fv ? (fv.nd1 || 0) + (fv.nd2 || 0) + (fv.nu || 0) : 0);
+        }
+        const calcEvenness = (arr) => {
+          const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+          if (m === 0) return 0;
+          const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+          return Math.max(0, 1 - sd / m);
+        };
+        const pEven = calcEvenness(protonPerFace);
+        const nEven = calcEvenness(neutronPerFace);
+
+        // Determine which hadron (if any) is strictly leading
+        const MARGIN = 0.001; // avoid floating point ties
+        const leader = (pEven > nEven + MARGIN) ? 'proton'
+                     : (nEven > pEven + MARGIN) ? 'neutron'
+                     : null; // balanced — no ejection needed
+
+        const protonTypes = new Set(['pu1', 'pu2', 'pd']);
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          g._prevActualized[fId] = allActive;
+          if (allActive && leader && typeof _dominantQuarkForFace === 'function') {
+            const dominant = _dominantQuarkForFace(fId);
+            if (!dominant) { g._prevHadronLeading[fId] = null; continue; }
+            const domHadron = protonTypes.has(dominant) ? 'proton' : 'neutron';
+            g._prevHadronLeading[fId] = (domHadron === leader) ? leader : null;
+          } else {
+            g._prevHadronLeading[fId] = null;
+          }
+        }
+      },
+      check(tick, g) {
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!g._prevActualized || !g._prevHadronLeading || !_nucleusTetFaceData) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          if (!g._prevActualized[fId] || !g._prevHadronLeading[fId]) continue;
+          const nowActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (nowActive) {
+            return `tick ${tick}: face ${fId} still actualized but ${g._prevHadronLeading[fId]} hadron is in 1st place — must be ejected`;
+          }
+        }
+        return null;
+      }
+    },
+
     // ── T-DirBal: Directional balance convergence ──
     // After 64 ticks, each alive xon must have used >= 3 distinct direction
     // indices in _dirBalance. Validates the balance tracking is working and
@@ -1815,6 +1881,60 @@ function _liveGuardUpdateSummary() {
     testSummary.style.color = failed > 0 ? '#ff6644' : (nulled > 0 ? '#ccaa44' : '#66dd66');
 }
 
+// ═══ BFS Exhaustiveness Test — Comparison Logic ═════════════════════════════
+// Pure function: compares two BFS run results for identical state-space exploration.
+function _compareBfsRuns(resultA, resultB) {
+    const maxTickMatch = resultA.maxTick === resultB.maxTick;
+    const haltReasonMatch = resultA.haltReason === resultB.haltReason;
+    const violationMatch = resultA.haltViolation === resultB.haltViolation;
+
+    // Per-tick fingerprint comparison
+    const allTicks = new Set([
+        ...resultA.perTickFingerprints.keys(),
+        ...resultB.perTickFingerprints.keys()
+    ]);
+    const ticksOnlyA = [], ticksOnlyB = [], ticksMismatch = [];
+    let allFPMatch = true;
+
+    for (const tick of [...allTicks].sort((a, b) => a - b)) {
+        const setA = resultA.perTickFingerprints.get(tick);
+        const setB = resultB.perTickFingerprints.get(tick);
+        if (setA && !setB) { ticksOnlyA.push(tick); allFPMatch = false; }
+        else if (!setA && setB) { ticksOnlyB.push(tick); allFPMatch = false; }
+        else {
+            let onlyA = 0, onlyB = 0, shared = 0;
+            for (const fp of setA) { if (setB.has(fp)) shared++; else onlyA++; }
+            for (const fp of setB) { if (!setA.has(fp)) onlyB++; }
+            if (onlyA > 0 || onlyB > 0) {
+                ticksMismatch.push({ tick, onlyA, onlyB, shared });
+                allFPMatch = false;
+            }
+        }
+    }
+
+    const identical = maxTickMatch && haltReasonMatch && violationMatch && allFPMatch;
+    let summary;
+    if (identical) {
+        summary = `PASS: Both seeds explored identical state space. ` +
+                  `Max tick: ${resultA.maxTick}. Halt: ${resultA.haltReason}. ` +
+                  `Fingerprints: ${resultA.totalFingerprints}. BFS is exhaustive.`;
+    } else {
+        const diffs = [];
+        if (!maxTickMatch) diffs.push(`maxTick: ${resultA.maxTick} vs ${resultB.maxTick}`);
+        if (!haltReasonMatch) diffs.push(`reason: ${resultA.haltReason} vs ${resultB.haltReason}`);
+        if (!violationMatch) diffs.push(`violation: "${resultA.haltViolation}" vs "${resultB.haltViolation}"`);
+        if (!allFPMatch) diffs.push(`${ticksMismatch.length} tick(s) with different fingerprints, ` +
+            `${ticksOnlyA.length} ticks only in A, ${ticksOnlyB.length} ticks only in B`);
+        summary = `FAIL: Runs diverged. ${diffs.join('; ')}`;
+    }
+
+    return {
+        identical, maxTickMatch, haltReasonMatch, violationMatch, allFPMatch,
+        fingerprintDiff: { ticksOnlyA, ticksOnlyB, ticksMismatch },
+        summary,
+    };
+}
+
 function runDemo3Tests() {
     _testRunning = true;
     const results = [];
@@ -2125,6 +2245,41 @@ function runDemo3Tests() {
         skip('T-ENUM Matching enumerator', '_enumerateAllMatchings not defined');
     }
 
+    // ── T-BfsCompare: _compareBfsRuns correctness ──
+    {
+        const mockBase = () => ({
+            seed: 0x11111111, maxTick: 5, haltReason: 'halted',
+            haltViolation: 'T19: tick 5: Pauli', totalRetries: 10, totalFingerprints: 3,
+            perTickFingerprints: new Map([
+                [0, new Set(['X0:0->1|X1:stay@2'])],
+                [1, new Set(['X0:1->3|X1:2->4', 'X0:1->5|X1:2->4'])]
+            ]),
+            perTickLedger: new Map(), elapsedMs: 100,
+        });
+        // Identical runs → PASS
+        const a1 = mockBase(), b1 = mockBase();
+        b1.seed = 0x22222222; b1.totalRetries = 8; b1.elapsedMs = 120;
+        const cmp1 = _compareBfsRuns(a1, b1);
+        assert('T-BfsCompare identical runs',
+            cmp1.identical === true,
+            `expected identical=true, got ${cmp1.identical}: ${cmp1.summary}`);
+        // Divergent fingerprints → FAIL
+        const a2 = mockBase(), b2 = mockBase();
+        b2.perTickFingerprints.get(1).add('X0:1->7|X1:2->4'); // extra fingerprint in B
+        b2.totalFingerprints = 4;
+        const cmp2 = _compareBfsRuns(a2, b2);
+        assert('T-BfsCompare divergent fingerprints',
+            cmp2.identical === false,
+            `expected identical=false, got ${cmp2.identical}`);
+        // Different max tick → FAIL
+        const a3 = mockBase(), b3 = mockBase();
+        b3.maxTick = 7;
+        const cmp3 = _compareBfsRuns(a3, b3);
+        assert('T-BfsCompare different maxTick',
+            cmp3.identical === false && cmp3.maxTickMatch === false,
+            `expected maxTickMatch=false, got ${cmp3.maxTickMatch}`);
+    }
+
     // ── Reset demo state after tests so visual demo starts clean ──
     _demoTick = 0;
     _planckSeconds = 0;
@@ -2147,6 +2302,207 @@ function runDemo3Tests() {
     return { passed, total: results.length, failed: failed.map(f => f.name) };
 }
 
+// ═══ BFS Exhaustiveness Test — Runner ════════════════════════════════════════
+
+function _captureBfsRunResult() {
+    const totalFP = [..._btTriedFingerprints.values()].reduce((s, set) => s + set.size, 0);
+    return {
+        seed: _runSeed,
+        maxTick: _maxTickReached,
+        haltReason: simHalted ? 'canary' : 'stopped',
+        haltViolation: _rewindViolation || '',
+        totalRetries: _totalBacktrackRetries,
+        totalFingerprints: totalFP,
+        perTickFingerprints: new Map(
+            [..._btTriedFingerprints].map(([t, s]) => [t, new Set(s)])
+        ),
+        perTickLedger: new Map(
+            [..._btBadMoveLedger].map(([t, s]) => [t, new Set(s)])
+        ),
+        elapsedMs: performance.now() - _searchStartTime,
+    };
+}
+
+function _executeBfsTestRun(runIdx) {
+    return new Promise((resolve) => {
+        _forceSeed = _bfsTestSeeds[runIdx];
+
+        // Start demo loop — nucleus is already set up by the orchestrator
+        startDemoLoop();
+
+        // Poll for completion: only canary (simHalted) or demo stopped.
+        // No artificial tick limit — exhaustive search must run until BFS
+        // either proves the rules impossible (canary at t=0) or succeeds.
+        const pollId = setInterval(() => {
+            // Update progress panel
+            const testLabel = runIdx === 0 ? 'Test 1' : 'Test 2';
+            _updateBfsTestPanel(
+                `${testLabel}: tick ${_demoTick}, highest ${_maxTickReached}, ` +
+                `retries ${_totalBacktrackRetries}, ` +
+                `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}`
+            );
+            // Check termination: canary fired or demo stopped
+            if (simHalted || !_demoActive) {
+                clearInterval(pollId);
+                resolve();
+            }
+        }, 100);
+    });
+}
+
+function _setBfsTestTitle(runIdx, test1Best) {
+    const titleEl = document.getElementById('topbar-title');
+    if (!titleEl) return;
+    if (runIdx === 0) {
+        titleEl.innerHTML = 'Test 1';
+    } else if (runIdx === 1) {
+        titleEl.innerHTML = `Test 2<br><span style="font-size:0.65em; color:#556677; font-weight:400;">Test 1 best: ${test1Best}</span>`;
+    } else {
+        // Restore default
+        if (typeof RULE_REGISTRY !== 'undefined' && typeof activeRuleIndex !== 'undefined') {
+            titleEl.textContent = RULE_REGISTRY[activeRuleIndex]?.name || '';
+        } else {
+            titleEl.textContent = '';
+        }
+    }
+}
+
+async function startBfsExhaustivenessTest() {
+    if (_bfsTestActive || _demoActive) return;
+
+    _bfsTestActive = true;
+    _bfsTestRunIdx = 0;
+    _bfsTestResults = [null, null];
+    _bfsTestComparison = null;
+    // Tests run visually (not headless) so user can watch them on screen
+
+    // Force L1 lattice for fast testing — user can switch to L2 manually after
+    const slider = document.getElementById('lattice-slider');
+    if (slider && +slider.value !== 1) {
+        slider.value = 1;
+        slider.dispatchEvent(new Event('input'));
+        // Re-build lattice at L1
+        await new Promise(r => setTimeout(r, 100));
+    }
+
+    // Generate two distinct seeds
+    _bfsTestSeeds[0] = (Math.random() * 0xFFFFFFFF) >>> 0;
+    _bfsTestSeeds[1] = (_bfsTestSeeds[0] + 0x12345678) >>> 0;
+
+    console.log(`%c[BFS TEST] Starting exhaustiveness test (L1)\n` +
+        `  Seed A: 0x${_bfsTestSeeds[0].toString(16).padStart(8,'0')}\n` +
+        `  Seed B: 0x${_bfsTestSeeds[1].toString(16).padStart(8,'0')}`,
+        'color:cyan;font-weight:bold');
+
+    // ── Run A (Test 1) ──
+    _bfsTestRunIdx = 0;
+    simHalted = false; // ensure clean state before Run A
+    // Full cleanup before Run A — same cleanup that stopDemo() does before Run B.
+    // Without this, stale SCs in activeSet/xonImpliedSet from prior state poison Run A.
+    if (typeof stopDemo === 'function' && _demoActive) stopDemo();
+    // Always re-simulate nucleus on the current lattice (L1 forced above)
+    NucleusSimulator.simulateNucleus();
+    await new Promise(r => setTimeout(r, 100)); // let nucleus settle
+    _setBfsTestTitle(0);
+    _updateBfsTestPanel('Starting Test 1...');
+    // Yield to let the UI paint the title before ticks start
+    await new Promise(r => setTimeout(r, 200));
+    await _executeBfsTestRun(0);
+    _bfsTestResults[0] = _captureBfsRunResult();
+    console.log(`%c[BFS TEST] Test 1 done: highest ${_bfsTestResults[0].maxTick}, ` +
+        `${_bfsTestResults[0].totalFingerprints} fps, ` +
+        `retries ${_bfsTestResults[0].totalRetries}, ${(_bfsTestResults[0].elapsedMs / 1000).toFixed(1)}s`,
+        'color:cyan');
+    stopDemo();
+
+    // Pause between tests so user can see Test 1 results
+    _updateBfsTestPanel(`Test 1 complete — highest: ${_bfsTestResults[0].maxTick}, ` +
+        `retries: ${_bfsTestResults[0].totalRetries}. Starting Test 2...`);
+    await new Promise(r => setTimeout(r, 1000));
+    simHalted = false; // reset halt flag for Run B
+    // Explicitly clear BFS state for Run B (since _bfsTestActive skips auto-clear)
+    _btBadMoveLedger.clear();
+    _btTriedFingerprints.clear();
+
+    // ── Run B (Test 2) ──
+    _bfsTestRunIdx = 1;
+    // Re-simulate nucleus (same lattice) — ensures fresh state identical to Run A
+    NucleusSimulator.simulateNucleus();
+    await new Promise(r => setTimeout(r, 100));
+    _setBfsTestTitle(1, _bfsTestResults[0].maxTick);
+    _updateBfsTestPanel('Starting Test 2...');
+    // Yield to let the UI paint the title before ticks start
+    await new Promise(r => setTimeout(r, 200));
+    await _executeBfsTestRun(1);
+    _bfsTestResults[1] = _captureBfsRunResult();
+    console.log(`%c[BFS TEST] Test 2 done: highest ${_bfsTestResults[1].maxTick}, ` +
+        `${_bfsTestResults[1].totalFingerprints} fps, ${(_bfsTestResults[1].elapsedMs / 1000).toFixed(1)}s`,
+        'color:cyan');
+    stopDemo();
+
+    // ── Compare ──
+    _bfsTestActive = false;
+    _forceSeed = null;
+
+    _bfsTestComparison = _compareBfsRuns(_bfsTestResults[0], _bfsTestResults[1]);
+    _updateBfsTestPanel(_bfsTestComparison.summary);
+
+    // Restore title
+    _setBfsTestTitle(-1);
+
+    const color = _bfsTestComparison.identical ? 'color:lime;font-weight:bold' : 'color:red;font-weight:bold';
+    console.log(`%c[BFS TEST] ${_bfsTestComparison.summary}`, color);
+
+    // Detailed divergence report
+    if (!_bfsTestComparison.identical) {
+        const d = _bfsTestComparison.fingerprintDiff;
+        if (d.ticksOnlyA.length) console.log(`  Ticks only in A: ${d.ticksOnlyA.join(', ')}`);
+        if (d.ticksOnlyB.length) console.log(`  Ticks only in B: ${d.ticksOnlyB.join(', ')}`);
+        for (const m of d.ticksMismatch.slice(0, 20)) {
+            console.log(`  Tick ${m.tick}: ${m.shared} shared, +${m.onlyA} only-A, +${m.onlyB} only-B`);
+        }
+    }
+}
+
+function _updateBfsTestPanel(message) {
+    const el = document.getElementById('bfs-test-results');
+    if (!el) return;
+
+    let html = `<div style="color:#9abccc; font-size:11px; margin-bottom:8px;">${message}</div>`;
+
+    if (_bfsTestComparison) {
+        const c = _bfsTestComparison;
+        const color = c.identical ? '#66dd66' : '#ff6644';
+        html += `<div style="color:${color}; font-weight:bold; font-size:12px; margin-bottom:6px;">` +
+                `${c.identical ? '✓ EXHAUSTIVE' : '✗ DIVERGENT'}</div>`;
+
+        for (let i = 0; i < 2; i++) {
+            const r = _bfsTestResults[i];
+            if (!r) continue;
+            html += `<div style="margin-bottom:4px; padding:4px; background:rgba(255,255,255,0.03); border-radius:3px;">`;
+            html += `<div style="color:#6a8aaa; font-size:9px;">Run ${i === 0 ? 'A' : 'B'} &mdash; seed 0x${r.seed.toString(16).padStart(8,'0')}</div>`;
+            html += `<div style="font-size:10px; color:#9abccc;">` +
+                `max tick: <b>${r.maxTick}</b> &middot; halt: ${r.haltReason} &middot; ` +
+                `fps: ${r.totalFingerprints} &middot; retries: ${r.totalRetries} &middot; ` +
+                `${(r.elapsedMs / 1000).toFixed(1)}s</div>`;
+            if (r.haltViolation) {
+                html += `<div style="font-size:9px; color:#cc8866; margin-top:2px;">${r.haltViolation}</div>`;
+            }
+            html += `</div>`;
+        }
+
+        if (c.fingerprintDiff.ticksMismatch.length > 0) {
+            html += `<div style="color:#ff8844; font-size:9px; margin-top:4px;">Divergent ticks: `;
+            html += c.fingerprintDiff.ticksMismatch.slice(0, 10)
+                .map(m => `t${m.tick}(+${m.onlyA}/-${m.onlyB})`)
+                .join(', ');
+            html += `</div>`;
+        }
+    }
+
+    el.innerHTML = html;
+}
+
 // ── Wire up nucleus UI ──
 (function(){
     NucleusSimulator.populateModelSelect();
@@ -2165,6 +2521,12 @@ function runDemo3Tests() {
     document.getElementById('btn-tournament')?.addEventListener('click', function(){
         if(tournamentActive) stopTournament();
         else startTournament();
+    });
+
+    // BFS exhaustiveness test button
+    document.getElementById('btn-bfs-test')?.addEventListener('click', function(){
+        if (_bfsTestActive) return; // prevent double-click
+        startBfsExhaustivenessTest();
     });
 
     // Play/pause button — pauses/resumes the demo tick interval
@@ -2294,763 +2656,15 @@ function runDemo3Tests() {
         if(pauseBtn){ pauseBtn.textContent = '⏸'; pauseBtn.title = 'Pause simulation'; }
     });
 
-    // ── "Tune T22" button ──────────────────────────────────────────────
-    document.getElementById('btn-tune-t22')?.addEventListener('click', function () {
-        if (_tournamentRunning) {
-            _tournamentRunning = false;
-            this.textContent = 'train RL';
-            this.style.borderColor = '#aa8844';
-            if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
-            return;
-        }
-        this.textContent = 'stop RL';
-        this.style.borderColor = '#cc4444';
-        _runTournament();
-    });
 })();
 
 // ╔══════════════════════════════════════════════════════════════════════╗
-// ║  CHOREOGRAPHY PARAMETER TOURNAMENT (GA)                            ║
-// ║  Headless trial runner + genetic algorithm for T22 convergence     ║
+// ║  TOURNAMENT / RL TRAINING — REMOVED                                ║
+// ║  Quark balance with zero jitter proven optimal. Code stubbed out   ║
+// ║  in flux-tournament.js / flux-rl.js / flux-rules-v2.js.           ║
 // ╚══════════════════════════════════════════════════════════════════════╝
 
+// Compatibility stub — other code may check this flag
 let _tournamentRunning = false;
-let _tournamentVisualsApplied = false;
-let _tournamentTargetTick = 0; // tick at which current trial ends
-let _tournamentCallback = null; // called when trial reaches target tick
-let _tournamentSavedPan = null; // camera position saved at tournament start
+// (Tournament variables, functions, and UI code removed — see stubbed files)
 
-// Evaluate fitness from current _demoVisits state.
-// 7 priority metrics aligned with user's optimization goals:
-//   1. Anchor quark evenness (pd/nu across 8 faces)     — 25%
-//   2. Follower quark evenness (pu1/pu2/nd1/nd2)        — 20%
-//   3. Anchor:follower ratio (1:2 per orientation)       — 15%
-//   4. Follower:follower ratio (1:1 pu1:pu2, nd1:nd2)   — 12%
-//   5. Quark frequency (loops completed per tick)        — 12%
-//   6. Periodicity (regularity of oct changes)           — 8%
-//   7. Xonic balance (direction + mode balance)          — 8%
-function _evaluateFitness() {
-    const vals = Object.values(_demoVisits);
-    const gPu1 = vals.reduce((s, v) => s + (v.pu1 || 0), 0);
-    const gPu2 = vals.reduce((s, v) => s + (v.pu2 || 0), 0);
-    const gPd  = vals.reduce((s, v) => s + (v.pd  || 0), 0);
-    const gNd1 = vals.reduce((s, v) => s + (v.nd1 || 0), 0);
-    const gNd2 = vals.reduce((s, v) => s + (v.nd2 || 0), 0);
-    const gNu  = vals.reduce((s, v) => s + (v.nu  || 0), 0);
-    const pTotal = gPu1 + gPu2 + gPd;
-    const nTotal = gNd1 + gNd2 + gNu;
-    const total = pTotal + nTotal;
-
-    // 1. ANCHOR EVENNESS: pd and nu should be even across all 8 faces
-    let anchorEvenness = 0;
-    {
-        const pdPerFace = [], nuPerFace = [];
-        for (let f = 1; f <= 8; f++) {
-            const v = _demoVisits[f] || {};
-            pdPerFace.push(v.pd || 0);
-            nuPerFace.push(v.nu || 0);
-        }
-        const pdMean = pdPerFace.reduce((a, b) => a + b, 0) / 8;
-        const nuMean = nuPerFace.reduce((a, b) => a + b, 0) / 8;
-        const pdCV = pdMean > 0 ? Math.sqrt(pdPerFace.reduce((s, v) => s + (v - pdMean) ** 2, 0) / 8) / pdMean : 1;
-        const nuCV = nuMean > 0 ? Math.sqrt(nuPerFace.reduce((s, v) => s + (v - nuMean) ** 2, 0) / 8) / nuMean : 1;
-        anchorEvenness = Math.max(0, 1 - (pdCV + nuCV) / 2);
-    }
-
-    // 2. FOLLOWER EVENNESS: pu1/pu2/nd1/nd2 across faces
-    let followerEvenness = 0;
-    {
-        const types = ['pu1', 'pu2', 'nd1', 'nd2'];
-        let totalCV = 0;
-        for (const t of types) {
-            const perFace = [];
-            for (let f = 1; f <= 8; f++) perFace.push((_demoVisits[f] || {})[t] || 0);
-            const m = perFace.reduce((a, b) => a + b, 0) / 8;
-            const cv = m > 0 ? Math.sqrt(perFace.reduce((s, v) => s + (v - m) ** 2, 0) / 8) / m : 1;
-            totalCV += cv;
-        }
-        followerEvenness = Math.max(0, 1 - totalCV / 4);
-    }
-
-    // 3. ANCHOR:FOLLOWER RATIO — 1:2 per orientation (pd:pu1+pu2, nu:nd1+nd2)
-    let anchorFollowerRatio = 0;
-    {
-        const pFollower = gPu1 + gPu2;
-        const nFollower = gNd1 + gNd2;
-        const pRatio = pFollower > 0 ? gPd / pFollower : 0; // target: 0.5 (1:2)
-        const nRatio = nFollower > 0 ? gNu / nFollower : 0;
-        const pErr = Math.abs(pRatio - 0.5);
-        const nErr = Math.abs(nRatio - 0.5);
-        anchorFollowerRatio = Math.max(0, 1 - (pErr + nErr));
-    }
-
-    // 4. FOLLOWER:FOLLOWER RATIO — 1:1 pu1:pu2 and nd1:nd2
-    let followerRatio = 0;
-    {
-        const puMax = Math.max(gPu1, gPu2, 1);
-        const puMin = Math.min(gPu1, gPu2);
-        const ndMax = Math.max(gNd1, gNd2, 1);
-        const ndMin = Math.min(gNd1, gNd2);
-        followerRatio = (puMin / puMax + ndMin / ndMax) / 2;
-    }
-
-    // 5. QUARK FREQUENCY — loops completed per tick
-    let quarkFrequency = 0;
-    {
-        const loopsPerTick = _demoTick > 0 ? total / _demoTick : 0;
-        quarkFrequency = Math.min(1, loopsPerTick / 0.5); // normalize: 0.5 loops/tick = perfect
-    }
-
-    // 6. PERIODICITY — regularity of oct orientation changes (from _octWindingDirection changes)
-    // Approximated by face coverage evenness (how regularly faces are visited)
-    let periodicity = 0;
-    {
-        const totals = [];
-        for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
-        const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
-        const cv = mean > 0 ? Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length) / mean : 1;
-        periodicity = Math.max(0, 1 - cv);
-    }
-
-    // 7. XONIC BALANCE — direction + mode balance across all xons
-    let xonicBalance = 0;
-    {
-        let totalBal = 0, count = 0;
-        for (const x of _demoXons) {
-            if (!x.alive || !x._dirBalance) continue;
-            const db = x._dirBalance;
-            let sum = 0;
-            for (let d = 0; d < 10; d++) sum += db[d];
-            const mean = sum / 10;
-            if (mean > 0) {
-                let variance = 0;
-                for (let d = 0; d < 10; d++) variance += (db[d] - mean) ** 2;
-                totalBal += 1 - Math.sqrt(variance / 10) / mean;
-            }
-            count++;
-        }
-        xonicBalance = count > 0 ? totalBal / count : 0;
-    }
-
-    // Check for ANY guard failure
-    const failedGuards = Object.entries(_liveGuards)
-        .filter(([, g]) => g.failed)
-        .map(([id]) => id);
-    const anyFail = failedGuards.length > 0 || simHalted;
-
-    // Hit rate (kept for backward compat)
-    const hitRate = _demoTetAssignments > 0 ? total / _demoTetAssignments : 0;
-
-    // Legacy evenness metrics (for logging)
-    const pEven = pTotal > 0 ? 1 - (Math.abs(gPu1/pTotal - 1/3) + Math.abs(gPu2/pTotal - 1/3) + Math.abs(gPd/pTotal - 1/3)) : 0;
-    const nEven = nTotal > 0 ? 1 - (Math.abs(gNd1/nTotal - 1/3) + Math.abs(gNd2/nTotal - 1/3) + Math.abs(gNu/nTotal - 1/3)) : 0;
-    const totals = [];
-    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
-    const fMean = totals.reduce((a, b) => a + b, 0) / totals.length;
-    const fCV = fMean > 0 ? Math.sqrt(totals.reduce((s, v) => s + (v - fMean) ** 2, 0) / totals.length) / fMean : 1;
-    const evenness = Math.max(0, 1 - fCV);
-
-    // Weighted fitness (7 priorities)
-    const fitness7 = 0.25 * anchorEvenness
-                   + 0.20 * followerEvenness
-                   + 0.15 * anchorFollowerRatio
-                   + 0.12 * followerRatio
-                   + 0.12 * quarkFrequency
-                   + 0.08 * periodicity
-                   + 0.08 * xonicBalance;
-
-    // Fitness tiers
-    let fitness;
-    if (total === 0) fitness = -20;
-    else if (anyFail) fitness = fitness7 - 10;
-    else fitness = fitness7;
-
-    return {
-        pEven, nEven, evenness, hitRate,
-        anchorEvenness, followerEvenness, anchorFollowerRatio,
-        followerRatio, quarkFrequency, periodicity, xonicBalance,
-        totalVisits: total, assignments: _demoTetAssignments,
-        fitness, failedGuards, survivedTicks: _demoTick,
-        clean: !anyFail && total > 0,
-    };
-}
-
-// ── NEW: Hadronic ratio fitness — single metric for RL training ──
-// Fitness = 1 - avgCV of [pu1, pu2, pd, nd1, nd2, nu] across 8 faces.
-// Perfect balance → 1.0, complete imbalance → ~0.0, no visits → -20.
-function _evaluateHadronicRatioFitness(visits) {
-    visits = visits || _demoVisits;
-    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
-    let totalVisits = 0;
-    let cvSum = 0;
-
-    for (let f = 1; f <= 8; f++) {
-        const v = visits[f] || {};
-        const counts = types.map(t => v[t] || 0);
-        const sum = counts.reduce((a, b) => a + b, 0);
-        totalVisits += sum;
-        if (sum === 0) { cvSum += 1; continue; }
-        const mean = sum / 6;
-        let variance = 0;
-        for (let i = 0; i < 6; i++) variance += (counts[i] - mean) ** 2;
-        const cv = Math.sqrt(variance / 6) / mean;
-        cvSum += cv;
-    }
-
-    const avgCV = cvSum / 8;
-
-    if (totalVisits === 0) return { fitness: -20, avgCV: 1, totalVisits: 0 };
-
-    // Guard failure penalty
-    const failedGuards = Object.entries(_liveGuards)
-        .filter(([, g]) => g.failed)
-        .map(([id]) => id);
-    const anyFail = failedGuards.length > 0 || simHalted;
-
-    let fitness = 1 - avgCV;
-    if (anyFail) fitness -= 10;
-
-    return { fitness, avgCV, totalVisits, failedGuards, clean: !anyFail && totalVisits > 0 };
-}
-
-// Hook into demoTick to detect when trial reaches target tick.
-// Called from demoTick's UI update path (at end of each tick).
-function _tournamentTickCheck() {
-    if (!_tournamentRunning || !_tournamentCallback) return;
-
-    // Early termination: if no tet completions after 5 full cycles, kill trial
-    if (_demoTick > 0 && _demoTick % 200 === 0) {
-        const total = Object.values(_demoVisits).reduce((s, v) => s + v.total, 0);
-        if (total === 0 && _demoTick >= 320) {  // 5 epochs × 64 ticks
-            console.warn(`[Tournament] Early termination: 0 tet visits after ${_demoTick} ticks`);
-            const cb = _tournamentCallback;
-            _tournamentCallback = null;
-            cb();
-            return;
-        }
-    }
-
-    if (_planckSeconds >= _tournamentTargetTick || simHalted) {
-        const cb = _tournamentCallback;
-        _tournamentCallback = null;
-        cb();
-    }
-}
-
-// Start a visual trial: no longer overrides user slider defaults.
-function _applyTournamentVisuals() {
-    // Respect user's slider settings — don't override during tournament/training.
-}
-
-function _startVisualTrial(params, maxTicks) {
-    return new Promise((resolve) => {
-        // Stop any existing demo cleanly
-        if (typeof stopDemo === 'function') stopDemo();
-        simHalted = false;
-
-        // Apply candidate params
-        const { _rlGenome, ...choreoOnly } = params;
-        Object.assign(_choreoParams, choreoOnly);
-
-        // Load RL genome into both models
-        if (_rlGenome && typeof _rlAvailable !== 'undefined' && _rlAvailable) {
-            if (!_rlModel && typeof createPolicyModel === 'function') _rlModel = createPolicyModel();
-            if (!_rlStrategicModel && typeof createStrategicModel === 'function') _rlStrategicModel = createStrategicModel();
-            if (_rlModel && _rlStrategicModel && typeof genomeToModel === 'function') {
-                genomeToModel(_rlGenome, _rlStrategicModel, _rlModel);
-            }
-            _rlActiveModel = _rlModel;
-        } else {
-            _rlActiveModel = null;
-            _rlStrategicModel = null;
-        }
-
-        // Use whatever lattice level is already on the slider
-
-        // Ensure nucleus is active
-        if (!NucleusSimulator.active) NucleusSimulator.simulateNucleus();
-
-        // Set target tick and callback
-        _tournamentTargetTick = maxTicks;
-        _tournamentCallback = () => {
-            const result = _evaluateHadronicRatioFitness();
-            resolve(result);
-        };
-
-        // Start the demo — it will run visually using the normal animation loop
-        startDemoLoop();
-        // Restore camera (opening choreography skips centering during tournament)
-        if (typeof _tournamentSavedPan !== 'undefined' && _tournamentSavedPan) {
-            panTarget.x = _tournamentSavedPan.x;
-            panTarget.y = _tournamentSavedPan.y;
-            panTarget.z = _tournamentSavedPan.z;
-            applyCamera();
-        }
-
-        // Tournament no longer overrides visual settings — preserve user's view
-        _tournamentVisualsApplied = true;
-
-        // Restore trial label (simulateNucleus overwrites topbar-title)
-        const titleEl = document.getElementById('topbar-title');
-        if (titleEl && titleEl.dataset.trialLabel) titleEl.textContent = titleEl.dataset.trialLabel;
-    });
-}
-
-// ── Fitness curve state ──
-let _rlFitnessCurve = [];  // [{gen, best, avg}]
-
-// ── Leaderboard rendering ──
-function _updateLeaderboard() {
-    const panel = document.getElementById('leaderboard-panel');
-    const list = document.getElementById('leaderboard-list');
-    if (!panel || !list) return;
-    if (_networkLeaderboard.length === 0) { panel.style.display = 'none'; return; }
-    panel.style.display = '';
-
-    const sorted = [..._networkLeaderboard].sort((a, b) => b.fitness - a.fitness);
-    const maxFit = Math.max(0.001, sorted[0].fitness);
-    let html = '';
-    for (let i = 0; i < sorted.length; i++) {
-        const e = sorted[i];
-        const rank = i + 1;
-        const rankClass = rank <= 3 ? ` rank-${rank}` : '';
-        const isCurrent = e.gen === _networkGen && _tournamentRunning;
-        const currentClass = isCurrent ? ' current' : '';
-        const rankColor = rank === 1 ? '#FFD700' : rank === 2 ? '#C0C0C0' : rank === 3 ? '#CD7F32' : '';
-        const pct = Math.max(0, Math.min(100, (e.fitness / maxFit) * 100));
-        html += `<div class="lb-card${rankClass}${currentClass}">` +
-            `<div class="lb-rank${rank <= 3 ? ' top' : ''}" ${rankColor ? `style="color:${rankColor}"` : ''}>${rank}</div>` +
-            `<div class="lb-info">` +
-                `<div><span class="lb-name">${e.name}</span><span class="lb-gen">Gen ${e.gen}</span></div>` +
-                `<div class="lb-bar-track"><div class="lb-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>` +
-                `<div class="lb-metrics">` +
-                    `fit ${(e.fitness * 100).toFixed(1)}%` +
-                    ` · cv ${e.cv.toFixed(3)}` +
-                    ` · fails ${e.guardFailures}` +
-                    (e.actualizationRate != null ? ` · act ${(e.actualizationRate * 100).toFixed(0)}%` : '') +
-                `</div>` +
-            `</div>` +
-        `</div>`;
-    }
-    list.innerHTML = html;
-}
-
-function _drawFitnessCurve() {
-    const canvas = document.getElementById('rl-fitness-canvas');
-    if (!canvas || _rlFitnessCurve.length === 0) return;
-    const wrap = document.getElementById('rl-fitness-wrap');
-    if (wrap) wrap.style.display = '';
-    const ctx = canvas.getContext('2d');
-    const W = canvas.width, H = canvas.height;
-    const PAD = { top: 24, right: 12, bottom: 24, left: 40 };
-    ctx.clearRect(0, 0, W, H);
-
-    // Background
-    ctx.fillStyle = 'rgba(8, 12, 20, 0.95)';
-    ctx.fillRect(0, 0, W, H);
-
-    const data = _rlFitnessCurve;
-    const maxGen = data.length;
-    const maxFit = Math.max(0.01, ...data.map(d => d.best));
-    const minFit = Math.min(0, ...data.map(d => Math.min(d.best, d.avg)));
-    const range = maxFit - minFit || 0.01;
-
-    const plotW = W - PAD.left - PAD.right;
-    const plotH = H - PAD.top - PAD.bottom;
-    const toX = (i) => PAD.left + (i / Math.max(1, maxGen - 1)) * plotW;
-    const toY = (v) => PAD.top + plotH - ((v - minFit) / range) * plotH;
-
-    // Gridlines
-    ctx.setLineDash([3, 3]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-        const y = PAD.top + (i / 4) * plotH;
-        ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
-    }
-    ctx.setLineDash([]);
-
-    // Axes
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, H - PAD.bottom);
-    ctx.lineTo(W - PAD.right, H - PAD.bottom);
-    ctx.stroke();
-
-    // Area fill under best line
-    if (data.length > 1) {
-        const grad = ctx.createLinearGradient(0, PAD.top, 0, H - PAD.bottom);
-        grad.addColorStop(0, 'rgba(232,197,71,0.12)');
-        grad.addColorStop(1, 'rgba(232,197,71,0.0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(toX(0), H - PAD.bottom);
-        for (let i = 0; i < data.length; i++) ctx.lineTo(toX(i), toY(data[i].best));
-        ctx.lineTo(toX(data.length - 1), H - PAD.bottom);
-        ctx.closePath();
-        ctx.fill();
-    }
-
-    // Average line (muted)
-    ctx.strokeStyle = 'rgba(148,163,184,0.4)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-        const x = toX(i), y = toY(data[i].avg);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    // Best line glow
-    ctx.strokeStyle = 'rgba(232,197,71,0.2)';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-        const x = toX(i), y = toY(data[i].best);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    // Best line crisp
-    ctx.strokeStyle = '#E8C547';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let i = 0; i < data.length; i++) {
-        const x = toX(i), y = toY(data[i].best);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-
-    // Data point dots on best line
-    if (data.length <= 30) {
-        ctx.fillStyle = '#E8C547';
-        for (let i = 0; i < data.length; i++) {
-            ctx.beginPath(); ctx.arc(toX(i), toY(data[i].best), 3, 0, Math.PI * 2); ctx.fill();
-        }
-    }
-
-    // Y-axis labels
-    ctx.fillStyle = '#64748B';
-    ctx.font = '10px "SF Mono", "Fira Code", monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(maxFit.toFixed(2), PAD.left - 4, PAD.top + 4);
-    ctx.fillText(minFit.toFixed(2), PAD.left - 4, H - PAD.bottom + 4);
-
-    // X-axis label
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#64748B';
-    ctx.font = '9px Inter, sans-serif';
-    ctx.fillText('Epoch', W / 2, H - 4);
-
-    // Legend (top right)
-    const lx = W - PAD.right - 90;
-    ctx.font = '10px Inter, sans-serif';
-    ctx.fillStyle = '#E8C547'; ctx.fillRect(lx, 6, 8, 8); ctx.beginPath();
-    ctx.fillStyle = '#94A3B8'; ctx.textAlign = 'left'; ctx.fillText('Best', lx + 12, 14);
-    ctx.fillStyle = 'rgba(148,163,184,0.5)'; ctx.fillRect(lx + 48, 6, 8, 8);
-    ctx.fillStyle = '#94A3B8'; ctx.fillText('Avg', lx + 60, 14);
-
-    // Current stats
-    const last = data[data.length - 1];
-    ctx.fillStyle = '#E8ECF1';
-    ctx.font = '11px Inter, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Gen ${maxGen}`, PAD.left + 4, 14);
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = '10px "SF Mono", monospace';
-    ctx.fillText(`best ${last.best.toFixed(3)}  avg ${last.avg.toFixed(3)}`, PAD.left + 50, 14);
-}
-
-// Main tournament runner — PPO training with live metrics
-async function _runTournament() {
-    _tournamentRunning = true;
-    _tournamentVisualsApplied = false;
-    _rlFitnessCurve = [];
-    const savedPan = { x: panTarget.x, y: panTarget.y, z: panTarget.z };
-    _tournamentSavedPan = savedPan;
-
-    const epochsEl = document.getElementById('tournament-generations');
-    const tickEl   = document.getElementById('tournament-ticks');
-    const EPOCHS   = epochsEl ? Math.max(1, parseInt(epochsEl.value) || 10) : 10;
-    const PLANCK_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 2000) : 2000;
-    const statusEl = document.getElementById('tune-status');
-    const titleEl  = document.getElementById('topbar-title');
-
-    // ── Network naming ──
-    const usedNames = new Set(_networkLeaderboard.map(e => e.name));
-    const available = _NETWORK_NAMES.filter(n => !usedNames.has(n));
-    _networkName = available.length > 0
-        ? available[Math.floor(Math.random() * available.length)]
-        : _NETWORK_NAMES[Math.floor(Math.random() * _NETWORK_NAMES.length)];
-    _networkGen = 0;
-    _networkLeaderboard = [];
-    // Set title + trialLabel so it persists across simulateNucleus() calls
-    if (titleEl) {
-        titleEl.textContent = `Current Algo: ${_networkName}`;
-        titleEl.style.textTransform = 'uppercase';
-        titleEl.dataset.trialLabel = `Current Algo: ${_networkName}`;
-    }
-
-    // Initialize RL models
-    const rlReady = typeof initRL === 'function' && await initRL();
-    if (!rlReady) {
-        if (statusEl) { statusEl.textContent = 'TF.js required for PPO'; statusEl.style.color = '#ff6644'; }
-        _tournamentRunning = false;
-        if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
-        panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
-        applyCamera();
-        return;
-    }
-
-    // Create actor-critic models for training
-    _ppoStrategicAC = _rlStrategicModel;
-    _ppoTacticalAC = _rlModel;
-    _rlActiveModel = _rlModel;
-
-    // Create Adam optimizers
-    const strategicOptimizer = tf.train.adam(PPO_LEARNING_RATE);
-    const tacticalOptimizer  = tf.train.adam(PPO_LEARNING_RATE);
-
-    // Create trajectory buffers
-    _ppoStrategicBuffer = new PPOTrajectoryBuffer();
-    _ppoTacticalBuffer  = new PPOTrajectoryBuffer();
-
-    // Enable trajectory collection in planner hooks
-    _ppoTraining = true;
-    resetTickRewardState();
-    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
-
-    // Show fitness canvas + tensor dashboard (canvases are inside wrapper divs)
-    const fitnessCanvas = document.getElementById('rl-fitness-canvas');
-    const fitnessWrap = document.getElementById('rl-fitness-wrap');
-    if (fitnessWrap) fitnessWrap.style.display = '';
-    for (const id of ['rl-policy-wrap', 'rl-weights-wrap', 'rl-metrics-wrap']) {
-        const w = document.getElementById(id);
-        if (w) w.style.display = '';
-    }
-    // Clear metrics history for fresh run
-    if (typeof _ppoMetricsHistory !== 'undefined') _ppoMetricsHistory.length = 0;
-
-    console.log(`[PPO] Starting: ${EPOCHS} epochs × ${PLANCK_PER_EPOCH} Planck-seconds, rollout=${PPO_ROLLOUT_LENGTH}`);
-    const tensorsBefore = tf.memory().numTensors;
-
-    let bestFitness = -Infinity;
-    let updateCount = 0;
-
-    for (let epoch = 0; epoch < EPOCHS; epoch++) {
-        if (!_tournamentRunning) break;
-
-        // Start a fresh demo for this epoch
-        if (typeof stopDemo === 'function') stopDemo();
-        simHalted = false;
-        if (!NucleusSimulator.active) NucleusSimulator.simulateNucleus();
-        startDemoLoop();
-
-        // CRITICAL: Kill the auto-tick loop that startDemoLoop() created.
-        // The PPO training loop drives ticks manually — double-ticking
-        // causes race conditions and Pauli violations.
-        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
-        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-
-        // Live guards & backtracker run normally during PPO training —
-        // identical physics enforcement to demo mode. The NN's bad moves
-        // get backtracked just like any other bad moves.
-
-        // Restore camera
-        panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
-        applyCamera();
-        _tournamentVisualsApplied = true;
-
-        // Re-show playback controls (stopDemo hides them; enterNucleusMode
-        // only runs on first simulateNucleus call, not on epoch 2+)
-        const pbCtrl = document.getElementById('playback-controls');
-        if (pbCtrl) pbCtrl.style.display = '';
-
-        // Restore network name (simulateNucleus overwrites topbar-title)
-        if (titleEl && titleEl.dataset.trialLabel) {
-            titleEl.textContent = titleEl.dataset.trialLabel;
-        }
-
-        _ppoStrategicBuffer.clear();
-        _ppoTacticalBuffer.clear();
-        resetTickRewardState();
-
-        let epochRewardSum = 0;
-        let epochTicks = 0;
-        let guardFailures = 0;
-        // Must read AFTER startDemoLoop() which resets _planckSeconds to 0
-        const epochStartPlanck = _planckSeconds;
-
-        // Run until we accumulate PLANCK_PER_EPOCH Planck seconds (deformation events).
-        // Backtrack retries don't count — only successful deformations advance the epoch.
-        // Safety: cap raw ticks at 10x Planck target to prevent infinite loops if
-        // the simulation gets stuck producing no deformations.
-        const MAX_RAW_TICKS = PLANCK_PER_EPOCH * 10;
-        for (let tick = 0; (_planckSeconds - epochStartPlanck) < PLANCK_PER_EPOCH && tick < MAX_RAW_TICKS; tick++) {
-            if (!_tournamentRunning) break;
-
-            // During PPO training, guard halts are non-fatal — reset and penalize
-            if (simHalted) {
-                simHalted = false;
-                guardFailures++;
-                // Heavy penalty for guard failure
-                const penalty = -5.0;
-                epochRewardSum += penalty;
-                _ppoStrategicBuffer.assignReward(penalty);
-                _ppoTacticalBuffer.assignReward(penalty);
-                // Reset guard state so training can continue
-                for (const entry of LIVE_GUARD_REGISTRY) {
-                    const g = _liveGuards[entry.id];
-                    if (g && g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
-                }
-                _liveGuardFailTick = null;
-                _liveGuardDumped = false;
-            }
-
-            // Pause support: wait while paused, yielding to let UI respond.
-            // User may rewind/step during pause — RL picks up from new state.
-            if (_demoPaused && _tournamentRunning) {
-                const tickBeforePause = _demoTick;
-                // First pause frame: sync visuals so user can see current state
-                if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
-                if (typeof bumpState === 'function') bumpState();
-                if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
-                if (typeof updateSpheres === 'function') updateSpheres();
-                if (typeof updateDemoPanel === 'function') updateDemoPanel();
-                if (typeof _updateEdgeBalancePanel === 'function') _updateEdgeBalancePanel();
-                if (typeof _updateEjectionBalancePanel === 'function') _updateEjectionBalancePanel();
-                if (typeof updateXonPanel === 'function') updateXonPanel();
-                while (_demoPaused && _tournamentRunning) {
-                    await new Promise(r => setTimeout(r, 50));
-                }
-                // If user rewound during pause, reset backtracker & guards
-                // so RL continues cleanly from the new position
-                if (_demoTick !== tickBeforePause) {
-                    _redoStack.length = 0;
-                    _bfsReset(); _btReset();
-                    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
-                }
-            }
-            if (!_tournamentRunning) break;
-
-            // Temporarily clear _demoPaused so demoTick() doesn't early-return
-            const wasPaused = _demoPaused;
-            if (wasPaused) _demoPaused = false;
-            demoTick();
-            if (wasPaused) _demoPaused = true;
-
-            // Yield every tick so the browser can repaint (user sees each tick)
-            await new Promise(r => setTimeout(r, 0));
-
-            // Compute reward for this tick
-            const reward = computeTickReward();
-            epochRewardSum += reward;
-            epochTicks++;
-
-            // Assign reward to both buffers
-            _ppoStrategicBuffer.assignReward(reward);
-            _ppoTacticalBuffer.assignReward(reward);
-
-            // PPO update every ROLLOUT_LENGTH ticks
-            if ((tick + 1) % PPO_ROLLOUT_LENGTH === 0) {
-                // Perform PPO update for strategic network
-                let stratMetrics = null, tactMetrics = null;
-                if (_ppoStrategicBuffer.length >= 2 && _ppoStrategicAC) {
-                    const lastVal = 0; // bootstrap with 0 at rollout boundary
-                    stratMetrics = ppoUpdate(_ppoStrategicAC, strategicOptimizer, _ppoStrategicBuffer, lastVal);
-                    console.log(`[PPO] Strategic update #${updateCount}: loss=${stratMetrics.policyLoss.toFixed(4)}`);
-                }
-                // Perform PPO update for tactical network
-                if (_ppoTacticalBuffer.length >= 2 && _ppoTacticalAC) {
-                    const lastVal = 0;
-                    tactMetrics = ppoUpdate(_ppoTacticalAC, tacticalOptimizer, _ppoTacticalBuffer, lastVal);
-                    console.log(`[PPO] Tactical update #${updateCount}: loss=${tactMetrics.policyLoss.toFixed(4)}`);
-                }
-                // Record metrics for tensor dashboard
-                const dashMetrics = tactMetrics || stratMetrics;
-                if (dashMetrics && typeof _ppoRecordMetrics === 'function') {
-                    _ppoRecordMetrics(dashMetrics);
-                }
-                _ppoStrategicBuffer.clear();
-                _ppoTacticalBuffer.clear();
-                updateCount++;
-                // Update tensor dashboard after each PPO update
-                if (typeof _updateTensorDashboard === 'function') _updateTensorDashboard();
-            }
-        }
-
-        // End of epoch: evaluate fitness
-        const fitness = _evaluateHadronicRatioFitness();
-        const avgReward = epochTicks > 0 ? epochRewardSum / epochTicks : 0;
-        const currentCV = typeof _ppoComputeAvgCV === 'function' ? _ppoComputeAvgCV() : 1;
-
-        console.log(`[PPO] Epoch ${epoch+1}: fitness=${fitness.fitness.toFixed(3)} avgReward=${avgReward.toFixed(4)} CV=${currentCV.toFixed(3)} guardFails=${guardFailures} tensors=${tf.memory().numTensors}`);
-
-        if (fitness.fitness > bestFitness) {
-            bestFitness = fitness.fitness;
-            // Save best weights
-            await rlSaveWeights(_ppoStrategicAC, _ppoTacticalAC, bestFitness);
-        }
-
-        // Update fitness curve
-        _rlFitnessCurve.push({ gen: epoch + 1, best: bestFitness, avg: fitness.fitness });
-        _drawFitnessCurve();
-
-        // ── Network naming + leaderboard ──
-        _networkGen = epoch + 1;
-        const { evennessScore: _lbEven, avgCV: _lbCV } = _computeCoverageEvenness();
-        _networkLeaderboard.push({
-            name: _networkName,
-            gen: _networkGen,
-            fitness: fitness.fitness,
-            cv: _lbCV,
-            guardFailures: guardFailures,
-            actualizationRate: fitness.actualizationRate || 0,
-            avgReward: avgReward
-        });
-        if (typeof _updateLeaderboard === 'function') _updateLeaderboard();
-
-        if (statusEl) {
-            statusEl.textContent = `${_networkName} · Gen ${_networkGen}/${EPOCHS} | fitness ${fitness.fitness.toFixed(3)} | best ${bestFitness.toFixed(3)}`;
-        }
-        if (titleEl) {
-            titleEl.textContent = `Current Algo: ${_networkName} · Gen ${_networkGen}`;
-            titleEl.dataset.trialLabel = `Current Algo: ${_networkName} · Gen ${_networkGen}`;
-        }
-    }
-
-    // Cleanup
-    _ppoTraining = false;
-    _ppoStrategicBuffer = null;
-    _ppoTacticalBuffer = null;
-    strategicOptimizer.dispose();
-    tacticalOptimizer.dispose();
-
-    const tensorsAfter = tf.memory().numTensors;
-    console.log(`[PPO] Done. Tensors: ${tensorsBefore} → ${tensorsAfter} (delta=${tensorsAfter - tensorsBefore})`);
-
-    if (statusEl) {
-        statusEl.textContent = `${_networkName} trained · best fitness ${bestFitness.toFixed(3)}`;
-        statusEl.style.color = 'var(--success, #4ADE80)';
-    }
-
-    _tournamentRunning = false;
-    _tournamentVisualsApplied = false;
-    if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
-    panTarget.x = savedPan.x; panTarget.y = savedPan.y; panTarget.z = savedPan.z;
-    applyCamera();
-    const tuneBtn = document.getElementById('btn-tune-t22');
-    if (tuneBtn) { tuneBtn.textContent = 'Train RL'; }
-
-    if (titleEl) {
-        titleEl.textContent = _networkName ? `Current Algo: ${_networkName}` : 'NUCLEUS: DEUTERON';
-        titleEl.title = '';
-        delete titleEl.dataset.trialLabel;
-    }
-
-    // Restart demo with trained model
-    if (typeof stopDemo === 'function') stopDemo();
-    simHalted = false;
-    if (typeof startDemoLoop === 'function') startDemoLoop();
-}

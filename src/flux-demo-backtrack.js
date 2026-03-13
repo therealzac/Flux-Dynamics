@@ -404,8 +404,11 @@ function _bfsReset() {
     _bfsFailTick = -1;
     _bfsLayer = 0;
     _bfsLayerRetries = 0;
-    _btBadMoveLedger.clear();
-    _btTriedFingerprints.clear();
+    // During BFS exhaustiveness test, preserve fingerprints and ledger for capture
+    if (!_bfsTestActive) {
+        _btBadMoveLedger.clear();
+        _btTriedFingerprints.clear();
+    }
     _btResetMatchingCache();
     _btStaleRetries = 0;
 }
