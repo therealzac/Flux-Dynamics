@@ -665,11 +665,11 @@ document.getElementById('void-opacity-slider').addEventListener('input',applyVoi
 document.getElementById('excitation-speed-slider').addEventListener('input', ()=>{
     const t = +document.getElementById('excitation-speed-slider').value / 100;
     if (t >= 1.0) {
-        ELECTRON_STEP_MS = 0;
+        XON_STEP_MS = 0;
         document.getElementById('excitation-speed-val').textContent = 'MAX';
     } else {
-        ELECTRON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
-        document.getElementById('excitation-speed-val').textContent = ELECTRON_STEP_MS + 'ms';
+        XON_STEP_MS = Math.round(Math.exp(Math.log(1000)*(1-t) + Math.log(30)*t));
+        document.getElementById('excitation-speed-val').textContent = XON_STEP_MS + 'ms';
     }
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
@@ -1309,7 +1309,7 @@ window.runFluxTests = async function(filter){
             const origTick = excitationClockTick;
             // We can't monkeypatch excitationClockTick easily since it's
             // called by setInterval.  Instead, just wait based on tick speed.
-            setTimeout(resolve, ELECTRON_STEP_MS * n + 200);
+            setTimeout(resolve, XON_STEP_MS * n + 200);
         });
     }
 

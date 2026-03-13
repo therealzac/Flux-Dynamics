@@ -781,7 +781,7 @@ function updateStatus(){
     const n=activeSet.size,ni=impliedSet.size,ne=xonImpliedSet.size,el=document.getElementById('st-state');
     const totalOpen = n+ni+ne;
     if(!totalOpen){ el.textContent='FCC'; el.style.color='#3a4a5a'; }
-    else{ el.textContent=n+' manual'+(ni?' + '+ni+' implied':'')+(ne?' + '+ne+' electron':''); el.style.color='#aaccff'; }
+    else{ el.textContent=n+' manual'+(ni?' + '+ni+' implied':'')+(ne?' + '+ne+' xon':''); el.style.color='#aaccff'; }
     document.getElementById('st-sc').textContent=totalOpen+' / '+ALL_SC.length;
 
     // ── INVARIANT CHECK ──
@@ -801,7 +801,7 @@ function updateStatus(){
 
     if(violation){
         // Soft recovery: if jiggle or excitations created the strain via
-        // electron-implied SCs, clear them and re-solve instead of halting.
+        // xon-implied SCs, clear them and re-solve instead of halting.
         // Halting on solver drift is too aggressive — the structure can be
         // recovered by dropping the offending constraints.
         if(xonImpliedSet.size && !simHalted){
@@ -822,7 +822,7 @@ function updateStatus(){
             bumpState();
             const pFinal = detectImplied();
             applyPositions(pFinal);
-            toast('strain reset: cleared electron-implied SCs');
+            toast('strain reset: cleared xon-implied SCs');
             // Re-check after recovery — only halt if it's truly unrecoverable
             let stillBad = false;
             for(const [i,j] of BASE_EDGES){

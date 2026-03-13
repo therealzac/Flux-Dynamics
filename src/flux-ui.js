@@ -55,7 +55,7 @@ function jiggleStep(){
             }
         }
     } else {
-        // Try removing a random electron-implied SC (jiggle's own shortcuts)
+        // Try removing a random xon-implied SC (jiggle's own shortcuts)
         const canRemove = [...xonImpliedSet];
         if(canRemove.length){
             for(let i=canRemove.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1));[canRemove[i],canRemove[j]]=[canRemove[j],canRemove[i]]; }
@@ -137,9 +137,9 @@ function buildExportData(){
     const positions=pos.map(([x,y,z])=>({x:+x.toFixed(6),y:+y.toFixed(6),z:+z.toFixed(6)}));
     const activePairs=[...activeSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
     const impliedPairs=[...impliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
-    const electronPairs=[...xonImpliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
+    const xonPairs=[...xonImpliedSet].map(id=>{ const s=SC_BY_ID[id]; return [s.a,s.b]; });
     const {converged:activeConverged}=_solve(activePairs);
-    const {converged:fullConverged}=_solve([...activePairs,...impliedPairs,...electronPairs]);
+    const {converged:fullConverged}=_solve([...activePairs,...impliedPairs,...xonPairs]);
     let maxBaseErr=0,worstBase=null;
     for(const [i,j] of BASE_EDGES){ const e=Math.abs(vd(pos[i],pos[j])-1); if(e>maxBaseErr){ maxBaseErr=e; worstBase={i,j,d:+vd(pos[i],pos[j]).toFixed(8),err:+e.toFixed(8)}; } }
     let maxSCErr=0,worstSC=null;
@@ -222,13 +222,13 @@ function updateSidePanel(){
     }
     const entries=[];
     [...activeSet].forEach(id=>{ entries.push({id,kind:'manual',locked:isLoadBearing(id,true)}); });
-    [...impliedSet].forEach(id=>{ const isElectron=xonImpliedSet.has(id); entries.push({id,kind:isElectron?'electron':'implied',locked:isLoadBearing(id,false)}); });
+    [...impliedSet].forEach(id=>{ const isXon=xonImpliedSet.has(id); entries.push({id,kind:isXon?'xon':'implied',locked:isLoadBearing(id,false)}); });
     // DO NOT REMOVE: sort severable (locked=false=0) first, locked (true=1) last
     entries.sort((a,b)=>a.locked-b.locked);
     entries.forEach(({id,kind,locked})=>{
         const s=SC_BY_ID[id]; const isImplied=kind!=='manual'; const dotColor=S_COLOR_CSS[s.stype];
         let sublabel='';
-        if(kind==='electron') sublabel='<span class="sh-sub">⬡ excitation</span>';
+        if(kind==='xon') sublabel='<span class="sh-sub">⬡ excitation</span>';
         else if(kind==='implied'){ const parents=[...(impliedBy.get(id)||[])]; const lbl=parents.map(pid=>{ const ps=SC_BY_ID[pid]; return 'v'+ps.a+'–v'+ps.b; }).join(', ')||'geometry'; sublabel='<span class="sh-sub">⬡ '+lbl+'</span>'; }
         const item=document.createElement('div');
         item.className='sh-item'+(isImplied?' implied':' manual')+(locked?' locked':'');
@@ -237,7 +237,7 @@ function updateSidePanel(){
         const btn=locked?'<span class="sh-sever sh-locked">locked</span>':'<span class="sh-sever">sever</span>';
         item.innerHTML=dot+'<span class="sh-label">v'+s.a+' — v'+s.b+' &nbsp;<span style="color:#2a4a5a">s'+s.stype+'</span>'+sublabel+'</span>'+btn;
         // DO NOT REMOVE: sever click handler — manual shortcuts delete directly,
-        // implied/electron shortcuts go through severImplied() which checks solver
+        // implied/xon shortcuts go through severImplied() which checks solver
         if(!locked){ item.querySelector('.sh-sever').addEventListener('click',e=>{ e.stopPropagation(); deactivateBigBang(); if(kind==='manual'){ activeSet.delete(id); hoveredSC=-1; physicsUpdate(); } else{ severImplied(id); } }); }
         shList.appendChild(item);
     });
@@ -343,7 +343,7 @@ window.addEventListener('mouseup',e=>{
     if(dragMoved) return;
     const hit=raycast(e);
     if(hit?.type==='shortcut'){
-        // Manual shortcuts: delete directly. Implied/electron: go through severImplied.
+        // Manual shortcuts: delete directly. Implied/xon: go through severImplied.
         deactivateBigBang();
         if(!impliedSet.has(hit.scId)){ activeSet.delete(hit.scId); hoveredSC=-1; physicsUpdate(); selectedVert=-1; }
         else { severImplied(hit.scId); hoveredSC=-1; }

@@ -1,11 +1,11 @@
-// flux-electrons.js — Excitation system, electron pathfinding, Big Bang
+// flux-xons.js — Excitation system, xon pathfinding, Big Bang
 // ─── Excitation system ──────────────────────────────────────────────────────────
-const ELECTRON_COLORS=[0xffee44,0x44ffcc,0xff44aa,0x44aaff,0xffaa44,0xaa44ff];
-const ELECTRON_COLORS_CSS=['#ffee44','#44ffcc','#ff44aa','#44aaff','#ffaa44','#aa44ff'];
-let excitations=[], electronNextId=0, placingExcitation=false;
+const XON_COLORS=[0xffee44,0x44ffcc,0xff44aa,0x44aaff,0xffaa44,0xaa44ff];
+const XON_COLORS_CSS=['#ffee44','#44ffcc','#ff44aa','#44aaff','#ffaa44','#aa44ff'];
+let excitations=[], xonNextId=0, placingExcitation=false;
 let _deferUIUpdates = false, _uiDirty = false; // batch UI updates during tick
-const ELECTRON_ALPHA=3.0, TRAIL_LENGTH=24;
-let ELECTRON_STEP_MS=0;  // 0 = uncapped (MAX speed), matches slider default of 100
+const XON_ALPHA=3.0, TRAIL_LENGTH=24;
+let XON_STEP_MS=0;  // 0 = uncapped (MAX speed), matches slider default of 100
 let _severanceCount = 0;
 
 // scPairToId hoisted to early block (line ~315) to avoid TDZ in computeVoidNeighbors
@@ -697,7 +697,7 @@ function createExcitation(nodeIdx){
         return null;
     }
 
-    const id=electronNextId++; const colIdx=id%ELECTRON_COLORS.length; const col=ELECTRON_COLORS[colIdx];
+    const id=xonNextId++; const colIdx=id%XON_COLORS.length; const col=XON_COLORS[colIdx];
     // Spark sprite — sparkle point that travels along base edges
     const sparkMat=new THREE.SpriteMaterial({color:col,map:_sparkTex,transparent:true,opacity:1.0,
         blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false});
@@ -735,8 +735,8 @@ function _createExcitation(nodeIdx, customColor){
         }
     }
     if(!hasPath) return null;
-    const id=electronNextId++;
-    const col = customColor || ELECTRON_COLORS[id % ELECTRON_COLORS.length];
+    const id=xonNextId++;
+    const col = customColor || XON_COLORS[id % XON_COLORS.length];
     const sparkMat=new THREE.SpriteMaterial({color:col,map:_sparkTex,transparent:true,opacity:1.0,
         blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false});
     const spark=new THREE.Sprite(sparkMat); spark.scale.set(0.28,0.28,1); spark.renderOrder=22;
@@ -773,8 +773,8 @@ function removeAllExcitations(){
     _batchRemoveMode=true;
     [...excitations].forEach(e=>removeExcitation(e.id));
     _batchRemoveMode=false;
-    // Electron-implied SCs are real structure — keep them unless they cause
-    // strain violations. The old behavior of wiping all electron-implied SCs
+    // Xon-implied SCs are real structure — keep them unless they cause
+    // strain violations. The old behavior of wiping all xon-implied SCs
     // on clear was too aggressive (shortcuts visibly vanished).
     if(xonImpliedSet.size){
         // Check for actual strain before clearing anything
@@ -793,7 +793,7 @@ function removeAllExcitations(){
             bumpState();
             const pFinal = detectImplied();
             applyPositions(pFinal);
-            toast('strain reset: cleared electron-implied SCs');
+            toast('strain reset: cleared xon-implied SCs');
         }
     }
     updateExcitationSidebar(); excitationPaused=false; syncExcitationPlayBtn();
@@ -818,7 +818,7 @@ function _doBigBang(){
             }
         }
         if(!hasPath) continue;
-        const id=electronNextId++; const colIdx=id%ELECTRON_COLORS.length; const col=ELECTRON_COLORS[colIdx];
+        const id=xonNextId++; const colIdx=id%XON_COLORS.length; const col=XON_COLORS[colIdx];
         const sparkMat=new THREE.SpriteMaterial({color:col,map:_sparkTex,transparent:true,opacity:1.0,
             blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false});
         const spark=new THREE.Sprite(sparkMat); spark.scale.set(0.28,0.28,1); spark.renderOrder=22;
@@ -913,12 +913,12 @@ let _strainCheckCounter = 0;
 //   The per-induction rollback (in excitationInduceShortcut) checks whether
 //   adding a SINGLE new SC pushes avgEdge error over a threshold. But each
 //   SC contributes only ~0.15–0.5 ppm individually, so all pass. With 20
-//   simultaneous electron-implied SCs the cumulative drift reaches 17+ ppm
+//   simultaneous xon-implied SCs the cumulative drift reaches 17+ ppm
 //   (density 74.0442%) because no individual induction ever trips the rollback.
 //
 //   Fix: every STRAIN_CHECK_INTERVAL ticks, measure the actual running avgErr
 //   across all base edges. If it exceeds STRAIN_EVICT_TOL (3 ppm), find the
-//   single electron-implied SC whose removal most reduces avgErr and evict it.
+//   single xon-implied SC whose removal most reduces avgErr and evict it.
 //   The owning excitation loses ownShortcut and keeps walking — no freeze.
 //
 //   1 ppm threshold keeps actual strain negligible. Density is always
@@ -1334,7 +1334,7 @@ function excitationClockTick(){
     // Pauli exclusion: no two excitations may occupy the same node.
     //
     // NOTE on directional constraint (future): positive/negative vector
-    // filtering may apply to base directions only (electrons=negative,
+    // filtering may apply to base directions only (xons=negative,
     // positrons=positive). Not yet enforced for quarks.
 
     // Phase 1: Build occupancy map
@@ -1663,7 +1663,7 @@ function excitationClockTick(){
         _batchRemoveMode = false;
         updateExcitationSidebar();
 
-        // If all excitations dissolved, clean up orphaned electron-implied SCs.
+        // If all excitations dissolved, clean up orphaned xon-implied SCs.
         // The excitation clock will stop (no excitations → no more ticks), so
         // strainMonitorCheck would never run again. Without cleanup, orphaned
         // SCs accumulate strain and trigger invariant violations.
@@ -1677,7 +1677,7 @@ function excitationClockTick(){
                 if(cleaned > 50) break; // safety cap
             }
             // If strain is still above halt threshold after cleanup, clear ALL
-            // orphaned electron-implied SCs as a last resort.
+            // orphaned xon-implied SCs as a last resort.
             if(xonImpliedSet.size){
                 let sumErr = 0;
                 for(const [i,j] of BASE_EDGES) sumErr += Math.abs(vd(pos[i],pos[j]) - 1.0);
@@ -1835,7 +1835,7 @@ function excitationClockTick(){
     // Big bang toggle: check for stale state and re-bang
     bigBangStaleCheck();
 }
-function startExcitationClock(){ if(excitationClockTimer||excitationPaused) return; excitationClockTimer=setInterval(excitationClockTick,ELECTRON_STEP_MS); }
+function startExcitationClock(){ if(excitationClockTimer||excitationPaused) return; excitationClockTimer=setInterval(excitationClockTick,XON_STEP_MS); }
 function stopExcitationClock(){ clearInterval(excitationClockTimer); excitationClockTimer=null; excitationClockCursor=0; }
 function syncExcitationPlayBtn(){
     const btn=document.getElementById('btn-excitation-play');
@@ -1859,12 +1859,12 @@ function updateExcitationSidebar(){
     hdr.innerHTML='excitations <span id="el-clear" title="remove all">✕</span>';
     el.appendChild(hdr);
     hdr.querySelector('#el-clear').addEventListener('click', removeAllExcitations);
-    excitations.forEach(e=>{ const item=document.createElement('div'); item.className='el-item'; item.innerHTML=`<div class="el-dot" style="background:${ELECTRON_COLORS_CSS[e.colorIdx]}"></div><span class="el-label">e${e.id} · v${e.node}</span><span class="el-remove">remove</span>`; item.querySelector('.el-remove').addEventListener('click',()=>removeExcitation(e.id)); el.appendChild(item); });
+    excitations.forEach(e=>{ const item=document.createElement('div'); item.className='el-item'; item.innerHTML=`<div class="el-dot" style="background:${XON_COLORS_CSS[e.colorIdx]}"></div><span class="el-label">e${e.id} · v${e.node}</span><span class="el-remove">remove</span>`; item.querySelector('.el-remove').addEventListener('click',()=>removeExcitation(e.id)); el.appendChild(item); });
 }
 
 function tickExcitations(dt){
     excitations.forEach(e=>{
-        e.tweenT=Math.min(1,e.tweenT+dt/(ELECTRON_STEP_MS*0.001));
+        e.tweenT=Math.min(1,e.tweenT+dt/(XON_STEP_MS*0.001));
         const s=1-(1-e.tweenT)**3;
         const pfx=pos[e.prevNode][0],pfy=pos[e.prevNode][1],pfz=pos[e.prevNode][2];
         const ptx=pos[e.node][0],pty=pos[e.node][1],ptz=pos[e.node][2];

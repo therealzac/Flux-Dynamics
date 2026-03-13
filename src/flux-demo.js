@@ -2956,7 +2956,7 @@ async function demoTick() {
             }
         }
         if (violation) {
-            // Soft recovery: try clearing electron-implied SCs
+            // Soft recovery: try clearing xon-implied SCs
             if (xonImpliedSet.size && !simHalted) {
                 for (const id of [...xonImpliedSet]) {
                     xonImpliedSet.delete(id); impliedSet.delete(id); impliedBy.delete(id);
