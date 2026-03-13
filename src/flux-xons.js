@@ -240,72 +240,50 @@ function excitationSeverForRoom(targetScId){
     if(!ranked.length) return false;
     ranked.sort((a,b) => a.score - b.score);
 
-    // Try each candidate: sever, check if target SC can now materialize,
-    // undo if not, try next. Only ONE sever is kept.
-    for(const {scId: victimId} of ranked){
-        // Temporarily sever
-        xonImpliedSet.delete(victimId);
-        impliedSet.delete(victimId);
-        stateVersion++; // invalidate cache so canMaterialiseQuick sees removal
+    // Recursive N-depth severance: try removing 1, 2, 3... SCs until either
+    // the target can materialize or all combinations are exhausted.
+    // No artificial depth cap — the search is bounded by ranked.length.
+    const severed = []; // stack of severed SC IDs
 
-        // Check if target SC can now be materialized
-        if(canMaterialiseQuick(targetScId)){
-            // Success — finalize the sever
-            impliedBy.delete(victimId);
-            for(const ex of excitations){
-                if(ex.ownShortcut === victimId) ex.ownShortcut = null;
-                if(ex.voidScIds && ex.voidScIds.includes(victimId)){
-                    ex.zeroPoint = null; ex.voidType = null;
-                    ex.voidScIds = null; ex.voidNodes = null;
+    function _trySeverDepth(startIdx) {
+        // Check if target can materialize with current severances
+        if (canMaterialiseQuick(targetScId)) {
+            // Success — finalize all severed SCs
+            for (const vid of severed) {
+                impliedBy.delete(vid);
+                for (const ex of excitations) {
+                    if (ex.ownShortcut === vid) ex.ownShortcut = null;
+                    if (ex.voidScIds && ex.voidScIds.includes(vid)) {
+                        ex.zeroPoint = null; ex.voidType = null;
+                        ex.voidScIds = null; ex.voidNodes = null;
+                    }
                 }
             }
-            _severanceCount++;
+            _severanceCount += severed.length;
             bumpState();
             return true;
         }
 
-        // Undo — this sever didn't help
-        xonImpliedSet.add(victimId);
-        impliedSet.add(victimId);
-        stateVersion++; // invalidate cache after undo
-    }
-
-    // PHASE 2: BFS 2-severance combos (try all pairs)
-    for (let i = 0; i < ranked.length; i++) {
-        for (let j = i + 1; j < ranked.length; j++) {
-            const v1 = ranked[i].scId, v2 = ranked[j].scId;
-            xonImpliedSet.delete(v1);
-            xonImpliedSet.delete(v2);
-            impliedSet.delete(v1);
-            impliedSet.delete(v2);
+        // Try severing each remaining candidate
+        for (let i = startIdx; i < ranked.length; i++) {
+            const vid = ranked[i].scId;
+            xonImpliedSet.delete(vid);
+            impliedSet.delete(vid);
             stateVersion++;
+            severed.push(vid);
 
-            if (canMaterialiseQuick(targetScId)) {
-                // Success — finalize both severs
-                impliedBy.delete(v1);
-                impliedBy.delete(v2);
-                for (const ex of excitations) {
-                    for (const vid of [v1, v2]) {
-                        if (ex.ownShortcut === vid) ex.ownShortcut = null;
-                        if (ex.voidScIds && ex.voidScIds.includes(vid)) {
-                            ex.zeroPoint = null; ex.voidType = null;
-                            ex.voidScIds = null; ex.voidNodes = null;
-                        }
-                    }
-                }
-                _severanceCount += 2;
-                bumpState();
-                return true;
-            }
+            if (_trySeverDepth(i + 1)) return true;
 
-            // Undo both
-            xonImpliedSet.add(v1);
-            xonImpliedSet.add(v2);
-            impliedSet.add(v1);
-            impliedSet.add(v2);
+            // Undo
+            severed.pop();
+            xonImpliedSet.add(vid);
+            impliedSet.add(vid);
             stateVersion++;
         }
+        return false;
     }
+
+    if (_trySeverDepth(0)) return true;
     return false;
 }
 

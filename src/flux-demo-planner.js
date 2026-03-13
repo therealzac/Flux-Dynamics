@@ -736,7 +736,8 @@ function _assignXonToTet(xon, face, quarkType) {
     const fd = _nucleusTetFaceData[face];
     if (!fd) return;
     _demoTetAssignments++;  // track for hit rate
-    _promoteFaceSCs(face, xon);
+    // No preemptive face SC promotion — xons negotiate with the vacuum
+    // before each hop. SCs are only locked if traversed (prevNode→node).
 
     const col = QUARK_COLORS[quarkType];
     const cycle = fd.cycle; // [a, b, c, d]
@@ -1009,7 +1010,7 @@ function _startIdleTetLoop(xon, occupied) {
                 // Backtracker exclusion: skip face/dest combos the DFS has already tried
                 const xi = _demoXons.indexOf(xon);
                 if (xi >= 0 && typeof _btIsMoveExcluded === 'function' && _btIsMoveExcluded(xi, dest)) continue;
-                _promoteFaceSCs(face, xon);
+                // No preemptive face promotion — xons negotiate each SC on arrival.
                 _clearModeProps(xon);
                 xon._mode = 'idle_tet';
                 xon._loopSeq = seq;
@@ -1032,7 +1033,7 @@ function _startIdleTetLoop(xon, occupied) {
             }
         }
         if (bestSeq) {
-            _promoteFaceSCs(bestFace, xon);
+            // No preemptive face promotion — xons negotiate each SC on arrival.
             _clearModeProps(xon);
             xon._mode = 'idle_tet';
             xon._loopSeq = bestSeq;
