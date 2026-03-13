@@ -1235,6 +1235,129 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
+    // ── T88: Opposite-hadron vertex exclusion ──
+    // Quarks of opposite hadrons must not simultaneously occupy tets that
+    // share only a single node (same bipartite group). The K₄,₄ geometry
+    // makes single-node sharing exclusive to same-group face pairs (A↔A
+    // or B↔B). A proton quark and neutron quark sharing a vertex means
+    // they've violated the bipartite orientation.
+    {
+      id: 'T88', name: 'Opposite-hadron vertex exclusion',
+      init: { _vertCache: null },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!_nucleusTetFaceData || !_demoXons) return null;
+
+        // Build vertex-sharing cache: same-group face pairs sharing exactly 1 node
+        if (!g._vertCache || g._vertCache.length === 0) {
+          g._vertCache = [];
+          const faces = Object.keys(_nucleusTetFaceData).map(Number);
+          for (let i = 0; i < faces.length; i++) {
+            for (let j = i + 1; j < faces.length; j++) {
+              const c1 = new Set(_nucleusTetFaceData[faces[i]].cycle);
+              const shared = _nucleusTetFaceData[faces[j]].cycle.filter(n => c1.has(n));
+              if (shared.length === 1) {
+                g._vertCache.push([faces[i], faces[j], shared[0]]);
+              }
+            }
+          }
+        }
+
+        // Collect active tet/idle_tet xons → face → quark type
+        const faceQuarks = new Map();
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'tet' && x._mode !== 'idle_tet') continue;
+          if (x._assignedFace == null || !x._quarkType) continue;
+          if (!faceQuarks.has(x._assignedFace)) faceQuarks.set(x._assignedFace, []);
+          faceQuarks.get(x._assignedFace).push({ idx: i, qt: x._quarkType });
+        }
+
+        const PROTON_TYPES = new Set(['pu1', 'pu2', 'pd']);
+
+        for (const [f1, f2, sharedNode] of g._vertCache) {
+          const q1 = faceQuarks.get(f1);
+          const q2 = faceQuarks.get(f2);
+          if (!q1 || !q2) continue;
+          for (const a of q1) {
+            for (const b of q2) {
+              // Opposite hadron = one proton-type, one neutron-type
+              const aIsProton = PROTON_TYPES.has(a.qt);
+              const bIsProton = PROTON_TYPES.has(b.qt);
+              if (aIsProton !== bIsProton) {
+                return `tick ${tick}: opposite-hadron vertex conflict — X${a.idx}(${a.qt}) on F${f1} shares node ${sharedNode} with X${b.idx}(${b.qt}) on F${f2}`;
+              }
+            }
+          }
+        }
+        return null;
+      }
+    },
+
+    // ── T89: Disjoint-face hadron exclusion ──
+    // Faces sharing 0 nodes are always cross-group (A↔B). If two quarks
+    // of the same hadron simultaneously occupy disjoint faces, the bipartite
+    // orientation is violated. Completes the full coverage:
+    //   T87: shared=2 (edge) → must be opposite hadron ✓
+    //   T88: shared=1 (vertex) → must be same hadron ✓
+    //   T89: shared=0 (disjoint) → must be opposite hadron ✓
+    {
+      id: 'T89', name: 'Disjoint-face hadron exclusion',
+      init: { _disjCache: null },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!_nucleusTetFaceData || !_demoXons) return null;
+
+        // Build disjoint cache: face pairs sharing 0 nodes
+        if (!g._disjCache || g._disjCache.length === 0) {
+          g._disjCache = [];
+          const faces = Object.keys(_nucleusTetFaceData).map(Number);
+          for (let i = 0; i < faces.length; i++) {
+            for (let j = i + 1; j < faces.length; j++) {
+              const c1 = new Set(_nucleusTetFaceData[faces[i]].cycle);
+              const shared = _nucleusTetFaceData[faces[j]].cycle.filter(n => c1.has(n));
+              if (shared.length === 0) {
+                g._disjCache.push([faces[i], faces[j]]);
+              }
+            }
+          }
+        }
+
+        // Collect active tet/idle_tet xons → face → quark type
+        const faceQuarks = new Map();
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'tet' && x._mode !== 'idle_tet') continue;
+          if (x._assignedFace == null || !x._quarkType) continue;
+          if (!faceQuarks.has(x._assignedFace)) faceQuarks.set(x._assignedFace, []);
+          faceQuarks.get(x._assignedFace).push({ idx: i, qt: x._quarkType });
+        }
+
+        const PROTON_TYPES = new Set(['pu1', 'pu2', 'pd']);
+
+        for (const [f1, f2] of g._disjCache) {
+          const q1 = faceQuarks.get(f1);
+          const q2 = faceQuarks.get(f2);
+          if (!q1 || !q2) continue;
+          for (const a of q1) {
+            for (const b of q2) {
+              // Same hadron on disjoint faces = violation
+              const aIsProton = PROTON_TYPES.has(a.qt);
+              const bIsProton = PROTON_TYPES.has(b.qt);
+              if (aIsProton === bIsProton) {
+                return `tick ${tick}: same-hadron disjoint conflict — X${a.idx}(${a.qt}) on F${f1} shares no nodes with X${b.idx}(${b.qt}) on F${f2}`;
+              }
+            }
+          }
+        }
+        return null;
+      }
+    },
+
     // ── T-DirBal: Directional balance convergence ──
     // After 64 ticks, each alive xon must have used >= 3 distinct direction
     // indices in _dirBalance. Validates the balance tracking is working and
