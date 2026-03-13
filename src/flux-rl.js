@@ -28,11 +28,7 @@ const PPO_MINIBATCH_SIZE  = 32;
 const PPO_LEARNING_RATE   = 3e-4;
 const PPO_ROLLOUT_LENGTH  = 128;
 const PPO_MAX_GRAD_NORM   = 0.5;
-const PPO_BALANCE_SCALE   = 5.0;    // reward scaling for CV improvement (halved to balance vs penalties)
-const PPO_DEFORMATION_BONUS = 0.05; // reward for ticks with SC changes
-const PPO_IDLE_TICK_PENALTY = 0.02; // penalty for ticks without SC changes
-const PPO_TET_COMPLETION_BONUS = 0.2; // doubled — tet completions are the primary objective
-const PPO_EVENNESS_SCALE  = 5.0;     // reward scaling for edge evenness improvement
+const PPO_EVENNESS_SCALE  = 5.0;     // reward scaling for edge evenness (sole optimization objective)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // §2  TF.js AVAILABILITY
@@ -313,9 +309,7 @@ class PPOTrajectoryBuffer {
 // §6  PER-TICK REWARD
 // ══════════════════════════════════════════════════════════════════════════════
 
-let _ppoPrevAvgCV = null;
 let _ppoPrevEvenness = null;  // previous edge evenness for delta reward
-// (_ppoPrevEjectionEvenness removed — ejection balance no longer drives reward)
 let _ppoTetCompletionsThisTick = 0;
 let _ppoGuardFailedThisTick = false;
 let _ppoDeformationThisTick = false;
@@ -341,35 +335,17 @@ function _ppoComputeAvgCV() {
 }
 
 function computeTickReward() {
-    const currentCV = _ppoComputeAvgCV();
     let reward = 0;
 
-    // Balance improvement (positive = CV decreased = good)
-    if (_ppoPrevAvgCV !== null) {
-        reward += (_ppoPrevAvgCV - currentCV) * PPO_BALANCE_SCALE;
-    }
-
-    // Tet completion bonus
-    reward += PPO_TET_COMPLETION_BONUS * _ppoTetCompletionsThisTick;
-
-    // Guard failure penalty — must outweigh any balance improvement to prevent
-    // the model from learning that illegal-but-CV-improving moves are net positive
+    // Guard failure penalty (safety — prevents learning illegal moves)
     if (_ppoGuardFailedThisTick) reward -= 3.0;
 
-    // Backtracker penalty: each retry means the NN chose a move that violated
-    // a constraint (Pauli, teleportation, unactivated SC, etc.)
+    // Backtracker penalty (safety — constraint violations)
     if (_ppoBacktracksThisTick > 0) {
         reward -= 1.0 * _ppoBacktracksThisTick;
     }
 
-    // Deformation reward: encourage 1:1 tick-to-Planck ratio
-    if (_ppoDeformationThisTick) {
-        reward += PPO_DEFORMATION_BONUS;
-    } else {
-        reward -= PPO_IDLE_TICK_PENALTY;
-    }
-
-    // Edge evenness improvement (positive = evenness increased = good)
+    // Edge evenness improvement — the sole optimization objective
     if (typeof _computeEdgeEvenness === 'function') {
         const currentEvenness = _computeEdgeEvenness();
         if (_ppoPrevEvenness !== null) {
@@ -378,18 +354,6 @@ function computeTickReward() {
         _ppoPrevEvenness = currentEvenness;
     }
 
-    // (Ejection evenness reward removed — unevenness was caused by BFS ordering bias, not missing reward signal)
-
-    // Idle oct xon penalty
-    if (typeof _demoXons !== 'undefined') {
-        let idleCount = 0;
-        for (const x of _demoXons) {
-            if (x.alive && x._mode === 'oct') idleCount++;
-        }
-        reward -= 0.01 * idleCount;
-    }
-
-    _ppoPrevAvgCV = currentCV;
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
     _ppoDeformationThisTick = false;
@@ -399,7 +363,6 @@ function computeTickReward() {
 }
 
 function resetTickRewardState() {
-    _ppoPrevAvgCV = null;
     _ppoPrevEvenness = null;
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
