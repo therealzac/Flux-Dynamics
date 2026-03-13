@@ -318,6 +318,8 @@
 // ── Xonic Movement Balance: direction identification ──
 // Maps SC stype (1-6) to _dirBalance index (4-9). Base dirs use indices 0-3 directly.
 let _demoPanelDirty = false; // rAF coalescing flag for left-panel UI updates
+let _demoPanelTimer = null;  // setTimeout handle for throttled heavy panel rebuilds
+let _demoLightDirty = false; // rAF coalescing flag for lightweight updates (xon panel)
 const _STYPE_TO_DIR = {1:4, 2:5, 3:6, 4:7, 5:8, 6:9};
 
 // Identify the direction index (0-9) for a move from→to.
@@ -1579,17 +1581,11 @@ async function demoTick() {
     // Only true failure: BFS reaches t=0 (canary for impossible rules).
     for (let _btAttempt = 0; ; _btAttempt++) {
     // Yield to event loop every 8 retries so the browser can paint & stay responsive
-    if (_btAttempt > 0 && _btAttempt % 8 === 0) {
-        // Update left panel during long backtrack grinds so user sees progress
-        if (_demoPanelDirty) {
-            _demoPanelDirty = false;
-            updateDemoPanel();
-            _updateEdgeBalancePanel();
-            _updateEjectionBalancePanel();
-            _drawBalanceChart();
-            updateStatus();
-            updateXonPanel();
-        }
+    if (_btAttempt > 0 && _btAttempt % 2 === 0) {
+        // Yield to event loop every 2 retries so browser stays responsive.
+        // Heavy panel updates handled by the 1/sec timer.
+        _demoPanelDirty = true;
+        updateXonPanel();
         await new Promise(r => setTimeout(r, 0));
     }
 
@@ -1908,14 +1904,23 @@ async function demoTick() {
                 }
             }
         }
-        // Sort: prefer (1) non-trail nodes, (2) non-prevNode, (3) anything
+        // Score & sort: (1) non-trail, (2) non-prevNode, (3) ejection balance
+        // bias toward underused edges, (4) random tiebreaker
         bestSteps.sort((a, b) => {
             const aInTrail = recentTrail.has(a) ? 1 : 0;
             const bInTrail = recentTrail.has(b) ? 1 : 0;
             if (aInTrail !== bInTrail) return aInTrail - bInTrail;
             const aIsPrev = a === xon.prevNode ? 1 : 0;
             const bIsPrev = b === xon.prevNode ? 1 : 0;
-            return aIsPrev - bIsPrev;
+            if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
+            // Ejection balance: prefer edges with fewer traversals
+            const aPid = pairId(xon.node, a);
+            const bPid = pairId(xon.node, b);
+            const aEj = _ejectionBalance ? (_ejectionBalance.get(aPid) || 0) : 0;
+            const bEj = _ejectionBalance ? (_ejectionBalance.get(bPid) || 0) : 0;
+            if (aEj !== bEj) return aEj - bEj; // fewer traversals = preferred
+            // Random tiebreaker to prevent lattice-order bias
+            return _sRng() - 0.5;
         });
         // Try each first-step: first that passes guards + occupancy + swap wins
         let bestStep = null;
@@ -1963,7 +1968,8 @@ async function demoTick() {
             // All BFS steps blocked — try free neighbor (avoiding hadron-occupied nodes)
             // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
             // — weak xons have freedom to roam the full lattice.
-            const allNbs = baseNeighbors[xon.node] || [];
+            // Shuffle to prevent lattice-order bias in fallback selection.
+            const allNbs = _sRngShuffle((baseNeighbors[xon.node] || []).slice());
             const hadronFilter = nb => !_isHadronOccupied(nb.node);
             // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
@@ -2802,7 +2808,7 @@ async function demoTick() {
         if (typeof _ppoDeformationThisTick !== 'undefined') _ppoDeformationThisTick = true;
     }
     if (_solverNeeded) {
-        bumpState();
+        bumpState(true); // skip voids — solver will reposition everything
         const scPairs = [];
         activeSet.forEach(id => { const s = SC_BY_ID[id]; scPairs.push([s.a, s.b]); });
         xonImpliedSet.forEach(id => { const s = SC_BY_ID[id]; scPairs.push([s.a, s.b]); });
@@ -2811,12 +2817,9 @@ async function demoTick() {
         xonImpliedSet.forEach(id => {
             if (!activeSet.has(id)) { impliedSet.add(id); impliedBy.set(id, new Set()); }
         });
-        // Bump state again AFTER solving so applyPositions → updateVoidSpheres
-        // re-evaluates geometric checks with the deformed (solved) positions.
-        // bumpState() above calls updateVoidSpheres() with pre-solver positions,
-        // caching stale actualization; this second bump invalidates that cache.
         stateVersion++;
         applyPositions(pSolved);
+        updateVoidSpheres(); // evaluate with final solved positions
         updateSpheres();
     }
 
@@ -3159,19 +3162,30 @@ async function demoTick() {
         }
     }
 
-    // Update UI — deferred to next animation frame so panels never block the sim.
-    // _demoPanelDirty flag ensures we schedule at most one rAF per burst of ticks.
-    if (!_demoPanelDirty) {
-        _demoPanelDirty = true;
-        requestAnimationFrame(() => {
-            _demoPanelDirty = false;
-            updateDemoPanel();
-            _updateEdgeBalancePanel();
-            _updateEjectionBalancePanel();
-            _drawBalanceChart();
-            updateStatus();
-            updateXonPanel();
-        });
+    // Update UI — throttled to ~1/sec for heavy panels, rAF for lightweight updates.
+    // This prevents 19ms+ panel rebuilds from eating every frame budget.
+    _demoPanelDirty = true;
+    if (!_demoPanelTimer) {
+        // Lightweight updates (tick counter, xon panel) still go via rAF
+        if (!_demoLightDirty) {
+            _demoLightDirty = true;
+            requestAnimationFrame(() => {
+                _demoLightDirty = false;
+                updateXonPanel();
+            });
+        }
+        // Heavy panel rebuilds (innerHTML) throttled to 1/sec
+        _demoPanelTimer = setTimeout(() => {
+            _demoPanelTimer = null;
+            if (_demoPanelDirty) {
+                _demoPanelDirty = false;
+                updateDemoPanel();
+                _updateEdgeBalancePanel();
+                _updateEjectionBalancePanel();
+                _drawBalanceChart();
+                updateStatus();
+            }
+        }, 1000);
     }
 
     // Tick log entry (lightweight, for export)

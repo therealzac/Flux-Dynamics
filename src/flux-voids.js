@@ -673,15 +673,24 @@ document.getElementById('excitation-speed-slider').addEventListener('input', ()=
     }
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
-    // Also restart demo interval if demo is running (but NOT if paused)
+    // Also restart demo interval if demo is running (but NOT if paused).
+    // If we're in forward replay mode (draining redo stack), restart the replay
+    // chain instead of switching to live demoTick — otherwise speed changes
+    // during replay would trigger heavy live computation.
     if(_demoActive && typeof isDemoPaused === 'function' && !isDemoPaused()) {
         if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
         if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-        const intervalMs = _getDemoIntervalMs();
-        if (intervalMs === 0) {
-            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+        if (typeof _redoStack !== 'undefined' && _redoStack.length > 0) {
+            // Re-enter replay mode — resumeDemo() handles redo stack correctly
+            _demoPaused = true;
+            resumeDemo();
         } else {
-            _demoInterval = setInterval(demoTick, intervalMs);
+            const intervalMs = _getDemoIntervalMs();
+            if (intervalMs === 0) {
+                _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
+            } else {
+                _demoInterval = setInterval(demoTick, intervalMs);
+            }
         }
     }
 });
@@ -717,7 +726,7 @@ function buildBranes() {
     if (typeof baseNeighbors === 'undefined' || !baseNeighbors) return;
 
     const slider = document.getElementById('brane-opacity-slider');
-    const baseOp = slider ? (+slider.value / 10) / 100 : 0.03;
+    const baseOp = slider ? +slider.value / 100 : 0.05;
 
     // BFS from all oct nodes to assign every lattice node a distance
     const dist = new Int32Array(N).fill(-1);
@@ -842,9 +851,9 @@ function buildBranes() {
 function updateBraneOpacity() {
     const slider = document.getElementById('brane-opacity-slider');
     if (!slider) return;
-    const pct = +slider.value / 10;
+    const pct = +slider.value;
     const op = pct / 100;
-    document.getElementById('brane-opacity-val').textContent = pct.toFixed(1) + '%';
+    document.getElementById('brane-opacity-val').textContent = pct + '%';
     for (const shell of _braneShells) {
         // Inner shells dimmer, outer shells brighter
         const opScale = _braneShells.length > 1

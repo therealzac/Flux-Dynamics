@@ -588,11 +588,14 @@ function resumeDemo() {
     if (typeof _tournamentRunning !== 'undefined' && _tournamentRunning) return;
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
         if (_redoStack.length > 0) {
-            // Drain redo stack at playback speed (deterministic replay)
-            const intervalMs = Math.max(4, _getDemoIntervalMs());
-            _demoInterval = setInterval(() => {
+            // Drain redo stack at playback speed (responsive to slider changes).
+            // Uses setTimeout chaining (like rewind) so speed adjustments take
+            // effect immediately — setInterval would lock to the initial rate.
+            let _lastForwardVisual = 0;
+            const FWD_VISUAL_INTERVAL = 33; // ~30fps
+            function _forwardReplayStep() {
                 if (_demoPaused || !_demoActive) {
-                    clearInterval(_demoInterval); _demoInterval = null;
+                    _demoInterval = null;
                     return;
                 }
                 if (_redoStack.length > 0) {
@@ -600,10 +603,18 @@ function resumeDemo() {
                     const snap = _redoStack.pop();
                     _btRestoreSnapshot(snap);
                     simHalted = false;
-                    _playbackUpdateDisplay();
+                    // Throttle visual updates to ~30fps for buttery speed
+                    const now = performance.now();
+                    if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {
+                        _playbackUpdateDisplay();
+                        _lastForwardVisual = now;
+                    }
+                    // Re-read slider each step so speed changes take effect immediately
+                    const nextMs = Math.max(4, _getDemoIntervalMs());
+                    _demoInterval = setTimeout(_forwardReplayStep, nextMs);
                 } else {
                     // Redo exhausted — switch to live execution
-                    clearInterval(_demoInterval); _demoInterval = null;
+                    _demoInterval = null;
                     _bfsReset(); _btReset();
                     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
                     const liveMs = _getDemoIntervalMs();
@@ -613,7 +624,9 @@ function resumeDemo() {
                         _demoInterval = setInterval(demoTick, liveMs);
                     }
                 }
-            }, intervalMs);
+            }
+            const intervalMs = Math.max(4, _getDemoIntervalMs());
+            _demoInterval = setTimeout(_forwardReplayStep, intervalMs);
         } else {
             const intervalMs = _getDemoIntervalMs();
             if (intervalMs === 0) {

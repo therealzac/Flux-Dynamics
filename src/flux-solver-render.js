@@ -899,10 +899,10 @@ function detectImplied(){
 // change. This lets candidateOk and the side panel skip expensive solver work
 // when called from the hover path (where state hasn't changed).
 
-function bumpState() {
+function bumpState(skipVoids) {
     stateVersion++;
     candidateCacheKey = '';
-    updateVoidSpheres(); // re-evaluate which voids are actualized
+    if (!skipVoids) updateVoidSpheres(); // re-evaluate which voids are actualized
 }
 
 // ── Performance helpers (cached per stateVersion) ──────────────────────

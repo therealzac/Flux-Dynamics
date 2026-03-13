@@ -480,21 +480,28 @@ function _getOctCandidates(xon, occupied, blocked) {
     if (xon._mode === 'weak') {
         const candidates = [];
         const isEjected = !!xon._t60Ejected;
-        for (const nb of _localBaseNeighbors(xon.node)) {
+        for (const nb of _sRngShuffle(_localBaseNeighbors(xon.node).slice())) {
             if ((occupied.get(nb.node) || 0) > 0) continue;
             if (blocked && blocked.has(nb.node)) continue;
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
             // T61: ejected weak xons must NOT target oct nodes (must eject away)
             if (isEjected && _octNodeSet && _octNodeSet.has(nb.node)) continue;
-            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score: 1, _scId: undefined, _needsMaterialise: false });
+            // Score by ejection balance: prefer edges with fewer traversals
+            const pid = pairId(xon.node, nb.node);
+            const ejCount = _ejectionBalance ? (_ejectionBalance.get(pid) || 0) : 0;
+            // Invert: fewer traversals = higher score. Add random tiebreaker.
+            const score = 1000 - ejCount + (_sRng() - 0.5) * 0.5;
+            candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: undefined, _needsMaterialise: false });
         }
+        // Sort by score descending (fewest ejection traversals first)
+        candidates.sort((a, b) => b.score - a.score);
         return candidates;
     }
 
     // Pending-weak xons: give ALL base neighbors (they need to step OFF the oct)
     if (xon._pendingWeakEjection) {
         const candidates = [];
-        for (const nb of baseNeighbors[xon.node]) {
+        for (const nb of _sRngShuffle((baseNeighbors[xon.node] || []).slice())) {
             if (occupied.has(nb.node)) continue;
             if (blocked && blocked.has(nb.node)) continue;
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
@@ -572,9 +579,19 @@ function _getOctCandidates(xon, occupied, blocked) {
                 const features = extractRLFeatures(xon, nb, occupied);
                 score = scoreCandidateRL(features, _rlActiveModel);
             } else {
-                // Spatial bias: prefer candidates closer to oct geometric center
-                // Small random tiebreaker prevents deterministic cycling
-                score = _octCenterBias(nb.node) + (_sRng() - 0.5) * 0.1;
+                // Spatial bias + edge balance: prefer candidates closer to oct center
+                // AND edges with fewer traversals. Random tiebreaker prevents cycling.
+                score = _octCenterBias(nb.node);
+                // Edge balance bonus: prefer less-traversed edges
+                if (_edgeBalance) {
+                    const pid = pairId(xon.node, nb.node);
+                    const entry = _edgeBalance.get(pid);
+                    if (entry && entry.total > 0) {
+                        // Normalize: max traversals across all edges
+                        score -= entry.total * 0.01; // slight penalty for overused edges
+                    }
+                }
+                score += (_sRng() - 0.5) * 0.2;
             }
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
         }
