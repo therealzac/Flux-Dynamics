@@ -3111,10 +3111,10 @@ async function demoTick() {
             }
 
             const anchorSnap = _btSnapshots.find(s => s.tick === targetTick);
-            if (!anchorSnap) {
-                // No snapshot for this tick — we've exhausted snapshot history.
+            if (!anchorSnap || anchorSnap._pruned) {
+                // No snapshot (or pruned) for this tick — we've exhausted snapshot history.
                 // This is equivalent to reaching t=0.
-                console.error(`%c[CANARY] Rules are mathematically impossible — no snapshot for tick ${targetTick} (backed to t=0). Last violation: ${_rewindViolation}`, 'color:red;font-weight:bold;font-size:14px');
+                console.error(`%c[CANARY] Rules are mathematically impossible — no snapshot for tick ${targetTick} (${anchorSnap ? 'pruned' : 'missing'}, backed to t=0). Last violation: ${_rewindViolation}`, 'color:red;font-weight:bold;font-size:14px');
                 _saveRunResult('canary-no-snap', _rewindViolation);
                 simHalted = true;
                 _btReset();
@@ -3132,6 +3132,28 @@ async function demoTick() {
             // playback only shows the happy path, not BFS mistakes.
             while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
                 _btSnapshots.pop();
+            }
+            // Prune exhausted snapshots: any snapshot between targetTick+1
+            // and _bfsFailTick is proven exhausted (all options tried at that
+            // tick). They were already popped above. But snapshots BEFORE
+            // targetTick that are no longer reachable can also be pruned.
+            // The backtracker can only reach tick (_bfsFailTick - maxLayer),
+            // and maxLayer only increases. So any snapshot at a tick >
+            // targetTick is unreachable — those were already popped. Snapshots
+            // at ticks <= targetTick are still potentially needed (we might
+            // escalate further). However, we CAN prune the snapshot at the
+            // PREVIOUS anchor (targetTick + 1) if it still exists — it's
+            // fully exhausted. Since we just popped it above, it's already
+            // freed. The real win is pruning snapshots that accumulate during
+            // long forward runs: keep only the last N snapshots before the
+            // anchor to bound memory. The backtracker realistically only
+            // backs up ~50 layers max before hitting canary.
+            const _BT_KEEP_WINDOW = 200; // keep 200 snapshots behind anchor
+            if (_btSnapshots.length > _BT_KEEP_WINDOW) {
+                const pruneCount = _btSnapshots.length - _BT_KEEP_WINDOW;
+                for (let i = 0; i < pruneCount; i++) {
+                    _btPruneSnapshot(_btSnapshots[i]);
+                }
             }
             // Also trim tick log — entries past the anchor tick will be
             // re-generated when the BFS replays forward with different moves.
@@ -3317,6 +3339,17 @@ async function demoTick() {
         _bfsReset();
     }
     _btReset();
+    // ── Memory pruning: gut old snapshots beyond the keep window ──
+    // The backtracker only needs recent snapshots for BFS escalation.
+    // Older snapshots are kept as tombstones (tick field preserved) but
+    // their heavy payloads (pos, xon state, SC sets) are freed.
+    const _BT_PRUNE_WINDOW = 200;
+    if (_btSnapshots.length > _BT_PRUNE_WINDOW && cleanTick % 50 === 0) {
+        const pruneCount = _btSnapshots.length - _BT_PRUNE_WINDOW;
+        for (let i = 0; i < pruneCount; i++) {
+            _btPruneSnapshot(_btSnapshots[i]);
+        }
+    }
     _profPhases.guards += _gT1 - _gT0;
     break; // exit retry loop
 

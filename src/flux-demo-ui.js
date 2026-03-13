@@ -787,6 +787,14 @@ function _playbackStepBack() {
     _redoStack.push(redoSnap);
     // Now pop the actual previous state
     const snap = _btSnapshots.pop();
+    if (!snap || snap._pruned) {
+        // Hit a pruned snapshot — can't rewind further
+        if (snap) _btSnapshots.push(snap); // put tombstone back
+        _redoStack.pop(); // undo the redo push
+        _btSnapshots.push(redoSnap); // undo the current-state pop
+        _btSnapshots.pop(); // remove the snapshot we saved
+        return false;
+    }
     _btRestoreSnapshot(snap);
     // Clear halt flag — rewind should always allow forward replay
     simHalted = false;
@@ -844,6 +852,12 @@ function startReverse() {
         _redoStack.push(_btSnapshots.pop());
         // Restore previous state
         const snap = _btSnapshots.pop();
+        if (!snap || snap._pruned) {
+            // Hit a pruned snapshot — stop reversing
+            if (snap) _btSnapshots.push(snap);
+            stopReverse();
+            return;
+        }
         _btRestoreSnapshot(snap);
         simHalted = false;
         _bfsReset();
@@ -934,7 +948,10 @@ function _timelineScrubTo(targetPos) {
             _btSaveSnapshot();
             _redoStack.push(_btSnapshots.pop());
             const snap = _btSnapshots.pop();
-            if (!snap) break;
+            if (!snap || snap._pruned) {
+                if (snap) _btSnapshots.push(snap); // put tombstone back
+                break;
+            }
             _btRestoreSnapshot(snap);
         }
     } else {

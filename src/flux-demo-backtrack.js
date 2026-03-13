@@ -1,5 +1,27 @@
 // flux-demo-backtrack.js — Backtracker: state snapshots, BFS layers, exclusion ledger
 
+// Gut a snapshot's heavy payload to free memory while keeping it as a
+// tombstone in the stack. The tick field is preserved so _btSnapshots.find()
+// still returns truthy, but restore will skip it. Call this when a tick is
+// fully exhausted (all three relay phases completed, all options tried).
+function _btPruneSnapshot(snap) {
+    if (!snap || snap._pruned) return;
+    snap._pruned = true;
+    // Free heavy arrays/objects — keep only tick for lookup
+    snap.xons = null;
+    snap.activeSet = null;
+    snap.xonImpliedSet = null;
+    snap.impliedSet = null;
+    snap.scAttribution = null;
+    snap.pos = null;
+    snap.demoVisits = null;
+    snap.actualizationVisits = null;
+    snap.faceEdgeEpoch = null;
+    snap.faceWasActualized = null;
+    snap.edgeBalance = null;
+    snap.ejectionBalance = null;
+}
+
 // Save a full snapshot of choreography state before a tick executes.
 function _btSaveSnapshot() {
     const snap = {
