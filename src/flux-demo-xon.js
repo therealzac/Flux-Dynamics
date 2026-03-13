@@ -228,7 +228,7 @@ function _advanceXon(xon) {
     _updateDirBalance(xon, fromNode, toNode);
 
     // Record edge traversal for edge balance (quark modes only)
-    if (xon._quarkType) _recordEdgeTraversal(fromNode, toNode, xon._quarkType);
+    if (xon._quarkType) _recordEdgeTraversal(fromNode, toNode, xon._quarkType, xon._assignedFace);
 
     // Check if tet face is actualized this step (all face SCs active)
     if (xon._assignedFace != null && _nucleusTetFaceData) {

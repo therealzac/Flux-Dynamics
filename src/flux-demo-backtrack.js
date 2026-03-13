@@ -31,6 +31,11 @@ function _btSaveSnapshot() {
         octFullConsecutive: _octFullConsecutive,
         // Hadron balance counts (must rewind with backtracker for correct T22)
         demoVisits: _demoVisits ? JSON.parse(JSON.stringify(_demoVisits)) : null,
+        // Actualization-based quark counts (must rewind to stay in sync)
+        actualizationVisits: _actualizationVisits ? JSON.parse(JSON.stringify(_actualizationVisits)) : null,
+        // Per-face edge epoch (edges since last manifestation)
+        faceEdgeEpoch: _faceEdgeEpoch ? JSON.parse(JSON.stringify(_faceEdgeEpoch)) : null,
+        faceWasActualized: _faceWasActualized ? { ..._faceWasActualized } : null,
         // Edge balance counters (must rewind with backtracker)
         edgeBalance: _edgeBalance ? new Map([..._edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
         // Ejection balance counters
@@ -99,6 +104,11 @@ function _btRestoreSnapshot(snap) {
     if ('octFullConsecutive' in snap) _octFullConsecutive = snap.octFullConsecutive;
     // Restore hadron balance counts
     if (snap.demoVisits) _demoVisits = JSON.parse(JSON.stringify(snap.demoVisits));
+    // Restore actualization-based quark counts
+    if (snap.actualizationVisits) _actualizationVisits = JSON.parse(JSON.stringify(snap.actualizationVisits));
+    // Restore per-face edge epoch
+    if (snap.faceEdgeEpoch) _faceEdgeEpoch = JSON.parse(JSON.stringify(snap.faceEdgeEpoch));
+    if (snap.faceWasActualized) _faceWasActualized = { ...snap.faceWasActualized };
     // Restore edge balance counters
     if (snap.edgeBalance) _edgeBalance = new Map([...snap.edgeBalance].map(([k, v]) => [k, { ...v }]));
     // Restore ejection balance counters

@@ -684,40 +684,39 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
-    // T58: Tet coloring matches actualization — shapes layer only colors tets
-    // whose xon has completed the loop (step >= 4) AND was actualized.
-    // This matches the _demoVisits gate: colored = counted in hadronic balance.
-    { id: 'T58', name: 'Tet color only on completion',
+    // T58: Tet coloring matches geometric actualization — a tet is colored
+    // IFF all its bounding SCs are active. Color = dominant quark type from
+    // cumulative edge balance, or neutral gray if no traversals yet.
+    { id: 'T58', name: 'Tet color matches SC actualization',
       check(tick, g) {
         if (g.ok === null && tick >= LIVE_GUARD_GRACE) { g.ok = true; g.msg = ''; }
         if (!_nucleusTetFaceData || !_ruleAnnotations) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
           const opacity = _ruleAnnotations.tetOpacity.get(fd.voidIdx);
-          if (!opacity || opacity <= 0) continue; // not colored — fine
-          // This face IS colored. Find the xon assigned to it.
-          let assignedXon = null;
-          for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon._assignedFace === fId && (xon._mode === 'tet' || xon._mode === 'idle_tet')) {
-              assignedXon = xon;
-              break;
-            }
-          }
-          if (!assignedXon) {
-            return `tick ${tick}: face ${fId} colored (opacity ${opacity.toFixed(2)}) but no xon assigned`;
-          }
-          if (!assignedXon._tetActualized) {
-            return `tick ${tick}: face ${fId} colored but xon not actualized (step=${assignedXon._loopStep})`;
-          }
-          if (assignedXon._loopStep < 4) {
-            return `tick ${tick}: face ${fId} colored at step ${assignedXon._loopStep} (must be 4)`;
-          }
-          // SCs must be active right now
-          const scsOk = fd.scIds.every(scId =>
+          const isColored = opacity && opacity > 0;
+          const allSCsActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-          if (!scsOk) {
-            return `tick ${tick}: face ${fId} colored but face SCs not all active`;
+          // Colored but SCs not all active = bad
+          if (isColored && !allSCsActive) {
+            return `tick ${tick}: face ${fId} colored but SCs not all active`;
+          }
+          // SCs all active but NOT colored = bad (should be visible)
+          if (allSCsActive && !isColored) {
+            return `tick ${tick}: face ${fId} has all SCs active but not colored`;
+          }
+          // If colored, verify color matches dominant quark type (or neutral gray)
+          if (isColored) {
+            const annotCol = _ruleAnnotations.tetColors.get(fd.voidIdx);
+            const dominant = typeof _dominantQuarkForFace === 'function'
+              ? _dominantQuarkForFace(fId) : null;
+            if (dominant) {
+              const expected = QUARK_COLORS[dominant];
+              if (annotCol !== expected) {
+                return `tick ${tick}: face ${fId} colored 0x${(annotCol||0).toString(16)} but dominant type is ${dominant} (0x${expected.toString(16)})`;
+              }
+            }
+            // If no dominant type yet (no traversals), neutral gray is fine
           }
         }
         return null;
@@ -1065,6 +1064,111 @@ const LIVE_GUARD_REGISTRY = [
         // All good — promote to green
         g.ok = true; g.msg = '';
         if (typeof _liveGuardRender === 'function') _liveGuardRender();
+        return null;
+      }
+    },
+
+    // ── T84: Tet loop commitment — no mid-loop role switching ──
+    // Once a xon enters tet/idle_tet mode with a quark assignment, it must
+    // either complete the loop (step >= 4 → return to oct) or be ejected
+    // (return to oct/weak). It cannot switch quarkType or assignedFace
+    // while still in tet/idle_tet mode mid-loop.
+    {
+      id: 'T84', name: 'No mid-loop quark/face switch',
+      init: { prevTetState: null },
+      snapshot(g) {
+        // Capture tet state BEFORE tick runs
+        g.prevTetState = _demoXons.map(x => {
+          if (!x.alive) return null;
+          if (x._mode === 'tet' || x._mode === 'idle_tet') {
+            return { face: x._assignedFace, quark: x._quarkType, step: x._loopStep };
+          }
+          return null;
+        });
+      },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!g.prevTetState) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          const prev = g.prevTetState[i];
+          if (!prev) continue; // wasn't in tet last tick
+          // Xon was in tet/idle_tet last tick. If still in tet/idle_tet now:
+          if (x._mode === 'tet' || x._mode === 'idle_tet') {
+            if (x._assignedFace !== prev.face) {
+              return `tick ${tick}: X${i} switched face ${prev.face}→${x._assignedFace} mid-loop (step was ${prev.step})`;
+            }
+            if (x._quarkType !== prev.quark) {
+              return `tick ${tick}: X${i} switched quark ${prev.quark}→${x._quarkType} mid-loop on face ${prev.face} (step was ${prev.step})`;
+            }
+          }
+          // If xon left tet mode (now oct/weak), that's fine — ejection/completion
+        }
+        return null;
+      }
+    },
+
+    // ── T85: Stochastic DFS — runs must diverge ──
+    // At tick 50, fingerprint xon positions and save to localStorage.
+    // If a subsequent run produces the identical fingerprint, DFS is not
+    // exploring different branches → violation.
+    {
+      id: 'T85', name: 'Stochastic DFS (runs diverge)',
+      convergence: true,
+      init: { checked: false },
+      check(tick, g) {
+        if (g.checked) return null;
+        const CHECK_TICK = 50;
+        if (tick < CHECK_TICK) return null;
+        if (tick > CHECK_TICK) { g.checked = true; return null; } // missed window
+        // Build fingerprint: sorted list of (xonIndex, node, mode)
+        const fp = _demoXons.map((x, i) =>
+          x.alive ? `${i}:${x.node}:${x._mode}:${x._assignedFace||'-'}` : `${i}:dead`
+        ).join('|');
+        const KEY = '_fluxT85_fingerprint';
+        try {
+          const prev = localStorage.getItem(KEY);
+          localStorage.setItem(KEY, fp);
+          g.checked = true;
+          if (prev && prev === fp) {
+            return `tick ${CHECK_TICK}: identical fingerprint across runs — DFS is deterministic`;
+          }
+          // First run or different fingerprint → pass
+          g.ok = true;
+          g.msg = 'diverged';
+        } catch (e) {
+          // localStorage unavailable — skip test
+          g.checked = true;
+          g.ok = true;
+          g.msg = 'localStorage N/A';
+        }
+        return null;
+      }
+    },
+
+    // ── T86: Bare tetrahedra — actualized tet must have edge contributors ──
+    // If a tet face has all SCs active (actualized) but _dominantQuarkForFace
+    // returns null (no edge traversals since last manifestation), the choreographer
+    // failed to populate the tet before manifesting it.
+    {
+      id: 'T86', name: 'No bare tetrahedra',
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!_nucleusTetFaceData) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const allSCsActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (!allSCsActive) continue;
+          const dominant = typeof _dominantQuarkForFace === 'function'
+            ? _dominantQuarkForFace(fId) : null;
+          if (dominant === null) {
+            return `tick ${tick}: face ${fId} actualized but no edge contributors (bare tetrahedra)`;
+          }
+        }
         return null;
       }
     },

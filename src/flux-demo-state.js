@@ -24,6 +24,14 @@ let _demoTick = 0;
 let _planckSeconds = 0;  // ticks where lattice deformation occurred (SC adds/removes)
 let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
+let _actualizationVisits = null; // {face: {pu1:0,...}} — counts per-Planck-second tet actualization
+
+// ── Per-Face Edge Epoch — tracks edge traversals since last manifestation ──
+// _faceEdgeEpoch[faceId] = { pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0 }
+// Resets when the face loses actualization (not all SCs active).
+// _faceWasActualized[faceId] = bool — tracks previous-tick actualization state.
+let _faceEdgeEpoch = null;
+let _faceWasActualized = null;
 
 // ── Edge Balance System — per-edge quark traversal counters ──
 // Tracks how evenly all 6 quark types traverse each edge connected to the oct.
@@ -78,7 +86,7 @@ function _initEdgeBalance() {
 }
 
 // Record a quark traversal on an edge (called from _advanceXon)
-function _recordEdgeTraversal(fromNode, toNode, quarkType) {
+function _recordEdgeTraversal(fromNode, toNode, quarkType, faceId) {
     if (!_edgeBalance || !quarkType) return;
     const pid = pairId(fromNode, toNode);
     const entry = _edgeBalance.get(pid);
@@ -90,6 +98,101 @@ function _recordEdgeTraversal(fromNode, toNode, quarkType) {
     // Track directionality: fwd = min→max, rev = max→min
     if (fromNode < toNode) entry.fwd++;
     else entry.rev++;
+    // Accumulate into per-face epoch (edges since last manifestation)
+    if (faceId != null && _faceEdgeEpoch) {
+        if (!_faceEdgeEpoch[faceId]) {
+            _faceEdgeEpoch[faceId] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0 };
+        }
+        _faceEdgeEpoch[faceId][quarkType]++;
+    }
+}
+
+// Determine dominant quark type for a face based on edge traversals since last manifestation.
+// Uses _faceEdgeEpoch (resets when face loses actualization).
+// Tie → most needed quark (lowest in _actualizationVisits). No contestants → null (bare tet).
+function _dominantQuarkForFace(faceId) {
+    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+    const epoch = _faceEdgeEpoch ? _faceEdgeEpoch[faceId] : null;
+
+    // Check if any edges were traversed since last manifestation
+    let total = 0;
+    if (epoch) {
+        for (const t of types) total += epoch[t] || 0;
+    }
+    if (!epoch || total === 0) return null; // bare tetrahedra — no contestants
+
+    // Find max epoch value
+    let bestVal = 0;
+    for (const t of types) {
+        if ((epoch[t] || 0) > bestVal) bestVal = epoch[t] || 0;
+    }
+
+    // Collect all types tied at max
+    const tied = [];
+    for (const t of types) {
+        if ((epoch[t] || 0) === bestVal) tied.push(t);
+    }
+
+    if (tied.length === 1) return tied[0];
+
+    // Tiebreak: most needed quark (lowest in _actualizationVisits across ALL faces)
+    const globalCounts = {};
+    for (const t of types) globalCounts[t] = 0;
+    if (_actualizationVisits) {
+        for (const fv of Object.values(_actualizationVisits)) {
+            for (const t of types) globalCounts[t] += fv[t] || 0;
+        }
+    }
+    let mostNeeded = tied[0], lowestCount = Infinity;
+    for (const t of tied) {
+        if (globalCounts[t] < lowestCount) {
+            lowestCount = globalCounts[t];
+            mostNeeded = t;
+        }
+    }
+    return mostNeeded;
+}
+
+// Apply tet face coloring based on geometric actualization.
+// Called from demoTick (live) and _playbackUpdateDisplay (replay).
+// countVisits: if true, increment _actualizationVisits (only during live ticks, not replay).
+function _applyTetColoring(countVisits) {
+    if (!_nucleusTetFaceData) return;
+    if (!_faceEdgeEpoch) _faceEdgeEpoch = {};
+    if (!_faceWasActualized) _faceWasActualized = {};
+    for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+        const fId = parseInt(fIdStr);
+        const allSCsActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+        const wasActualized = !!_faceWasActualized[fId];
+
+        if (allSCsActive) {
+            const dominant = _dominantQuarkForFace(fId);
+            if (dominant) {
+                _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[dominant]);
+            } else {
+                // Bare tetrahedra — no edge contributors since last manifestation
+                _ruleAnnotations.tetColors.set(fd.voidIdx, 0x444466);
+            }
+            _ruleAnnotations.tetOpacity.set(fd.voidIdx, 1.0);
+            if (countVisits && _actualizationVisits) {
+                if (!_actualizationVisits[fId]) {
+                    _actualizationVisits[fId] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0 };
+                }
+                if (dominant) _actualizationVisits[fId][dominant]++;
+            }
+            _faceWasActualized[fId] = true;
+        } else {
+            _ruleAnnotations.tetColors.set(fd.voidIdx, 0x1a1a2a);
+            _ruleAnnotations.tetOpacity.set(fd.voidIdx, 0.0);
+            // Face lost actualization → reset epoch for next manifestation
+            if (wasActualized && countVisits) {
+                _faceEdgeEpoch[fId] = null;
+            }
+            _faceWasActualized[fId] = false;
+        }
+    }
+    _ruleAnnotations.dirty = true;
 }
 
 // Compute scalar edge-evenness score [0,1] — 1.0 = all 6 quark types visit each edge equally
@@ -303,6 +406,7 @@ let _kuhnEnabled = false;
 // snapshot + exclusions. Math.random() breaks this because it's unseeded.
 // All choreography randomness MUST use _sRng() instead of Math.random().
 let _sRngState = 0;
+let _runSeed = 0; // randomized per demo run so DFS explores different branches
 function _sRng() {
     _sRngState |= 0;
     _sRngState = (_sRngState + 0x6D2B79F5) | 0;
@@ -312,7 +416,7 @@ function _sRng() {
 }
 // Seed from tick number — call at the start of each tick so replays
 // from the same snapshot produce the same random sequence.
-function _sRngSeed(tick) { _sRngState = tick * 2654435761; }
+function _sRngSeed(tick) { _sRngState = (tick * 2654435761 + _runSeed) | 0; }
 // Fisher-Yates shuffle using seeded PRNG. Consumes exactly arr.length-1
 // PRNG values — deterministic unlike .sort(() => _sRng() - 0.5) which
 // consumes a variable number depending on the sort algorithm internals.

@@ -1189,11 +1189,16 @@ function buildDeuteronSchedule(patP, patN, D4) {
 function startDemoLoop() {
     // Init visit counters (demand-driven — no schedule needed)
     _demoVisits = {};
+    _actualizationVisits = {};
+    _faceEdgeEpoch = {};
+    _faceWasActualized = {};
     for (let f = 1; f <= 8; f++) {
         _demoVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 };
+        _actualizationVisits[f] = { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0 };
     }
     _demoTick = 0;
     _planckSeconds = 0;
+    _runSeed = (Math.random() * 0xFFFFFFFF) >>> 0; // unique per run for stochastic DFS
     _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
@@ -2938,41 +2943,9 @@ async function demoTick() {
     // ── Decay dying xon trails (every simulation tick, not per-frame) ──
     _decayDyingXons();
 
-    // ── Color tets with progressive opacity (ramps as xon loop completes) ──
-    // Demand-driven: derive active faces from xon state, not schedule.
-    if (_nucleusTetFaceData) {
-        // Build active face map from xon assignments
-        const activeFaces = new Map(); // face → {quarkType, loopStep, actualized}
-        for (const xon of _demoXons) {
-            if (!xon.alive || xon._assignedFace == null) continue;
-            if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
-                activeFaces.set(xon._assignedFace, {
-                    quarkType: xon._quarkType, loopStep: xon._loopStep,
-                    actualized: !!xon._tetActualized
-                });
-            }
-        }
-        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
-            const fId = parseInt(fIdStr);
-            const active = activeFaces.get(fId);
-            // T58: only color tet faces that have COMPLETED a loop and counted
-            // in the hadronic balance. loopStep === 4 is the completion tick
-            // (same gate as _demoVisits increment in _advanceXon).
-            // SCs must also be active right now to confirm genuine actualization.
-            const completedNow = active && active.actualized && active.loopStep >= 4
-                && fd.scIds.every(scId =>
-                    activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-            if (completedNow) {
-                _ruleAnnotations.tetColors.set(fd.voidIdx, QUARK_COLORS[active.quarkType]);
-                _ruleAnnotations.tetOpacity.set(fd.voidIdx, 0.85);
-            } else {
-                _ruleAnnotations.tetColors.set(fd.voidIdx, 0x1a1a2a);
-                _ruleAnnotations.tetOpacity.set(fd.voidIdx, 0.0);
-            }
-        }
-        _ruleAnnotations.dirty = true;
-        if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
-    }
+    // ── Color tets based on geometric actualization (all SCs active) ──
+    _applyTetColoring(true); // true = count actualization visits during live ticks
+    if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
 
     const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;
 

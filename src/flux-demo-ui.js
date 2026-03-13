@@ -54,43 +54,53 @@ function updateDemoPanel() {
     const el = document.getElementById('dp-coverage-bars');
     if (!el) return;
 
+    // Use actualization-based counts for display (falls back to _demoVisits)
+    const visits = _actualizationVisits || _demoVisits;
+
     // Compute evenness: CV across all faces' total visits
+    const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
     const totals = [];
-    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f].total);
+    for (let f = 1; f <= 8; f++) {
+        const v = visits[f];
+        let faceTotal = 0;
+        for (const t of types6) faceTotal += v[t] || 0;
+        totals.push(faceTotal);
+    }
     const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
     const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
     const cv = mean > 0 ? (stddev / mean) : 1; // no visits = worst evenness, not best
     const evenness = Math.max(0, 1 - cv);
 
     // Find max for bar normalization
-    const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
     const typeColors = { pu1: '#0040ff', pu2: '#00ff40', pd: '#00ffff', nd1: '#ffbf00', nd2: '#ff00bf', nu: '#ff0000' };
     const typeLabels = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
     let maxCount = 1;
     for (let f = 1; f <= 8; f++) {
         for (const t of types6) {
-            maxCount = Math.max(maxCount, _demoVisits[f][t] || 0);
+            maxCount = Math.max(maxCount, visits[f][t] || 0);
         }
     }
 
     // Build bars (6 per face)
     let html = '';
     for (let f = 1; f <= 8; f++) {
-        const v = _demoVisits[f];
+        const v = visits[f];
+        let faceTotal = 0;
+        for (const t of types6) faceTotal += v[t] || 0;
         const isA = [1, 3, 6, 8].includes(f);
         html += `<div style="display:flex; align-items:center; gap:1px;">`
             + `<span style="width:18px; color:${isA ? '#cc8866' : '#6688aa'}; font-size:8px; font-weight:bold;">F${f}</span>`;
         for (const t of types6) {
             html += `<div class="dp-bar-bg" style="flex:1;" title="${typeLabels[t]} ${v[t] || 0}"><div class="dp-bar-fill" style="width:${((v[t] || 0) / maxCount * 100).toFixed(1)}%; background:${typeColors[t]};"></div></div>`;
         }
-        html += `<span style="width:22px; text-align:right; font-size:7px; color:var(--text-3);">${v.total}</span>`
+        html += `<span style="width:22px; text-align:right; font-size:7px; color:var(--text-3);">${faceTotal}</span>`
             + `</div>`;
     }
 
     // ── Per-hadron evenness ──
     const protonPerFace = [], neutronPerFace = [];
     for (let f = 1; f <= 8; f++) {
-        const v = _demoVisits[f];
+        const v = visits[f];
         protonPerFace.push((v.pu1 || 0) + (v.pu2 || 0) + (v.pd || 0));
         neutronPerFace.push((v.nd1 || 0) + (v.nd2 || 0) + (v.nu || 0));
     }
@@ -98,7 +108,7 @@ function updateDemoPanel() {
     const typeTotals = {};
     for (const t of types6) typeTotals[t] = 0;
     for (let f = 1; f <= 8; f++) {
-        for (const t of types6) typeTotals[t] += _demoVisits[f][t] || 0;
+        for (const t of types6) typeTotals[t] += visits[f][t] || 0;
     }
     const calcEvenness = (arr) => {
         const m = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -823,10 +833,13 @@ function _playbackUpdateDisplay() {
     // Rebuild state + SC lines + void spheres from restored SC sets
     if (typeof bumpState === 'function') bumpState();
     if (typeof rebuildShortcutLines === 'function') rebuildShortcutLines();
+    // Re-apply tet coloring from restored edge balance (no counting during replay)
+    if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
     if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
     if (typeof updateSpheres === 'function') updateSpheres();
     if (typeof updateStatus === 'function') updateStatus();
     updateDemoPanel();
+    _updateEdgeBalancePanel();
     updateXonPanel();
 }
 
