@@ -50,6 +50,24 @@ function _tickerMetaLines() {
     return `<br>${highest}<br>${layer}<br>${opts}`;
 }
 
+// Force-update bottom-stats (shortcuts + density) regardless of simHalted.
+// Called during playback/rewind so the popover reflects the restored state.
+function _updateBottomStats() {
+    const planckEl = document.getElementById('st-planck');
+    if (planckEl) planckEl.textContent = _planckSeconds;
+    const totalOpen = activeSet.size + impliedSet.size + (typeof xonImpliedSet !== 'undefined' ? xonImpliedSet.size : 0);
+    const scEl = document.getElementById('st-sc');
+    if (scEl) scEl.textContent = totalOpen + ' / ' + ALL_SC.length;
+    const densEl = document.getElementById('st-dens');
+    if (densEl && typeof computeActualDensity === 'function') {
+        const actual = (computeActualDensity() * 100).toFixed(4);
+        const ideal = typeof computeIdealDensity === 'function' ? computeIdealDensity() * 100 : 74.048;
+        const dev = Math.abs(parseFloat(actual) - ideal);
+        densEl.textContent = actual + '%';
+        densEl.style.color = dev < 0.001 ? '#6a8aaa' : dev < 0.01 ? '#ffaa44' : '#ff4444';
+    }
+}
+
 function dumpProfile() {
     if (_tickCount === 0) { console.log('[PROFILE] No ticks recorded'); return; }
     const n = _tickCount;
@@ -877,6 +895,8 @@ function _playbackUpdateDisplay() {
     if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
     if (typeof updateSpheres === 'function') updateSpheres();
     if (typeof updateStatus === 'function') updateStatus();
+    // Force-update bottom-stats even when simHalted (updateStatus bails early)
+    _updateBottomStats();
     updateDemoPanel();
     _updateEdgeBalancePanel();
     updateXonPanel();

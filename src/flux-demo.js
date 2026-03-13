@@ -832,7 +832,7 @@ function _tickDemoXons(dt) {
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
         const isGluon = xon._mode === 'gluon';
         const isWeak = xon._mode === 'weak';
-        const gluonBoost = isGluon ? 1.5 : 1.0;
+        const gluonBoost = isGluon ? 4.0 : 1.0;
         // Swap spark blending for weak xons (additive can't show black)
         if (isWeak && xon.sparkMat.blending !== THREE.NormalBlending) {
             xon.sparkMat.blending = THREE.NormalBlending;
@@ -3400,6 +3400,7 @@ async function demoTick() {
                 _updateEjectionBalancePanel();
                 _drawBalanceChart();
                 updateStatus();
+                if (typeof _updateBottomStats === 'function') _updateBottomStats();
             }
         }, 1000);
     }

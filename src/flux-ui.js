@@ -301,30 +301,16 @@ function _initAutoOrbit() {
 }
 
 
-window.addEventListener('keydown',e=>{ if(e.metaKey||e.ctrlKey){ isGrabMode=true; canvas.style.cursor='grab'; } });
-window.addEventListener('keyup',e=>{ if(!e.metaKey&&!e.ctrlKey){ isGrabMode=false; canvas.style.cursor='default'; } });
-
 canvas.addEventListener('mousedown',e=>{
     isDrag=true; dragMoved=false; downX=e.clientX; downY=e.clientY;
-    if(isGrabMode){ orbitFrom={px:panTarget.x,py:panTarget.y,pz:panTarget.z,x:e.clientX,y:e.clientY,mode:'pan'}; canvas.style.cursor='grabbing'; }
-    else{ orbitFrom={...sph,x:e.clientX,y:e.clientY,mode:'orbit'}; }
+    orbitFrom={...sph,x:e.clientX,y:e.clientY,mode:'orbit'};
 });
 
 window.addEventListener('mousemove',e=>{
     const dx=e.clientX-downX,dy=e.clientY-downY;
     if(isDrag&&Math.sqrt(dx*dx+dy*dy)>4){
         dragMoved=true;
-        if(orbitFrom?.mode==='pan'){
-            const panSpeed=sph.r*0.0012;
-            const sinT=Math.sin(sph.theta),cosT=Math.cos(sph.theta);
-            const cosP=Math.cos(sph.phi),sinP=Math.sin(sph.phi);
-            const rx=cosT,ry=0,rz=-sinT;
-            const ux=-sinT*cosP,uy=sinP,uz=-cosT*cosP;
-            const ddx=e.clientX-orbitFrom.x,ddy=e.clientY-orbitFrom.y;
-            panTarget.x=orbitFrom.px-(ddx*rx-ddy*ux)*panSpeed;
-            panTarget.y=orbitFrom.py-(ddx*ry-ddy*uy)*panSpeed;
-            panTarget.z=orbitFrom.pz-(ddx*rz-ddy*uz)*panSpeed;
-        } else if(orbitFrom){
+        if(orbitFrom){
             sph.theta=orbitFrom.theta-(e.clientX-orbitFrom.x)*0.006;
             sph.phi=Math.max(0.1,Math.min(Math.PI-0.1,orbitFrom.phi+(e.clientY-orbitFrom.y)*0.006));
         }
@@ -348,12 +334,12 @@ window.addEventListener('mousemove',e=>{
         updateStatusHoverOnly();
     }
     // Cursor: crosshair in selectMode, pointer over clickable items, else grab/default
-    canvas.style.cursor=selectMode?'crosshair':isGrabMode?'grab':'default';
+    canvas.style.cursor=selectMode?'crosshair':'default';
 });
 
 window.addEventListener('mouseup',e=>{
     if(!isDrag) return; isDrag=false;
-    canvas.style.cursor=selectMode?'crosshair':isGrabMode?'grab':'default';
+    canvas.style.cursor=selectMode?'crosshair':'default';
     if(dragMoved) return;
     const hit=raycast(e);
     if(hit?.type==='shortcut'){
