@@ -425,6 +425,19 @@ let _bfsTestRandomChoreographer = false; // true = totally random decisions (no 
 let _bfsTestReferenceFingerprints = null; // Map<tick, Set<string>> from Test 1 (choreographer)
 let _bfsTestEarlyAbort = false;           // true if Test 2 found a novel fingerprint
 let _bfsTestNovelDetail = null;           // {tick, fingerprint} of the offending novel solution
+let _bfsTestDecisionTrace = [];          // [{tick, faceAssignments, octMatching, btActive}] — per-tick decisions during test
+
+// ── Hybrid Relay State (greedy + random enumeration at each layer) ──
+// When normal choreographer exhausts a tick, we enumerate ALL valid fingerprints
+// via random seeds, then let the choreographer score and try them in order.
+let _relayPhase = 'normal';           // 'normal' | 'enumerating' | 'replaying'
+let _relayEnumFingerprints = null;    // Map<string, {fp, snapshot, moves}> — all valid FPs found during enumeration
+let _relayEnumAttempts = 0;           // how many random seeds tried during enumeration
+let _relayEnumStale = 0;             // consecutive attempts with no new FP
+let _relayScoredQueue = null;         // Array of {fp, snapshot, score} — sorted best-first for replay
+let _relayScoredIndex = 0;           // which scored option we're currently trying
+let _relayEscapes = 0;               // total successful relay-assisted advances this run
+let _relayEnumTotal = 0;             // total fingerprints enumerated across all stuck ticks
 
 // Save run result to localStorage for DFS audit. Appends to a history array
 // so multiple runs can be compared. Key: 'flux_run_history'.

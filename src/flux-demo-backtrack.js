@@ -325,6 +325,56 @@ function _kuhnMaxCardinality(adj, n) {
     return card;
 }
 
+// Parse a fingerprint string into structured moves array.
+// Returns [{xonIdx, move, from, to, stayed}]
+function _parseFingerprintMoves(fp) {
+    return fp.split('|').map(part => {
+        const match = part.match(/^X(\d+):(.+)$/);
+        if (!match) return null;
+        const xonIdx = +match[1];
+        const move = match[2];
+        const stayMatch = move.match(/^stay@(\d+)$/);
+        const moveMatch = move.match(/^(\d+)->(\d+)$/);
+        return {
+            xonIdx, move,
+            from: stayMatch ? +stayMatch[1] : (moveMatch ? +moveMatch[1] : null),
+            to: stayMatch ? +stayMatch[1] : (moveMatch ? +moveMatch[2] : null),
+            stayed: !!stayMatch,
+        };
+    }).filter(Boolean);
+}
+
+// Find the closest fingerprint from a reference set to a novel fingerprint.
+// Returns {fp, sharedMoves, diffs: [{xonIdx, novelMove, choreoMove}]}
+function _findClosestFingerprint(novelFP, novelMoves, refFPs) {
+    if (refFPs.length === 0) return null;
+    let bestMatch = null;
+    let bestShared = -1;
+
+    for (const refFP of refFPs) {
+        const refMoves = _parseFingerprintMoves(refFP);
+        let shared = 0;
+        const diffs = [];
+        for (const nm of novelMoves) {
+            const rm = refMoves.find(r => r.xonIdx === nm.xonIdx);
+            if (rm && rm.move === nm.move) {
+                shared++;
+            } else {
+                diffs.push({
+                    xonIdx: nm.xonIdx,
+                    novelMove: nm.move,
+                    choreoMove: rm ? rm.move : '(missing)',
+                });
+            }
+        }
+        if (shared > bestShared) {
+            bestShared = shared;
+            bestMatch = { fp: refFP, sharedMoves: shared, diffs };
+        }
+    }
+    return bestMatch;
+}
+
 // Compute a canonical fingerprint of ALL moves this tick (not just oct).
 // Format: "X0:5->9|X1:stay@0|X2:13->4|..." sorted by xon index.
 function _computeTickFingerprint() {
@@ -364,11 +414,56 @@ function _btRecordFingerprint() {
         if (!refSet || !refSet.has(fp)) {
             // Novel fingerprint! Test 1 (choreographer) missed this solution
             _bfsTestEarlyAbort = true;
-            _bfsTestNovelDetail = { tick, fingerprint: fp };
-            console.log(`%c[DFS TEST] EARLY ABORT: Random found novel fingerprint at tick ${tick}`,
-                'color:red;font-weight:bold');
-            console.log(`  Fingerprint: ${fp}`);
-            console.log(`  Reference set at tick ${tick}: ${refSet ? refSet.size : 0} entries`);
+
+            // ── Deep divergence analysis ──
+            const novelMoves = _parseFingerprintMoves(fp);
+            const refFPs = refSet ? [...refSet] : [];
+            const closest = _findClosestFingerprint(fp, novelMoves, refFPs);
+
+            // Capture full xon state at this moment
+            const xonStates = _demoXons.map((x, i) => ({
+                idx: i, node: x.node, prevNode: x.prevNode,
+                mode: x._mode, face: x._assignedFace, quark: x._quarkType,
+                step: x._loopStep, seq: x._loopSeq ? x._loopSeq.join(',') : null,
+            }));
+
+            _bfsTestNovelDetail = {
+                tick, fingerprint: fp, novelMoves, closest, xonStates,
+                refCount: refSet ? refSet.size : 0,
+                // Also capture which ticks the choreographer DID explore
+                choreographerTicks: [..._bfsTestReferenceFingerprints.keys()].sort((a,b) => a-b),
+            };
+
+            console.log(`%c[DFS TEST] ═══ EARLY ABORT: DIVERGENCE ANALYSIS ═══`,
+                'color:red;font-weight:bold;font-size:13px');
+            console.log(`%c  Tick ${tick}: Random found novel fingerprint`, 'color:red;font-weight:bold');
+            console.log(`  Novel:   ${fp}`);
+            console.log(`  Ref set: ${refSet ? refSet.size : 0} choreographer fingerprints at this tick`);
+
+            if (closest) {
+                console.log(`%c  Closest choreographer match (${closest.sharedMoves}/${novelMoves.length} xons same):`,
+                    'color:orange;font-weight:bold');
+                console.log(`  Closest: ${closest.fp}`);
+                console.log(`%c  DIFFERENCES:`, 'color:yellow;font-weight:bold');
+                for (const diff of closest.diffs) {
+                    console.log(`    X${diff.xonIdx}: ${diff.novelMove} (random) vs ${diff.choreoMove} (choreographer)`);
+                }
+            } else {
+                console.log(`  (No choreographer fingerprints at tick ${tick} to compare against)`);
+            }
+
+            console.log(`%c  Xon states at divergence:`, 'color:cyan');
+            for (const xs of xonStates) {
+                const info = `X${xs.idx} node=${xs.node} mode=${xs.mode}` +
+                    (xs.face ? ` face=F${xs.face}` : '') +
+                    (xs.quark ? ` quark=${xs.quark}` : '') +
+                    (xs.seq ? ` seq=[${xs.seq}] step=${xs.step}` : '');
+                console.log(`    ${info}`);
+            }
+
+            console.log(`  Choreographer explored ticks: [${_bfsTestNovelDetail.choreographerTicks.join(',')}]`);
+            console.log(`%c[DFS TEST] ═══════════════════════════════════════════`, 'color:red;font-weight:bold');
+
             // Stop the demo — the poll loop in _executeBfsTestRun will detect !_demoActive
             if (typeof stopDemo === 'function') stopDemo();
         }
@@ -411,6 +506,14 @@ function _btReset() {
     _rewindViolation = null;
     _btResetMatchingCache();
     _btStaleRetries = 0;
+    // Reset relay state on clean tick
+    _relayPhase = 'normal';
+    _bfsTestRandomChoreographer = false;
+    _relayEnumFingerprints = null;
+    _relayEnumAttempts = 0;
+    _relayEnumStale = 0;
+    _relayScoredQueue = null;
+    _relayScoredIndex = 0;
 }
 
 // Clear all BFS state (called when the failure tick finally passes or on demo restart).
@@ -425,4 +528,43 @@ function _bfsReset() {
     }
     _btResetMatchingCache();
     _btStaleRetries = 0;
+    // Reset relay state
+    _relayPhase = 'normal';
+    _bfsTestRandomChoreographer = false;
+    _relayEnumFingerprints = null;
+    _relayEnumAttempts = 0;
+    _relayEnumStale = 0;
+    _relayScoredQueue = null;
+    _relayScoredIndex = 0;
+}
+
+// Score a fingerprint for choreographer preference ordering.
+// Higher score = more desirable path. Uses quark balance deficit
+// and xon direction balance as scoring axes.
+function _relayScoreFingerprint(fp, snapshot) {
+    // Parse fingerprint to see where xons end up
+    const moves = _parseFingerprintMoves(fp);
+    let score = 0;
+
+    // 1. Prefer moves where more xons actually moved (not stayed)
+    const movedCount = moves.filter(m => !m.stayed).length;
+    score += movedCount * 10;
+
+    // 2. Prefer xon states with better quark balance
+    // (We can't fully evaluate without replaying, but we can check
+    //  if the move pattern distributes xons across more distinct nodes)
+    const uniqueDestinations = new Set(moves.map(m => m.to));
+    score += uniqueDestinations.size * 5;
+
+    // 3. Penalize fingerprints where xons cluster on the same nodes
+    // (early indicator of congestion that leads to dead ends)
+    const destCounts = {};
+    for (const m of moves) {
+        destCounts[m.to] = (destCounts[m.to] || 0) + 1;
+    }
+    for (const count of Object.values(destCounts)) {
+        if (count > 1) score -= count * 20; // heavy penalty for stacking
+    }
+
+    return score;
 }

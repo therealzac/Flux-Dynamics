@@ -4,8 +4,50 @@
 // Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span><br><span style="font-size:0.65em; color:#556677;">highest: ${_maxTickReached}</span>`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_tickerMetaLines()}`;
     _updateTimelineScrubber();
+}
+
+// Builds the persistent meta rows below the tick counter.
+// Returns HTML string with <br>-separated lines for: highest, current layer, options.
+function _tickerMetaLines() {
+    const s = 'font-size:0.65em; letter-spacing:0.03em;';
+
+    // ── Highest ──
+    const highest = `<span style="${s} color:#8a9aaa;">highest: ${_maxTickReached}</span>`;
+
+    // ── Current Layer ──
+    // Which tick we're deciding on, and how many times we've revisited it.
+    let layerTick = _demoTick;
+    let layerVisits = 0;
+    if (_btActive || _bfsFailTick >= 0) {
+        // During BFS, the anchor tick is _bfsFailTick - _bfsLayer
+        layerTick = _bfsFailTick >= 0 ? _bfsFailTick - _bfsLayer : _demoTick;
+        const fpSet = _btTriedFingerprints.get(layerTick);
+        layerVisits = fpSet ? fpSet.size : 0;
+    }
+    const layerColor = _btActive ? '#ff9944' : '#556677';
+    const layer = `<span style="${s} color:${layerColor};">layer: tick ${layerTick} (visit ${layerVisits + 1})</span>`;
+
+    // ── Options this layer ──
+    // How many valid options exist at the current tick, and which one we're on.
+    let optCurrent = 0, optTotal = 0;
+    if (_btActive || _bfsFailTick >= 0) {
+        const fpSet = _btTriedFingerprints.get(layerTick);
+        optCurrent = fpSet ? fpSet.size : 0;
+        // Total = enumerated options if available, otherwise just show tried count
+        if (_relayPhase === 'replaying' && _relayScoredQueue) {
+            optTotal = optCurrent + (_relayScoredQueue.length - _relayScoredIndex);
+        } else if (_relayPhase === 'enumerating' && _relayEnumFingerprints) {
+            optTotal = optCurrent + _relayEnumFingerprints.size;
+        } else {
+            optTotal = optCurrent; // still discovering
+        }
+    }
+    const optColor = _btActive ? '#66bbff' : '#556677';
+    const opts = `<span style="${s} color:${optColor};">options: ${optCurrent}${optTotal > optCurrent ? '/' + optTotal : '+'}</span>`;
+
+    return `<br>${highest}<br>${layer}<br>${opts}`;
 }
 
 function dumpProfile() {
@@ -823,7 +865,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span><br><span style="font-size:0.65em; color:#556677;">highest: ${_maxTickReached}</span>`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_tickerMetaLines()}`;
     _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);

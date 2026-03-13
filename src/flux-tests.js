@@ -2452,6 +2452,7 @@ async function startBfsExhaustivenessTest() {
     _bfsTestReferenceFingerprints = null;
     _bfsTestEarlyAbort = false;
     _bfsTestNovelDetail = null;
+    _bfsTestDecisionTrace = [];
 
     // Force L1 lattice for fast testing
     const slider = document.getElementById('lattice-slider');
@@ -2553,6 +2554,61 @@ async function startBfsExhaustivenessTest() {
         console.log(`  Novel fingerprint: ${nd.fingerprint}`);
         console.log(`  At tick: ${nd.tick}`);
         console.log(`  Choreographer had ${refCount} solutions at that tick`);
+
+        // ── Dump decision trace around divergent tick ──
+        if (_bfsTestDecisionTrace && _bfsTestDecisionTrace.length > 0 && nd.tick) {
+            const divergeTick = nd.tick;
+            // Get choreographer decisions (runIdx=0) near the divergent tick
+            const choreoTraces = _bfsTestDecisionTrace
+                .filter(e => e.runIdx === 0 && Math.abs(e.tick - divergeTick) <= 3)
+                .sort((a, b) => a.tick - b.tick);
+            // Get random decisions (runIdx=1) near the divergent tick
+            const randomTraces = _bfsTestDecisionTrace
+                .filter(e => e.runIdx === 1 && Math.abs(e.tick - divergeTick) <= 3)
+                .sort((a, b) => a.tick - b.tick);
+
+            console.log(`%c[DFS TEST] ═══ DECISION TRACE (ticks ${divergeTick-3}..${divergeTick+3}) ═══`,
+                'color:orange;font-weight:bold');
+
+            console.log(`%c  CHOREOGRAPHER decisions:`, 'color:#66bbff;font-weight:bold');
+            for (const t of choreoTraces) {
+                const faces = t.faceAssignments.map(a => `X${a.xonIdx}→F${a.face}(${a.quarkType},s=${a.score})`).join(', ');
+                const octs = t.octMatching.map(m => `X${m.xonIdx}:${m.from}→${m.to ?? 'null'}(${m.candidateCount}c)`).join(', ');
+                console.log(`    t=${t.tick} [${t.matchingMethod || '?'}${t.btActive ? ' BT' : ''}]` +
+                    (faces ? ` faces:{${faces}}` : '') +
+                    (octs ? ` oct:{${octs}}` : '') +
+                    (t.totalMatchings ? ` (${t.matchingIdx}/${t.totalMatchings} matchings)` : ''));
+            }
+
+            console.log(`%c  RANDOM decisions:`, 'color:#ff9944;font-weight:bold');
+            for (const t of randomTraces) {
+                const faces = t.faceAssignments.map(a => `X${a.xonIdx}→F${a.face}(${a.quarkType},s=${a.score})`).join(', ');
+                const octs = t.octMatching.map(m => `X${m.xonIdx}:${m.from}→${m.to ?? 'null'}(${m.candidateCount}c)`).join(', ');
+                console.log(`    t=${t.tick} [${t.matchingMethod || '?'}${t.btActive ? ' BT' : ''}]` +
+                    (faces ? ` faces:{${faces}}` : '') +
+                    (octs ? ` oct:{${octs}}` : '') +
+                    (t.totalMatchings ? ` (${t.matchingIdx}/${t.totalMatchings} matchings)` : ''));
+            }
+
+            // Key insight: show face assignments at the divergent tick for both
+            const choreoAtTick = choreoTraces.find(t => t.tick === divergeTick);
+            const randomAtTick = randomTraces.find(t => t.tick === divergeTick);
+            if (choreoAtTick || randomAtTick) {
+                console.log(`%c  ═══ CRITICAL DIFF AT TICK ${divergeTick} ═══`, 'color:red;font-weight:bold');
+                if (choreoAtTick?.faceAssignments?.length) {
+                    console.log(`    Choreographer assigned faces: ${choreoAtTick.faceAssignments.map(a => `X${a.xonIdx}→F${a.face}(${a.quarkType})`).join(', ')}`);
+                } else {
+                    console.log(`    Choreographer: no face assignments at this tick`);
+                }
+                if (randomAtTick?.faceAssignments?.length) {
+                    console.log(`    Random assigned faces: ${randomAtTick.faceAssignments.map(a => `X${a.xonIdx}→F${a.face}(${a.quarkType})`).join(', ')}`);
+                } else {
+                    console.log(`    Random: no face assignments at this tick`);
+                }
+            }
+
+            console.log(`%c[DFS TEST] ═══════════════════════════════════════`, 'color:orange;font-weight:bold');
+        }
     } else {
         // ── PASS: Random finished without finding anything new ──
         _bfsTestComparison = _compareBfsRuns(_bfsTestResults[0], _bfsTestResults[1]);

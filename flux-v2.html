@@ -81,11 +81,10 @@
             font-family: var(--font-mono); font-size: 11px; line-height: 1.9;
             color: var(--text-3); pointer-events: none; user-select: none;
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: var(--radius); padding: 6px 10px; backdrop-filter: blur(8px); }
-        #bottom-stats.inline { position: relative; bottom: auto; left: auto;
-            margin-top: 8px; border-top: 1px solid var(--border);
-            background: none; border: none; border-radius: 0; padding: 8px 0 0 0;
-            backdrop-filter: none; pointer-events: none; }
+            border-radius: var(--radius); padding: 6px 10px; backdrop-filter: blur(8px);
+            transition: left 0.2s, right 0.2s, transform 0.2s; }
+        #bottom-stats.center { left: 50%; right: auto; transform: translateX(-50%); }
+        #bottom-stats.right { left: auto; right: 16px; transform: none; }
         #bottom-stats span { color: var(--text-2); }
 
         /* ── Sliders + controls ── */
@@ -492,7 +491,7 @@
     </div>
     <!-- Current rule title — top center overlay -->
     <!-- rule-title replaced by #topbar-title -->
-    <div id="hint">click sphere to select · click candidate (blue) to add shortcut · click edge to sever</div>
+    <div id="hint" style="display:none;"></div>
     <!-- Scale bar (nucleus mode only) -->
     <div id="scale-bar" style="display:none; position:fixed; bottom:50px; left:50%;
         transform:translateX(-50%); pointer-events:none; text-align:center; z-index:200;">
@@ -517,20 +516,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=42"></script>
+    <script src="src/flux-demo-state.js?v=45"></script>
     <script src="src/flux-demo-xon.js?v=6"></script>
-    <script src="src/flux-demo-backtrack.js?v=14"></script>
-    <script src="src/flux-demo-planner.js?v=20"></script>
-    <script src="src/flux-demo-ui.js?v=47"></script>
-    <script src="src/flux-demo.js?v=373"></script>
+    <script src="src/flux-demo-backtrack.js?v=17"></script>
+    <script src="src/flux-demo-planner.js?v=21"></script>
+    <script src="src/flux-demo-ui.js?v=50"></script>
+    <script src="src/flux-demo.js?v=380"></script>
     <script src="src/flux-solver-render.js?v=38"></script>
     <script src="src/flux-tournament.js?v=1"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=14"></script>
     <script src="src/flux-electrons.js?v=15"></script>
     <script src="src/flux-voids.js?v=30"></script>
-    <script src="src/flux-nucleus.js?v=40"></script>
-    <script src="src/flux-tests.js?v=237"></script>
+    <script src="src/flux-nucleus.js?v=41"></script>
+    <script src="src/flux-tests.js?v=238"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -581,18 +580,29 @@
     const _spPanel = document.getElementById('side-panel');
     const _btnLeft = document.getElementById('toggle-left');
     const _btnRight = document.getElementById('toggle-right');
+    const _bottomStats = document.getElementById('bottom-stats');
     let _leftVisible = true, _rightVisible = true;
+    function _updateBottomStatsPos() {
+        if (!_bottomStats) return;
+        _bottomStats.classList.remove('center', 'right');
+        if (_leftVisible && _rightVisible) _bottomStats.classList.add('center');
+        else if (_leftVisible && !_rightVisible) _bottomStats.classList.add('right');
+        // else: default (bottom-left)
+    }
     _btnLeft.addEventListener('click', () => {
         _leftVisible = !_leftVisible;
         if (_leftVisible) { _dpPanel.classList.remove('collapsed'); _dpPanel.style.display = ''; }
         else { _dpPanel.style.display = 'none'; }
         _btnLeft.classList.toggle('active', _leftVisible);
+        _updateBottomStatsPos();
     });
     _btnRight.addEventListener('click', () => {
         _rightVisible = !_rightVisible;
         _spPanel.classList.toggle('collapsed', !_rightVisible);
         _btnRight.classList.toggle('active', _rightVisible);
+        _updateBottomStatsPos();
     });
+    _updateBottomStatsPos();
     </script>
 </body>
 </html>

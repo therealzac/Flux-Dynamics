@@ -214,9 +214,7 @@ const NucleusSimulator = (function(){
         // Show the new deuteron panel (left side)
         const dp = document.getElementById('deuteron-panel');
         if(dp) dp.style.display = 'block';
-        // Unify: move bottom-stats into deuteron-panel so they don't overlap
-        const bs = document.getElementById('bottom-stats');
-        if(bs && dp) { dp.appendChild(bs); bs.classList.add('inline'); }
+        // bottom-stats stays as fixed overlay — positioning handled by sidebar toggle logic
         // Populate quark color legend once on enter
         _populateDeuteronQuarkLegend();
 

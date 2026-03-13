@@ -1211,6 +1211,8 @@ function startDemoLoop() {
     _searchStartTime = performance.now();
     _totalBacktrackRetries = 0;
     _bestPathFingerprint = '';
+    _relayEscapes = 0;
+    _relayEnumTotal = 0;
     console.log(`%c[DEMO] seed=0x${_runSeed.toString(16).padStart(8,'0')}`, 'color:cyan;font-weight:bold');
     _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
@@ -1949,9 +1951,8 @@ async function demoTick() {
         }
         // Shuffle first for random tiebreaking, then stable-sort by priority.
         // This avoids a non-transitive comparator (_sRng() - 0.5 violates contract).
-        // During backtracking, use canonical order for reproducible fingerprints.
-        if (!_btActive) _sRngShuffle(bestSteps);
-        else bestSteps.sort((a, b) => a - b);
+        // PRNG seed changes per retry, so shuffle produces different orderings.
+        _sRngShuffle(bestSteps);
         bestSteps.sort((a, b) => {
             const aInTrail = recentTrail.has(a) ? 1 : 0;
             const bInTrail = recentTrail.has(b) ? 1 : 0;
@@ -2008,9 +2009,7 @@ async function demoTick() {
             // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
             // — weak xons have freedom to roam the full lattice.
             // Shuffle to prevent lattice-order bias in fallback selection.
-            const allNbs = _btActive
-                ? (baseNeighbors[xon.node] || []).slice().sort((a, b) => a.node - b.node)
-                : _sRngShuffle((baseNeighbors[xon.node] || []).slice());
+            const allNbs = _sRngShuffle((baseNeighbors[xon.node] || []).slice());
             const hadronFilter = nb => !_isHadronOccupied(nb.node);
             // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
@@ -2267,14 +2266,9 @@ async function demoTick() {
             }
 
             // Shuffle proposals — no xon gets priority by index order
-            // During backtracking, sort by face ID for deterministic fingerprints
-            if (_btActive) {
-                proposals.sort((a, b) => a.face - b.face);
-            } else {
-                for (let i = proposals.length - 1; i > 0; i--) {
-                    const j = Math.floor(_sRng() * (i + 1));
-                    [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
-                }
+            for (let i = proposals.length - 1; i > 0; i--) {
+                const j = Math.floor(_sRng() * (i + 1));
+                [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
             }
 
             // Resolve conflicts: one xon per face, first-after-shuffle wins
@@ -2314,7 +2308,30 @@ async function demoTick() {
                 _demoVisitedFaces.add(prop.face);
                 _solverNeeded = true;
             }
+
+            // ── BFS Test decision trace: capture face assignments ──
+            if (_bfsTestActive && assignedXons.size > 0) {
+                const faceAssignments = [];
+                for (const prop of proposals) {
+                    if (assignedXons.has(prop.xon)) {
+                        faceAssignments.push({
+                            xonIdx: _demoXons.indexOf(prop.xon),
+                            face: prop.face,
+                            quarkType: prop.quarkType,
+                            score: +prop.score.toFixed(2),
+                        });
+                    }
+                }
+                if (!_bfsTestDecisionTrace) _bfsTestDecisionTrace = [];
+                let entry = _bfsTestDecisionTrace.find(e => e.tick === _demoTick && e.runIdx === _bfsTestRunIdx);
+                if (!entry) {
+                    entry = { tick: _demoTick, runIdx: _bfsTestRunIdx, btActive: _btActive, faceAssignments: [], octMatching: [] };
+                    _bfsTestDecisionTrace.push(entry);
+                }
+                entry.faceAssignments = faceAssignments;
+            }
         }
+
         occupied = _occupiedNodes(); // refresh after assignments
     }
 
@@ -2331,14 +2348,10 @@ async function demoTick() {
         let excess = allOnOct - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Priority 1: oct-mode xons (easiest to redirect)
-            const octCandidates = _btActive
-                ? _demoXons.filter(x =>
-                    x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
-                    _octNodeSet.has(x.node))
-                : _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
+            const octCandidates = _sRngShuffle(_demoXons.filter(x =>
+                x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
+                _octNodeSet.has(x.node)
+            ));
             for (const xon of octCandidates) {
                 if (excess <= 0) break;
                 if (_startIdleTetLoop(xon, occupied)) {
@@ -2353,14 +2366,10 @@ async function demoTick() {
             }
             // Priority 2: idle_tet xons on oct nodes (interrupt loop, mark for ejection)
             if (excess > 0) {
-                const idleCandidates = _btActive
-                    ? _demoXons.filter(x =>
-                        x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
-                        _octNodeSet.has(x.node))
-                    : _sRngShuffle(_demoXons.filter(x =>
-                        x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
-                        _octNodeSet.has(x.node)
-                    ));
+                const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
+                    x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
+                    _octNodeSet.has(x.node)
+                ));
                 for (const xon of idleCandidates) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -2375,14 +2384,10 @@ async function demoTick() {
             }
             // Priority 3: weak xons on oct nodes (force off-oct movement)
             if (excess > 0) {
-                const weakOnOct = _btActive
-                    ? _demoXons.filter(x =>
-                        x.alive && x._mode === 'weak' && !x._movedThisTick &&
-                        _octNodeSet.has(x.node))
-                    : _sRngShuffle(_demoXons.filter(x =>
-                        x.alive && x._mode === 'weak' && !x._movedThisTick &&
-                        _octNodeSet.has(x.node)
-                    ));
+                const weakOnOct = _sRngShuffle(_demoXons.filter(x =>
+                    x.alive && x._mode === 'weak' && !x._movedThisTick &&
+                    _octNodeSet.has(x.node)
+                ));
                 for (const xon of weakOnOct) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -2549,6 +2554,27 @@ async function demoTick() {
     const octClaimed = new Set();
     for (const plan of octPlans) {
         if (plan.assigned) octClaimed.add(plan.assigned.node);
+    }
+
+    // ── BFS Test decision trace: capture oct matching ──
+    if (_bfsTestActive) {
+        let entry = _bfsTestDecisionTrace?.find(e => e.tick === _demoTick && e.runIdx === _bfsTestRunIdx);
+        if (!entry) {
+            if (!_bfsTestDecisionTrace) _bfsTestDecisionTrace = [];
+            entry = { tick: _demoTick, runIdx: _bfsTestRunIdx, btActive: _btActive, faceAssignments: [], octMatching: [] };
+            _bfsTestDecisionTrace.push(entry);
+        }
+        entry.octMatching = octPlans.map(p => ({
+            xonIdx: _demoXons.indexOf(p.xon),
+            from: p.fromNode,
+            to: p.assigned ? p.assigned.node : null,
+            candidateCount: p.candidates.length,
+        }));
+        entry.matchingMethod = _btActive ? 'enumerated' : (_kuhnEnabled ? 'kuhn' : 'greedy');
+        if (_btActive && _btMatchingCache) {
+            entry.totalMatchings = _btMatchingCache.length;
+            entry.matchingIdx = _btMatchingIndex;
+        }
     }
 
     // Verify needsOctVacate: if an oct xon was supposed to move but couldn't,
@@ -3017,10 +3043,10 @@ async function demoTick() {
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
-    const _highestLine = `<br><span style="font-size:0.75em; color:#556677;">highest: ${_maxTickReached}</span>`;
-    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>${_highestLine}`;
+    const _ml = typeof _tickerMetaLines === 'function' ? _tickerMetaLines() : '';
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>${_ml}`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span><br><span style="font-size:0.65em; color:#556677;">highest: ${_maxTickReached}</span>`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_ml}`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
@@ -3115,40 +3141,158 @@ async function demoTick() {
             // Reset guard delta baseline so replayed ticks get full guard state
             _tickLogLastGuards = {};
             _btRetryCount = 0;
+            // Reset relay state — deeper layer starts fresh with normal choreographer
+            _relayPhase = 'normal';
+            _bfsTestRandomChoreographer = false;
+            _relayEnumFingerprints = null;
+            _relayEnumAttempts = 0;
+            _relayEnumStale = 0;
+            _relayScoredQueue = null;
+            _relayScoredIndex = 0;
             _btRestoreSnapshot(anchorSnap);
             _updateTickCounter(); // show tick decrement during backtrack
             _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}`);
             return true;
         };
 
-        // ── PROVABLE EXHAUSTION CHECK ──
-        // Escalate ONLY when fingerprints stop being new. The matching enumerator
-        // cycles with wrap-around, pairing each matching with different PRNG seeds
-        // (via _btRetryCount/_bfsLayerRetries). This explores secondary choices
-        // (idle_tet face, weak BFS, return-to-oct) that the matching alone doesn't cover.
-        // Escalation requires BOTH: no new exclusions AND no new fingerprints.
-        // Safety bound: if we've cycled through all matchings × enough PRNG seeds
-        // without new info, escalate (prevents infinite loops from edge cases).
+        // ══════════════════════════════════════════════════════════════
+        // THREE-PHASE EXHAUSTION: normal → enumerate → scored replay
+        //
+        // Phase 1 (normal): Greedy choreographer tries all matchings
+        //   with PRNG-varied secondary choices. Escalates to Phase 2
+        //   when stale (no new fingerprints or exclusions).
+        //
+        // Phase 2 (enumerating): Random scoring explores the full
+        //   decision space (face assignments, quark types, etc.).
+        //   Collects ALL valid fingerprints into _relayEnumFingerprints.
+        //   Transitions to Phase 3 when stale.
+        //
+        // Phase 3 (replaying): Choreographer scores all enumerated
+        //   fingerprints by preference, tries them best-first.
+        //   Escalates to deeper BFS layer when all exhausted.
+        // ══════════════════════════════════════════════════════════════
+        const _relayBlocked = _bfsTestActive && _bfsTestRunIdx === 1;
+
+        if (_relayPhase === 'replaying') {
+            // ── PHASE 3: Scored replay — trying enumerated options in order ──
+            // A failed replay attempt means this fingerprint's path also fails.
+            // Move to the next scored option.
+            _relayScoredIndex++;
+            if (_relayScoredQueue && _relayScoredIndex < _relayScoredQueue.length) {
+                // Try the next scored option
+                const nextOpt = _relayScoredQueue[_relayScoredIndex];
+                _logChoreo(`RELAY: tick ${currentTick} — replay option ${_relayScoredIndex + 1}/${_relayScoredQueue.length} (score: ${nextOpt.score.toFixed(1)})`);
+                const snap = _btSnapshots[_btSnapshots.length - 1];
+                _btRestoreSnapshot(snap);
+                _btRetryCount++;
+                // Seed PRNG to reproduce this fingerprint's decisions
+                // (use a hash of the fingerprint string for reproducibility)
+                let fpHash = 0;
+                for (let i = 0; i < nextOpt.fp.length; i++) fpHash = ((fpHash << 5) - fpHash + nextOpt.fp.charCodeAt(i)) | 0;
+                _sRngSeed(fpHash >>> 0);
+                continue;
+            }
+            // All scored options exhausted — escalate to deeper layer
+            _logChoreo(`RELAY: tick ${currentTick} — all ${_relayScoredQueue ? _relayScoredQueue.length : 0} scored options exhausted, escalating`);
+            _relayPhase = 'normal';
+            _bfsTestRandomChoreographer = false;
+            _relayEnumFingerprints = null;
+            _relayScoredQueue = null;
+            _btStaleRetries = 0;
+            _btResetMatchingCache();
+            if (!_escalateLayer()) break;
+            continue;
+        }
+
         if (!_addedNewExclusions && !_isNewFingerprint) {
-            // Count consecutive stale retries (no new info)
             if (typeof _btStaleRetries === 'undefined') _btStaleRetries = 0;
             _btStaleRetries++;
-            // Safety bound: 3 full cycles through all matchings with no new info.
-            // Each cycle pairs each matching with a different PRNG seed.
-            // If 3 full cycles produce no new fingerprint, all secondary choices
-            // have been covered for this matching set.
             const cacheSize = (_btMatchingCache ? _btMatchingCache.length : 1);
             const minRetries = Math.max(3, cacheSize * 3);
+
             if (_btStaleRetries >= minRetries) {
-                _logChoreo(`BFS: tick ${currentTick} exhausted (${_btStaleRetries} stale retries, ${cacheSize} matchings, ledger: ${ledger.size}), escalating`);
-                _btResetMatchingCache();
-                _btStaleRetries = 0;
-                if (!_escalateLayer()) break; // t=0 canary fired
-                continue;
+                if (_relayPhase === 'normal' && !_relayBlocked) {
+                    // ── Transition: normal → enumerating ──
+                    _relayPhase = 'enumerating';
+                    _bfsTestRandomChoreographer = true;
+                    _relayEnumFingerprints = new Map();
+                    _relayEnumAttempts = 0;
+                    _relayEnumStale = 0;
+                    _btStaleRetries = 0;
+                    _btResetMatchingCache();
+                    _logChoreo(`RELAY: tick ${currentTick} — normal exhausted, starting enumeration phase`);
+                    const snap = _btSnapshots[_btSnapshots.length - 1];
+                    _btRestoreSnapshot(snap);
+                    _btRetryCount++;
+                    continue;
+                }
+
+                if (_relayPhase === 'enumerating') {
+                    // Enumeration stale — check if we've found any options
+                    _relayEnumStale++;
+                    const enumMinStale = Math.max(5, cacheSize * 3);
+                    if (_relayEnumStale >= enumMinStale) {
+                        _bfsTestRandomChoreographer = false;
+                        if (_relayEnumFingerprints && _relayEnumFingerprints.size > 0) {
+                            // ── Transition: enumerating → replaying ──
+                            // Score all enumerated fingerprints and sort best-first
+                            const scored = [];
+                            for (const [fp, data] of _relayEnumFingerprints) {
+                                const score = _relayScoreFingerprint(fp, null);
+                                scored.push({ fp, score });
+                            }
+                            scored.sort((a, b) => b.score - a.score);
+                            _relayScoredQueue = scored;
+                            _relayScoredIndex = 0;
+                            _relayPhase = 'replaying';
+                            _relayEnumTotal += scored.length;
+                            _logChoreo(`RELAY: tick ${currentTick} — enumerated ${scored.length} valid options, starting scored replay (best: ${scored[0].score.toFixed(1)})`);
+                            const snap = _btSnapshots[_btSnapshots.length - 1];
+                            _btRestoreSnapshot(snap);
+                            _btRetryCount++;
+                            // Seed PRNG for first scored option
+                            let fpHash = 0;
+                            for (let i = 0; i < scored[0].fp.length; i++) fpHash = ((fpHash << 5) - fpHash + scored[0].fp.charCodeAt(i)) | 0;
+                            _sRngSeed(fpHash >>> 0);
+                            continue;
+                        }
+                        // No valid options found — escalate directly
+                        _logChoreo(`RELAY: tick ${currentTick} — enumeration found 0 options, escalating`);
+                        _relayPhase = 'normal';
+                        _relayEnumFingerprints = null;
+                        _btStaleRetries = 0;
+                        _btResetMatchingCache();
+                        if (!_escalateLayer()) break;
+                        continue;
+                    }
+                }
+
+                if (_relayBlocked) {
+                    // Relay blocked (Test 2 explicit random) — escalate directly
+                    _btStaleRetries = 0;
+                    _logChoreo(`BFS: tick ${currentTick} exhausted, escalating`);
+                    _btResetMatchingCache();
+                    if (!_escalateLayer()) break;
+                    continue;
+                }
             }
         } else {
             // Got new info — reset stale counter
             if (typeof _btStaleRetries !== 'undefined') _btStaleRetries = 0;
+
+            // During enumeration phase, collect valid fingerprints
+            if (_relayPhase === 'enumerating' && _isNewFingerprint) {
+                _relayEnumAttempts++;
+                _relayEnumStale = 0; // got new info, reset stale
+                const fp = _computeTickFingerprint();
+                if (!_relayEnumFingerprints.has(fp)) {
+                    _relayEnumFingerprints.set(fp, { fp });
+                }
+            }
+            // During normal phase, new info is just progress — keep going
+            if (_relayPhase === 'normal' && _isNewFingerprint) {
+                _relayEscapes++; // normal choreographer found a path
+            }
         }
 
         // ── SAME-TICK RETRY (new exclusions were added) ──
@@ -3358,7 +3502,7 @@ function _xonStep(e, freeOpts, costlyOpts, tetSCsOpen, faceData, ctx) {
         }
     }
     if (!chosen && freeOpts.length > 0) {
-        chosen = _btActive ? freeOpts[0] : freeOpts[Math.floor(_sRng() * freeOpts.length)];
+        chosen = freeOpts[Math.floor(_sRng() * freeOpts.length)];
     }
     if (!chosen && costlyOpts.length > 0) {
         for (const opt of costlyOpts) {
@@ -3458,8 +3602,7 @@ QUARK_ALGO_REGISTRY.push({
 
         // Hop probability ∝ gradient (leave hot spots, stay in cold spots)
         const prob = Math.min(0.8, Math.max(0.05, 0.1 + gradient * 0.6));
-        if (!_btActive && _sRng() >= prob) return null;
-        // During backtracking, always fire (deterministic)
+        if (_sRng() >= prob) return null;
 
         const unoccupied = groupFaces.filter(f => !occupiedFaces.has(f));
         if (unoccupied.length === 0) return null;
@@ -3641,8 +3784,7 @@ QUARK_ALGO_REGISTRY.push({
             if (cov < minCov) { minCov = cov; bestFace = f; }
         }
 
-        if (!_btActive && _sRng() >= 0.35) return null;
-        // During backtracking, always fire (deterministic)
+        if (_sRng() >= 0.35) return null;
         return { targetFace: bestFace };
     }
 });

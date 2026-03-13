@@ -26,7 +26,7 @@ function _selectBestPermutation(xon, cycle, quarkType) {
             const d = _identifyMoveDir(seq[s], seq[s + 1]);
             if (d >= 0) dirs.push(d);
         }
-        const score = _dirBalanceScoreMulti(xon, dirs) + (_btActive ? 0 : (_sRng() - 0.5) * 0.1);
+        const score = _dirBalanceScoreMulti(xon, dirs) + (_sRng() - 0.5) * 0.1;
         if (score > bestScore) {
             bestScore = score;
             bestSeq = seq;
@@ -483,8 +483,8 @@ function _getOctCandidates(xon, occupied, blocked) {
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
             // T61: ejected weak xons must NOT target oct nodes (must eject away)
             if (isEjected && _octNodeSet && _octNodeSet.has(nb.node)) continue;
-            // Random score with tiebreaker (deterministic during backtracking)
-            const score = 1000 + (_btActive ? 0 : (_sRng() - 0.5) * 0.5);
+            // Random score with tiebreaker (PRNG seed changes per retry)
+            const score = 1000 + (_sRng() - 0.5) * 0.5;
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: undefined, _needsMaterialise: false });
         }
         // Sort by score descending (fewest ejection traversals first)
@@ -595,7 +595,7 @@ function _getOctCandidates(xon, occupied, blocked) {
                         score -= entry.total * 0.01; // slight penalty for overused edges
                     }
                 }
-                score += _btActive ? 0 : (_sRng() - 0.5) * 0.2;
+                score += (_sRng() - 0.5) * 0.2;
             }
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
         }
@@ -985,8 +985,8 @@ function _startIdleTetLoop(xon, occupied) {
 
     // Helper: try to assign xon to a face with free destination
     function tryFaces(faces) {
-        const shuffled = _btActive ? faces.slice().sort((a, b) => a - b) : _sRngShuffle(faces.slice());
-        const shuffledTypes = _btActive ? types.slice().sort() : _sRngShuffle(types.slice());
+        const shuffled = _sRngShuffle(faces.slice());
+        const shuffledTypes = _sRngShuffle(types.slice());
         let bestSeq = null, bestFace = null, bestType = null;
         for (const face of shuffled) {
             const existingXon = _demoXons.find(x =>
@@ -1054,7 +1054,7 @@ function _startIdleTetLoop(xon, occupied) {
     // Try to materialise the missing SCs for non-actualized faces.
     // This creates new loiter space when the oct cage is congested.
     const newlyActualized = [];
-    for (const face of (_btActive ? manifestCandidates.slice().sort((a, b) => a - b) : _sRngShuffle(manifestCandidates.slice()))) {
+    for (const face of _sRngShuffle(manifestCandidates.slice())) {
         const fd = _nucleusTetFaceData[face];
         const missingSCs = fd.scIds.filter(scId =>
             !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
