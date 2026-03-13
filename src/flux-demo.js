@@ -317,6 +317,7 @@
 
 // ── Xonic Movement Balance: direction identification ──
 // Maps SC stype (1-6) to _dirBalance index (4-9). Base dirs use indices 0-3 directly.
+let _demoPanelDirty = false; // rAF coalescing flag for left-panel UI updates
 const _STYPE_TO_DIR = {1:4, 2:5, 3:6, 4:7, 5:8, 6:9};
 
 // Identify the direction index (0-9) for a move from→to.
@@ -3161,13 +3162,18 @@ async function demoTick() {
         }
     }
 
-    // Update UI — throttled to every 4th tick (panels show cumulative stats)
-    if (_demoTick % 4 === 0) {
-        updateDemoPanel();
-        _updateEdgeBalancePanel();
-        _updateEjectionBalancePanel();
-        updateStatus();
-        updateXonPanel();
+    // Update UI — deferred to next animation frame so panels never block the sim.
+    // _demoPanelDirty flag ensures we schedule at most one rAF per burst of ticks.
+    if (!_demoPanelDirty) {
+        _demoPanelDirty = true;
+        requestAnimationFrame(() => {
+            _demoPanelDirty = false;
+            updateDemoPanel();
+            _updateEdgeBalancePanel();
+            _updateEjectionBalancePanel();
+            updateStatus();
+            updateXonPanel();
+        });
     }
 
     // Tick log entry (lightweight, for export)
