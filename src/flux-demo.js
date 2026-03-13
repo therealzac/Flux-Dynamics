@@ -1567,6 +1567,13 @@ async function demoTick() {
     // ── BACKTRACKING RETRY LOOP ──
     // Save state before tick, run choreography, check guards.
     // If T19/T20 violation → rewind, exclude offending moves, retry.
+    // Reset per-tick RL reward accumulators so they don't leak across ticks
+    if (typeof _ppoTetCompletionsThisTick !== 'undefined') {
+        _ppoTetCompletionsThisTick = 0;
+        _ppoGuardFailedThisTick = false;
+        _ppoDeformationThisTick = false;
+        _ppoBacktracksThisTick = 0;
+    }
     _btSaveSnapshot();
     _rewindRequested = false;
     _rewindViolation = null;
@@ -1589,10 +1596,24 @@ async function demoTick() {
         await new Promise(r => setTimeout(r, 0));
     }
 
+    // Reset per-tick RL reward accumulators at each retry attempt so failed
+    // retries don't leak completions/penalties into the successful attempt.
+    if (typeof _ppoTetCompletionsThisTick !== 'undefined') {
+        _ppoTetCompletionsThisTick = 0;
+        _ppoGuardFailedThisTick = false;
+        _ppoDeformationThisTick = false;
+        _ppoBacktracksThisTick = 0;
+    }
     // Seed PRNG from tick number + retry context. The retry count and BFS layer
     // ensure each backtracker attempt gets a different PRNG sequence, so type
     // selection, shuffles, and other randomized decisions explore new paths.
-    _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31);
+    // During PPO training, use tick-only seed so the RL model sees consistent
+    // random outcomes for the same state (reproducibility for policy learning).
+    if (typeof _ppoTraining !== 'undefined' && _ppoTraining) {
+        _sRngSeed(_demoTick * 65537 + _bfsLayer * 31);
+    } else {
+        _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31);
+    }
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
     // Revert gluon xons to oct (fresh evaluation each tick per spec §2)

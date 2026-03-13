@@ -12,7 +12,7 @@
 const RL_STRATEGIC_FEATURES = 22;
 const RL_STRATEGIC_HIDDEN   = 24;
 const RL_STRATEGIC_MAX_ACTIONS = 48; // 8 faces × 6 quark types max
-const RL_NUM_FEATURES       = 22;    // tactical
+const RL_NUM_FEATURES       = 26;    // tactical (22 base + 4 balance signals)
 const RL_HIDDEN_1           = 32;
 const RL_HIDDEN_2           = 32;
 const RL_TACTICAL_MAX_ACTIONS = 12;  // max oct neighbors
@@ -28,10 +28,10 @@ const PPO_MINIBATCH_SIZE  = 32;
 const PPO_LEARNING_RATE   = 3e-4;
 const PPO_ROLLOUT_LENGTH  = 128;
 const PPO_MAX_GRAD_NORM   = 0.5;
-const PPO_BALANCE_SCALE   = 10.0;   // reward scaling for CV improvement
+const PPO_BALANCE_SCALE   = 5.0;    // reward scaling for CV improvement (halved to balance vs penalties)
 const PPO_DEFORMATION_BONUS = 0.05; // reward for ticks with SC changes
 const PPO_IDLE_TICK_PENALTY = 0.02; // penalty for ticks without SC changes
-const PPO_TET_COMPLETION_BONUS = 0.1;
+const PPO_TET_COMPLETION_BONUS = 0.2; // doubled — tet completions are the primary objective
 const PPO_EVENNESS_SCALE  = 5.0;     // reward scaling for edge evenness improvement
 const PPO_EJECTION_SCALE  = 5.0;     // reward scaling for ejection evenness improvement (equal weight)
 
@@ -353,13 +353,14 @@ function computeTickReward() {
     // Tet completion bonus
     reward += PPO_TET_COMPLETION_BONUS * _ppoTetCompletionsThisTick;
 
-    // Guard failure penalty
-    if (_ppoGuardFailedThisTick) reward -= 1.0;
+    // Guard failure penalty — must outweigh any balance improvement to prevent
+    // the model from learning that illegal-but-CV-improving moves are net positive
+    if (_ppoGuardFailedThisTick) reward -= 3.0;
 
     // Backtracker penalty: each retry means the NN chose a move that violated
     // a constraint (Pauli, teleportation, unactivated SC, etc.)
     if (_ppoBacktracksThisTick > 0) {
-        reward -= 0.5 * _ppoBacktracksThisTick;
+        reward -= 1.0 * _ppoBacktracksThisTick;
     }
 
     // Deformation reward: encourage 1:1 tick-to-Planck ratio
@@ -717,15 +718,50 @@ function extractRLFeatures(xon, candidate, occupied) {
     f[6] = ms.oct / totalTicks;
     f[7] = ms.tet / totalTicks;
     f[8] = ms.idle_tet / totalTicks;
-    for (let d = 4; d < 10; d++) f[5 + d] = maxCount > 0 ? (maxCount - db[d]) / maxCount : 0;
-    for (let d = 0; d < 4; d++) f[15 + d] = maxCount > 0 ? (maxCount - db[d]) / maxCount : 0;
+    for (let d = 4; d < 10; d++) f[5 + d] = (maxCount - db[d]) / (maxCount + 1);
+    for (let d = 0; d < 4; d++) f[15 + d] = (maxCount - db[d]) / (maxCount + 1);
     let occCount = 0;
     if (occupied && _octNodeSet) {
         for (const n of _octNodeSet) { if (occupied.has(n)) occCount++; }
         f[19] = occCount / Math.max(1, _octNodeSet.size);
     }
     f[20] = ms.weak / totalTicks;
-    f[21] = Math.random() * 0.1;
+    // f[21..25]: global balance signals so the model can optimize for them
+    f[21] = typeof _computeEdgeEvenness === 'function' ? _computeEdgeEvenness() : 0;
+    f[22] = typeof _computeEjectionEvenness === 'function' ? _computeEjectionEvenness() : 0;
+    // Per-xon quark balance: CV of assigned face visits (0 = no data, 1 = perfect imbalance)
+    if (_demoVisits && xon._assignedFace && _demoVisits[xon._assignedFace]) {
+        const v = _demoVisits[xon._assignedFace];
+        const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+        const counts = types.map(t => v[t] || 0);
+        const s = counts.reduce((a, b) => a + b, 0);
+        if (s > 0) {
+            const m = s / 6;
+            let var_ = 0;
+            for (let i = 0; i < 6; i++) var_ += (counts[i] - m) ** 2;
+            f[23] = 1 - Math.sqrt(var_ / 6) / m; // face evenness [0,1]
+        }
+    }
+    // Edge balance of candidate edge specifically
+    if (_edgeBalance) {
+        const pid = pairId(xon.node, candidate.node);
+        const entry = _edgeBalance.get(pid);
+        if (entry && entry.total > 0) {
+            let maxEdge = 0;
+            for (const [, e] of _edgeBalance) if (e.total > maxEdge) maxEdge = e.total;
+            f[24] = maxEdge > 0 ? entry.total / maxEdge : 0; // relative usage [0,1]
+        }
+    }
+    // Ejection balance of candidate edge specifically
+    if (_ejectionBalance) {
+        const pid = pairId(xon.node, candidate.node);
+        const ejCount = _ejectionBalance.get(pid);
+        if (ejCount !== undefined) {
+            let maxEj = 0;
+            for (const [, c] of _ejectionBalance) if (c > maxEj) maxEj = c;
+            f[25] = maxEj > 0 ? ejCount / maxEj : 0; // relative usage [0,1]
+        }
+    }
     return f;
 }
 
@@ -734,7 +770,7 @@ function extractRLFeatures(xon, candidate, occupied) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const _RL_IDB_NAME = 'flux_rl_genome';
-const _RL_IDB_VERSION = 2;  // bumped for PPO format
+const _RL_IDB_VERSION = 3;  // bumped for 26-feature vector (was 22)
 const _RL_IDB_STORE = 'genomes';
 let _rlIDB = null;
 
