@@ -32,6 +32,8 @@ const PPO_BALANCE_SCALE   = 10.0;   // reward scaling for CV improvement
 const PPO_DEFORMATION_BONUS = 0.05; // reward for ticks with SC changes
 const PPO_IDLE_TICK_PENALTY = 0.02; // penalty for ticks without SC changes
 const PPO_TET_COMPLETION_BONUS = 0.1;
+const PPO_EVENNESS_SCALE  = 5.0;     // reward scaling for edge evenness improvement
+const PPO_EJECTION_SCALE  = 5.0;     // reward scaling for ejection evenness improvement (equal weight)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // §2  TF.js AVAILABILITY
@@ -313,6 +315,8 @@ class PPOTrajectoryBuffer {
 // ══════════════════════════════════════════════════════════════════════════════
 
 let _ppoPrevAvgCV = null;
+let _ppoPrevEvenness = null;  // previous edge evenness for delta reward
+let _ppoPrevEjectionEvenness = null;  // previous ejection evenness for delta reward
 let _ppoTetCompletionsThisTick = 0;
 let _ppoGuardFailedThisTick = false;
 let _ppoDeformationThisTick = false;
@@ -365,6 +369,24 @@ function computeTickReward() {
         reward -= PPO_IDLE_TICK_PENALTY;
     }
 
+    // Edge evenness improvement (positive = evenness increased = good)
+    if (typeof _computeEdgeEvenness === 'function') {
+        const currentEvenness = _computeEdgeEvenness();
+        if (_ppoPrevEvenness !== null) {
+            reward += (currentEvenness - _ppoPrevEvenness) * PPO_EVENNESS_SCALE;
+        }
+        _ppoPrevEvenness = currentEvenness;
+    }
+
+    // Ejection evenness improvement (positive = evenness increased = good)
+    if (typeof _computeEjectionEvenness === 'function') {
+        const currentEjection = _computeEjectionEvenness();
+        if (_ppoPrevEjectionEvenness !== null) {
+            reward += (currentEjection - _ppoPrevEjectionEvenness) * PPO_EJECTION_SCALE;
+        }
+        _ppoPrevEjectionEvenness = currentEjection;
+    }
+
     // Idle oct xon penalty
     if (typeof _demoXons !== 'undefined') {
         let idleCount = 0;
@@ -385,6 +407,8 @@ function computeTickReward() {
 
 function resetTickRewardState() {
     _ppoPrevAvgCV = null;
+    _ppoPrevEvenness = null;
+    _ppoPrevEjectionEvenness = null;
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
     _ppoDeformationThisTick = false;

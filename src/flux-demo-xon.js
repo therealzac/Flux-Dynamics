@@ -227,6 +227,9 @@ function _advanceXon(xon) {
     // Update xonic movement balance counters
     _updateDirBalance(xon, fromNode, toNode);
 
+    // Record edge traversal for edge balance (quark modes only)
+    if (xon._quarkType) _recordEdgeTraversal(fromNode, toNode, xon._quarkType);
+
     // Check if tet face is actualized this step (all face SCs active)
     if (xon._assignedFace != null && _nucleusTetFaceData) {
         const fd = _nucleusTetFaceData[xon._assignedFace];

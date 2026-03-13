@@ -1201,6 +1201,10 @@ function startDemoLoop() {
     _demoTetAssignments = 0;
     _demoPauliViolations = 0;
     _demoSpreadViolations = 0;
+    // Edge balance + ejection balance reset (will be re-initialized after oct discovery)
+    _octEdgeSet = null;
+    _edgeBalance = null;
+    _ejectionBalance = null;
     if (typeof _rlTemporalState !== 'undefined') _rlTemporalState.reset();
     _demoTypeBalanceHistory = [];
     _demoVisitedFaces = new Set();  // track which faces have been activated
@@ -1509,6 +1513,10 @@ function _executeOpeningTick(occupied) {
         }
 
         console.log(`[opening] Oct discovered: equator=[${ordered}], pole=${chosen.pole}, ${adjTets.length} tets`);
+
+        // Build edge balance + ejection balance tracking
+        _initEdgeBalance();
+        _initEjectionBalance();
 
         // Build wavefunction surface and concentric shells now that oct is known
         if (typeof buildWavefunction === 'function') buildWavefunction();
@@ -1936,6 +1944,7 @@ async function demoTick() {
             xon._movedThisTick = true;
             _moveRecord.set(bestStep, fromWk);
             _traceMove(xon, fromWk, bestStep, 'weakBFS');
+            _recordEjectionTraversal(fromWk, bestStep);
             _trailPush(xon, bestStep, WEAK_FORCE_COLOR);
             xon.tweenT = 0;
             anyMoved = true;
@@ -3155,6 +3164,8 @@ async function demoTick() {
     // Update UI — throttled to every 4th tick (panels show cumulative stats)
     if (_demoTick % 4 === 0) {
         updateDemoPanel();
+        _updateEdgeBalancePanel();
+        _updateEjectionBalancePanel();
         updateStatus();
         updateXonPanel();
     }

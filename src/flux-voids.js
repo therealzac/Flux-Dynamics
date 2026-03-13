@@ -504,7 +504,7 @@ function _updateVoidVisibility(){
             const excited = !!eCol;
             const hasAnnot = annotCol !== undefined;
 
-            const fillOp = annotOp !== undefined ? annotOp * op : (hasAnnot || excited ? op : op * 0.25);
+            const fillOp = annotOp !== undefined ? annotOp * op : op;
 
             if(hasAnnot){
                 entry.fillMesh.material.color.setHex(annotCol);
@@ -513,8 +513,9 @@ function _updateVoidVisibility(){
                 entry.fillMesh.material.color.copy(eCol);
                 entry.fillMesh.material.emissive.copy(eCol).multiplyScalar(0.3);
             } else {
-                entry.fillMesh.material.color.setHex(0x999999);
-                entry.fillMesh.material.emissive.setHex(0x222222);
+                // Match oct void appearance: white at full opacity
+                entry.fillMesh.material.color.setHex(0xffffff);
+                entry.fillMesh.material.emissive.setHex(0x444444);
             }
             entry.fillMesh.material.opacity = fillOp;
             entry.fillMesh.material.needsUpdate = true;

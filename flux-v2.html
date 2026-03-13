@@ -259,6 +259,18 @@
             <div id="dp-coverage-bars" style="font-size:10px; line-height:1.8;"><!-- populated by JS --></div>
         </div>
 
+        <!-- Edge balance (evenness) per oct-adjacent edge -->
+        <div class="panel-section" style="padding:10px;">
+            <div class="panel-section-header" style="margin-bottom:6px;">EDGE BALANCE</div>
+            <div id="dp-edge-balance" style="font-size:10px; line-height:1.5;"><!-- populated by JS --></div>
+        </div>
+
+        <!-- Ejection balance per tet-face edge -->
+        <div class="panel-section" style="padding:10px;">
+            <div class="panel-section-header" style="margin-bottom:6px;">EJECTION BALANCE</div>
+            <div id="dp-ejection-balance" style="font-size:10px; line-height:1.5;"><!-- populated by JS --></div>
+        </div>
+
         <!-- Unit test results -->
         <div id="dp-test-section" class="panel-section" style="display:none; padding:10px;">
             <div class="panel-section-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -493,21 +505,21 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=14"></script>
-    <script src="src/flux-demo-xon.js?v=4"></script>
-    <script src="src/flux-demo-backtrack.js?v=5"></script>
-    <script src="src/flux-demo-planner.js?v=8"></script>
-    <script src="src/flux-demo-ui.js?v=22"></script>
-    <script src="src/flux-demo.js?v=343"></script>
+    <script src="src/flux-demo-state.js?v=21"></script>
+    <script src="src/flux-demo-xon.js?v=5"></script>
+    <script src="src/flux-demo-backtrack.js?v=7"></script>
+    <script src="src/flux-demo-planner.js?v=11"></script>
+    <script src="src/flux-demo-ui.js?v=31"></script>
+    <script src="src/flux-demo.js?v=345"></script>
     <script src="src/flux-solver-render.js?v=35"></script>
     <script src="src/flux-tournament.js?v=9"></script>
-    <script src="src/flux-rl.js?v=10"></script>
+    <script src="src/flux-rl.js?v=14"></script>
     <script src="src/flux-ui.js?v=14"></script>
     <script src="src/flux-electrons.js?v=15"></script>
-    <script src="src/flux-voids.js?v=26"></script>
+    <script src="src/flux-voids.js?v=27"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
     <script src="src/flux-nucleus.js?v=35"></script>
-    <script src="src/flux-tests.js?v=210"></script>
+    <script src="src/flux-tests.js?v=211"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

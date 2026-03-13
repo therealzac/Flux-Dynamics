@@ -195,6 +195,117 @@ function updateDemoPanel() {
     if (syncRow) syncRow.style.display = 'none';
 }
 
+// ── Edge Balance Panel ────────────────────────────────────────────────────
+function _updateEdgeBalancePanel() {
+    const el = document.getElementById('dp-edge-balance');
+    if (!el || !_edgeBalance || _edgeBalance.size === 0) return;
+
+    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+    const typeColors = { pu1: '#0040ff', pu2: '#00ff40', pd: '#00ffff', nd1: '#ffbf00', nd2: '#ff00bf', nu: '#ff0000' };
+
+    // Sort edges: oct↔oct first, then oct↔ext, by pairId
+    // pairId() returns a number (a*20000+b), so decode it back to node pair
+    const octOct = [], octExt = [];
+    for (const [pid, counts] of _edgeBalance) {
+        const a = Math.floor(pid / 20000), b = pid % 20000;
+        if (_octNodeSet && _octNodeSet.has(a) && _octNodeSet.has(b)) {
+            octOct.push([pid, counts, a, b]);
+        } else {
+            octExt.push([pid, counts, a, b]);
+        }
+    }
+    octOct.sort((a, b) => a[0] - b[0]);
+    octExt.sort((a, b) => a[0] - b[0]);
+
+    // Overall evenness score
+    const evenness = _computeEdgeEvenness();
+    const wColor = evenness > 0.95 ? '#66dd66' : evenness > 0.8 ? '#ccaa66' : '#ff6644';
+
+    let html = `<div style="display:flex; justify-content:space-between; margin-bottom:4px;">`;
+    html += `<span style="color:var(--text-3); font-size:9px;">evenness</span>`;
+    html += `<span style="color:${wColor}; font-weight:bold; font-size:9px;">${(evenness * 100).toFixed(1)}%</span>`;
+    html += `</div>`;
+
+    // Render edge rows
+    const renderEdge = ([pid, counts, a, b], label) => {
+        if (counts.total === 0) {
+            html += `<div style="display:flex; align-items:center; gap:1px;">`;
+            html += `<span style="width:36px; color:var(--text-3); font-size:7px; font-family:var(--font-mono);">${label}</span>`;
+            html += `<span style="color:var(--text-3); font-size:7px;">—</span>`;
+            html += `</div>`;
+            return;
+        }
+        const maxT = Math.max(1, ...types.map(t => counts[t]));
+        // Compute per-edge evenness (how balanced this single edge is)
+        const ideal = counts.total / 6;
+        let dev = 0;
+        for (const t of types) dev += Math.abs(counts[t] - ideal);
+        const maxDev = counts.total * (10 / 6);
+        const edgeW = 1 - (dev / maxDev);
+        const eColor = edgeW > 0.95 ? '#66dd66' : edgeW > 0.8 ? '#ccaa66' : '#ff6644';
+
+        html += `<div style="display:flex; align-items:center; gap:1px;">`;
+        html += `<span style="width:36px; color:${eColor}; font-size:7px; font-family:var(--font-mono);">${label}</span>`;
+        for (const t of types) {
+            const pct = (counts[t] / maxT * 100).toFixed(1);
+            html += `<div class="dp-bar-bg" style="flex:1;" title="${t}: ${counts[t]}"><div class="dp-bar-fill" style="width:${pct}%; background:${typeColors[t]};"></div></div>`;
+        }
+        html += `<span style="width:20px; text-align:right; font-size:6px; color:var(--text-3);">${counts.total}</span>`;
+        html += `</div>`;
+    };
+
+    if (octOct.length > 0) {
+        html += `<div style="color:var(--text-3); font-size:7px; margin:3px 0 1px;">oct↔oct</div>`;
+        for (const e of octOct) renderEdge(e, `${e[2]}–${e[3]}`);
+    }
+    if (octExt.length > 0) {
+        html += `<div style="color:var(--text-3); font-size:7px; margin:3px 0 1px;">oct↔ext</div>`;
+        for (const e of octExt) renderEdge(e, `${e[2]}–${e[3]}`);
+    }
+
+    el.innerHTML = html;
+}
+
+// ── Ejection Balance Panel ─────────────────────────────────────────────────
+function _updateEjectionBalancePanel() {
+    const el = document.getElementById('dp-ejection-balance');
+    if (!el || !_ejectionBalance || _ejectionBalance.size === 0) return;
+
+    // Overall ejection evenness
+    const evenness = _computeEjectionEvenness();
+    const eColor = evenness > 0.95 ? '#66dd66' : evenness > 0.8 ? '#ccaa66' : '#ff6644';
+
+    // Collect edges with ejection data, decode pairId
+    const edges = [];
+    let maxCount = 1;
+    for (const [pid, count] of _ejectionBalance) {
+        const a = Math.floor(pid / 20000), b = pid % 20000;
+        edges.push([pid, count, a, b]);
+        if (count > maxCount) maxCount = count;
+    }
+    // Sort: oct↔oct first, then oct↔ext
+    edges.sort((a, b) => a[0] - b[0]);
+
+    let html = `<div style="display:flex; justify-content:space-between; margin-bottom:4px;">`;
+    html += `<span style="color:var(--text-3); font-size:9px;">evenness</span>`;
+    html += `<span style="color:${eColor}; font-weight:bold; font-size:9px;">${(evenness * 100).toFixed(1)}%</span>`;
+    html += `</div>`;
+
+    // All edges in _ejectionBalance are chirality-eligible — show all of them
+    for (const [pid, count, a, b] of edges) {
+        const pct = maxCount > 0 ? (count / maxCount * 100).toFixed(1) : '0';
+        html += `<div style="display:flex; align-items:center; gap:1px;">`;
+        html += `<span style="width:36px; color:var(--text-3); font-size:7px; font-family:var(--font-mono);">${a}–${b}</span>`;
+        html += `<div class="dp-bar-bg" style="flex:1;" title="ejections: ${count}"><div class="dp-bar-fill" style="width:${pct}%; background:rgba(255,255,255,0.45);"></div></div>`;
+        html += `<span style="width:20px; text-align:right; font-size:6px; color:var(--text-3);">${count}</span>`;
+        html += `</div>`;
+    }
+
+    html += `<div style="font-size:7px; color:var(--text-3); margin-top:3px; font-style:italic;">chirality-forbidden edges (a↔b, c↔d) omitted</div>`;
+
+    el.innerHTML = html;
+}
+
 // ── Choreographer logging helper ──
 function _logChoreo(msg) {
     _choreoLog.push({ tick: _demoTick, msg });

@@ -25,6 +25,165 @@ let _planckSeconds = 0;  // ticks where lattice deformation occurred (SC adds/re
 let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 
+// ── Edge Balance System — per-edge quark traversal counters ──
+// Tracks how evenly all 6 quark types traverse each edge connected to the oct.
+// "White" = perfectly balanced (all 6 types equal). Tinted = imbalanced.
+// _octEdgeSet: Set of pairId strings for all edges with ≥1 oct endpoint
+// _edgeBalance: Map<pairId, {pu1,pu2,pd,nd1,nd2,nu,total}>
+let _octEdgeSet = null;
+let _edgeBalance = null;
+
+// ── Ejection Balance System — per-edge weak force exit counters ──
+// Tracks how evenly weak particles exit through the "dead edges" of each tet face
+// (edges that handedness prevents quarks from traversing).
+// _ejectionBalance: Map<pairId, count> — incremented each time a weak xon traverses the edge
+// _ejectionEdgeSet: Set of pairId — all tet-face edges (same set as _octEdgeSet, weak uses the complement)
+let _ejectionBalance = null;
+
+// Initialize edge balance system — call after _nucleusTetFaceData and _octSCIds are populated
+function _initEdgeBalance() {
+    _octEdgeSet = new Set();
+    _edgeBalance = new Map();
+    if (!_nucleusTetFaceData) return;
+
+    const addEdge = (a, b) => {
+        const pid = pairId(a, b);
+        if (!_octEdgeSet.has(pid)) {
+            _octEdgeSet.add(pid);
+            _edgeBalance.set(pid, { pu1: 0, pu2: 0, pd: 0, nd1: 0, nd2: 0, nu: 0, total: 0 });
+        }
+    };
+
+    // Collect edges from tet face cycles — these are the only edges quarks traverse.
+    // Each face cycle = [a, b, c, d] (4 nodes of the tet). Quark loops traverse
+    // all 6 edges of the K4 tetrahedron (a↔b, a↔c, a↔d, b↔c, b↔d, c↔d).
+    for (let f = 1; f <= 8; f++) {
+        const fd = _nucleusTetFaceData[f];
+        if (!fd || !fd.cycle) continue;
+        const [a, b, c, d] = fd.cycle;
+        addEdge(a, b); addEdge(a, c); addEdge(a, d);
+        addEdge(b, c); addEdge(b, d); addEdge(c, d);
+    }
+
+    // Also include oct cage edges (oct↔oct SC edges)
+    if (_octSCIds) {
+        for (const scId of _octSCIds) {
+            const sc = SC_BY_ID[scId];
+            if (sc) addEdge(sc.a, sc.b);
+        }
+    }
+
+    console.log(`[edgeBalance] Tracking ${_octEdgeSet.size} edges from ${Object.keys(_nucleusTetFaceData).length} tet faces + oct cage`);
+}
+
+// Record a quark traversal on an edge (called from _advanceXon)
+function _recordEdgeTraversal(fromNode, toNode, quarkType) {
+    if (!_edgeBalance || !quarkType) return;
+    const pid = pairId(fromNode, toNode);
+    const entry = _edgeBalance.get(pid);
+    if (!entry) return; // not an oct-adjacent edge
+    if (entry[quarkType] !== undefined) {
+        entry[quarkType]++;
+        entry.total++;
+    }
+}
+
+// Compute scalar edge-evenness score [0,1] — 1.0 = all 6 quark types visit each edge equally
+function _computeEdgeEvenness() {
+    if (!_edgeBalance || _edgeBalance.size === 0) return 0;
+    const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+    let totalScore = 0;
+    let edgesWithData = 0;
+    for (const [pid, counts] of _edgeBalance) {
+        if (counts.total === 0) continue;
+        edgesWithData++;
+        // Perfect balance = each type is 1/6 of total
+        const ideal = counts.total / 6;
+        let deviation = 0;
+        for (const t of types) deviation += Math.abs(counts[t] - ideal);
+        // Normalize: max deviation is when all traversals are one type = 5/6 * total * 2
+        // But simpler: deviation / (2 * total * (1 - 1/6)) = deviation / (5/3 * total)
+        // Score = 1 - normalized deviation
+        const maxDev = counts.total * (10 / 6); // worst case: all one type
+        totalScore += 1 - (deviation / maxDev);
+    }
+    return edgesWithData > 0 ? totalScore / edgesWithData : 0;
+}
+
+// ── Ejection Balance — track weak xon traversals through tet-face edges ──
+
+function _initEjectionBalance() {
+    _ejectionBalance = new Map();
+    if (!_nucleusTetFaceData) return;
+    // Chirality determines which edges weak xons can use.
+    // Per face cycle [a, b, c, d]: a↔b (pole↔ext) and c↔d (oct↔oct) are chirality-forbidden.
+    // Eligible ejection edges: a↔c, a↔d, b↔c, b↔d (4 per face).
+    const forbidden = new Set();
+    const eligible = new Set();
+    for (let f = 1; f <= 8; f++) {
+        const fd = _nucleusTetFaceData[f];
+        if (!fd || !fd.cycle) continue;
+        const [a, b, c, d] = fd.cycle;
+        forbidden.add(pairId(a, b)); // pole↔ext
+        forbidden.add(pairId(c, d)); // oct↔oct non-cage
+        eligible.add(pairId(a, c));
+        eligible.add(pairId(a, d));
+        eligible.add(pairId(b, c));
+        eligible.add(pairId(b, d));
+    }
+    // Remove any that ended up in both (shouldn't happen, but safety)
+    for (const pid of forbidden) eligible.delete(pid);
+    for (const pid of eligible) {
+        _ejectionBalance.set(pid, 0);
+    }
+    console.log(`[ejectionBalance] Tracking ${_ejectionBalance.size} eligible edges (${forbidden.size} chirality-forbidden)`);
+}
+
+// Record a weak xon traversal on a tet-face edge
+function _recordEjectionTraversal(fromNode, toNode) {
+    if (!_ejectionBalance) return;
+    const pid = pairId(fromNode, toNode);
+    if (_ejectionBalance.has(pid)) {
+        _ejectionBalance.set(pid, _ejectionBalance.get(pid) + 1);
+    }
+}
+
+// Compute scalar ejection evenness [0,1] — 1.0 = all eligible edges have equal ejection counts
+// All edges in _ejectionBalance are chirality-eligible, so consider all of them.
+function _computeEjectionEvenness() {
+    if (!_ejectionBalance || _ejectionBalance.size === 0) return 0;
+    const counts = [];
+    for (const [, c] of _ejectionBalance) counts.push(c);
+    const total = counts.reduce((a, b) => a + b, 0);
+    if (total === 0) return 0;
+    const n = counts.length;
+    const ideal = total / n;
+    let deviation = 0;
+    for (const c of counts) deviation += Math.abs(c - ideal);
+    const maxDev = 2 * total * (1 - 1 / n);
+    return maxDev > 0 ? 1 - (deviation / maxDev) : 0;
+}
+
+// ── Oct Center Bias — xon movement prefers proximity to geometric oct center ──
+// The oct geometric center {0, -0.5774, 0} is the centroid of the 6 oct nodes.
+// This bias replaces the emergent spawn-point bias from _dirBalance with an
+// explicit positional preference towards the nuclear center.
+const _OCT_CENTER = [0.0, -0.5774, 0.0];
+
+// Compute oct-center proximity score for a candidate node.
+// Returns a small positive bonus for nodes closer to oct center.
+// Uses solver positions (pos[]) for live deformed coordinates.
+function _octCenterBias(nodeIdx) {
+    if (!pos || !pos[nodeIdx]) return 0;
+    const dx = pos[nodeIdx][0] - _OCT_CENTER[0];
+    const dy = pos[nodeIdx][1] - _OCT_CENTER[1];
+    const dz = pos[nodeIdx][2] - _OCT_CENTER[2];
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // Invert: closer = higher score. Scale so 1 unit away ≈ 1.0 score.
+    // Clamp at 0 to avoid rewarding being at the center itself too heavily.
+    return Math.max(0, 2.0 - dist);
+}
+
 // ── Rolling Ratio Tracker — demand-driven quark type selection ──
 // Syncs from _demoVisits each tick. Computes deficit for any quark type.
 // Target fractions: each type = 1/3 within its hadron (3-way split).

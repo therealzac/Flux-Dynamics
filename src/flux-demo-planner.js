@@ -572,7 +572,9 @@ function _getOctCandidates(xon, occupied, blocked) {
                 const features = extractRLFeatures(xon, nb, occupied);
                 score = scoreCandidateRL(features, _rlActiveModel);
             } else {
-                score = _dirBalanceScore(xon, nb.dirIdx);
+                // Spatial bias: prefer candidates closer to oct geometric center
+                // Small random tiebreaker prevents deterministic cycling
+                score = _octCenterBias(nb.node) + (_sRng() - 0.5) * 0.1;
             }
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: nb._scId, _needsMaterialise: nb._needsMaterialise });
         }

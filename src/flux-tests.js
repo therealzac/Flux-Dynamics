@@ -2491,6 +2491,8 @@ async function _runTournament() {
                 if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
                 if (typeof updateSpheres === 'function') updateSpheres();
                 if (typeof updateDemoPanel === 'function') updateDemoPanel();
+                if (typeof _updateEdgeBalancePanel === 'function') _updateEdgeBalancePanel();
+                if (typeof _updateEjectionBalancePanel === 'function') _updateEjectionBalancePanel();
                 if (typeof updateXonPanel === 'function') updateXonPanel();
                 while (_demoPaused && _tournamentRunning) {
                     await new Promise(r => setTimeout(r, 50));

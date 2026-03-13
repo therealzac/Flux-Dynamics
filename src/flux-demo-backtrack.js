@@ -31,6 +31,10 @@ function _btSaveSnapshot() {
         octFullConsecutive: _octFullConsecutive,
         // Hadron balance counts (must rewind with backtracker for correct T22)
         demoVisits: _demoVisits ? JSON.parse(JSON.stringify(_demoVisits)) : null,
+        // Edge balance counters (must rewind with backtracker)
+        edgeBalance: _edgeBalance ? new Map([..._edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
+        // Ejection balance counters
+        ejectionBalance: _ejectionBalance ? new Map(_ejectionBalance) : null,
         // Matter/antimatter winding direction
         octWindingDirection: _octWindingDirection,
         // Planck second counter (deformation events)
@@ -95,6 +99,10 @@ function _btRestoreSnapshot(snap) {
     if ('octFullConsecutive' in snap) _octFullConsecutive = snap.octFullConsecutive;
     // Restore hadron balance counts
     if (snap.demoVisits) _demoVisits = JSON.parse(JSON.stringify(snap.demoVisits));
+    // Restore edge balance counters
+    if (snap.edgeBalance) _edgeBalance = new Map([...snap.edgeBalance].map(([k, v]) => [k, { ...v }]));
+    // Restore ejection balance counters
+    if (snap.ejectionBalance) _ejectionBalance = new Map(snap.ejectionBalance);
     // Restore matter/antimatter winding direction
     if ('octWindingDirection' in snap) _octWindingDirection = snap.octWindingDirection;
     // Restore Planck second counter
