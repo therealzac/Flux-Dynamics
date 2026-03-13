@@ -43,9 +43,9 @@
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
         /* ── Right panel ── */
-        #side-panel { position: fixed; top: 16px; right: 16px; width: 300px;
+        #side-panel { position: fixed; top: 16px; right: 16px; width: 375px;
             display: flex; flex-direction: column; gap: 0;
-            font-size: 12px; letter-spacing: 0.02em; color: var(--text-2);
+            font-size: 15px; letter-spacing: 0.02em; color: var(--text-2);
             user-select: none;
             max-height: calc(100vh - 32px); overflow-y: auto; overflow-x: hidden;
             pointer-events: auto; }
@@ -220,13 +220,13 @@
     <canvas id="c"></canvas>
     <!-- ═══ DEUTERON PANEL (replaces old legend tabs) ═══ -->
     <div id="deuteron-panel" style="display:none; position:fixed; top:16px; left:16px;
-        font-size:12px; line-height:2.0; letter-spacing:0.02em; color:var(--text-2);
-        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:260px;
+        font-size:15px; line-height:2.0; letter-spacing:0.02em; color:var(--text-2);
+        user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:375px;
         pointer-events:auto; background:var(--surface);
         border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px;
         backdrop-filter:blur(8px); z-index:100; box-shadow:var(--shadow);
         max-height:calc(100vh - 32px); overflow-y:auto;">
-        <div id="dp-title" style="font-size:18px; color:var(--gold); letter-spacing:0.06em;
+        <div id="dp-title" style="font-size:22px; color:var(--gold); letter-spacing:0.06em;
             font-weight:600; margin-bottom:10px; text-align:center;">DEUTERON</div>
 
         <!-- Packing density with alarm -->
@@ -253,9 +253,9 @@
             <div id="dp-quark-legend"><!-- populated by JS --></div>
         </div>
 
-        <!-- Hadronic ratios per void face -->
+        <!-- Quark balance per void face -->
         <div class="panel-section" style="padding:10px;">
-            <div class="panel-section-header" style="margin-bottom:6px;">HADRONIC RATIO / VOID FACE</div>
+            <div class="panel-section-header" style="margin-bottom:6px;">QUARK BALANCE / VOID FACE</div>
             <div id="dp-coverage-bars" style="font-size:10px; line-height:1.8;"><!-- populated by JS --></div>
         </div>
 
@@ -269,6 +269,19 @@
         <div class="panel-section" style="padding:10px;">
             <div class="panel-section-header" style="margin-bottom:6px;">EJECTION BALANCE</div>
             <div id="dp-ejection-balance" style="font-size:10px; line-height:1.5;"><!-- populated by JS --></div>
+        </div>
+
+        <!-- Balance history line chart -->
+        <div class="panel-section" style="padding:10px;">
+            <div class="panel-section-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span>BALANCE HISTORY</span>
+                <span id="dp-balance-timeframe" style="display:flex; gap:2px;">
+                    <button class="dp-tf-btn dp-tf-active" data-tf="all" style="font-size:11px; padding:3px 8px; border:1px solid var(--border-accent); border-radius:3px; background:rgba(255,255,255,0.08); color:var(--text-2); cursor:pointer;">ALL</button>
+                    <button class="dp-tf-btn" data-tf="1000" style="font-size:11px; padding:3px 8px; border:1px solid var(--border-accent); border-radius:3px; background:transparent; color:var(--text-3); cursor:pointer;">1K</button>
+                    <button class="dp-tf-btn" data-tf="250" style="font-size:11px; padding:3px 8px; border:1px solid var(--border-accent); border-radius:3px; background:transparent; color:var(--text-3); cursor:pointer;">250</button>
+                </span>
+            </div>
+            <canvas id="dp-balance-chart" width="525" height="225" style="width:100%; height:auto; display:block;"></canvas>
         </div>
 
         <!-- Unit test results -->
@@ -315,8 +328,8 @@
             </div>
             <div class="ctrl-row">
                 <span class="ctrl-label">shells</span>
-                <input type="range" id="brane-opacity-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
-                <span id="brane-opacity-val" class="ctrl-val">2.0%</span>
+                <input type="range" id="brane-opacity-slider" class="ctrl-slider" min="0" max="100" value="50" step="1">
+                <span id="brane-opacity-val" class="ctrl-val">5.0%</span>
             </div>
             <div class="ctrl-row">
                 <span class="ctrl-label">graph</span>
@@ -336,8 +349,8 @@
             </div>
             <div class="ctrl-row" style="margin-bottom:0;">
                 <span class="ctrl-label">ψ wave</span>
-                <input type="range" id="wf-opacity-slider" class="ctrl-slider" min="0" max="100" value="5" step="1">
-                <span id="wf-opacity-val" class="ctrl-val">5%</span>
+                <input type="range" id="wf-opacity-slider" class="ctrl-slider" min="0" max="100" value="8" step="1">
+                <span id="wf-opacity-val" class="ctrl-val">8%</span>
             </div>
         </div>
         <!-- ═══ PLAYBACK ═══ -->
@@ -377,29 +390,32 @@
                     title="Pause/resume simulation">⏸</button>
             </div>
             <div id="playback-controls" style="display:none; margin-top:6px;">
-                <div style="display:flex; gap:4px;">
+                <div style="display:flex; gap:4px; margin-bottom:6px;">
                     <button class="btn-ghost" id="btn-rewind-start"
                         style="flex:0 0 auto; padding:6px 8px;" title="Rewind to t=0">|◀◀</button>
                     <button class="btn-ghost" id="btn-reverse"
                         style="flex:0 0 auto; padding:6px 8px;" title="Reverse playback">◀◀</button>
-                    <button class="btn-ghost" id="btn-step-back"
-                        style="flex:0 0 auto; padding:6px 8px;" title="Step back 1 tick">◀|</button>
-                    <button class="btn-ghost" id="btn-step-forward"
-                        style="flex:0 0 auto; padding:6px 8px;" title="Step forward 1 tick">|▶</button>
                     <button class="btn-ghost" id="btn-forward-end"
                         style="flex:0 0 auto; padding:6px 8px;" title="Fast-forward to latest">▶▶|</button>
                     <button class="btn-secondary" id="btn-export-log"
                         style="flex:1; padding:6px 8px;"
                         title="Export tick log as JSON">Export</button>
                 </div>
+                <div class="ctrl-row" style="margin-bottom:0;">
+                    <span class="ctrl-label">t</span>
+                    <button class="btn-ghost" id="btn-step-back" style="flex:0 0 auto; padding:4px 6px; font-size:10px;" title="Step back 1 tick">◂</button>
+                    <input type="range" id="timeline-scrubber" class="ctrl-slider" min="0" max="0" value="0" step="1">
+                    <button class="btn-ghost" id="btn-step-forward" style="flex:0 0 auto; padding:4px 6px; font-size:10px;" title="Step forward 1 tick">▸</button>
+                    <span id="timeline-val" class="ctrl-val" style="min-width:28px;">0</span>
+                </div>
             </div>
-            <div id="nucleus-status">ready</div>
-            <div id="demo-status" style="display:none; font-size:11px; color:var(--text-2); margin-top:6px; text-align:center; line-height:1.4;"></div>
+            <div id="nucleus-status" style="display:none;">ready</div>
+            <div id="demo-status" style="display:none;"></div>
 
             <!-- ── Training Section ── -->
             <div style="margin-top:10px; border-top:1px solid var(--border); padding-top:10px;">
                 <button class="btn-primary" id="btn-tune-t22" style="width:100%; font-size:11px; padding:8px 12px;"
-                    title="Train RL model to optimize hadronic ratios">Train RL</button>
+                    title="Train RL model to optimize quark balance">Train RL</button>
                 <div id="tune-status" style="font-size:10px; color:var(--text-3); margin-top:6px; text-align:center; min-height:14px; font-family:var(--font-mono);"></div>
                 <div style="margin-top:8px; display:flex; gap:10px; justify-content:center; font-size:10px; color:var(--text-3);">
                     <label style="display:flex; flex-direction:column; align-items:center; gap:3px;" title="Population size per generation">
@@ -505,12 +521,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=21"></script>
+    <script src="src/flux-demo-state.js?v=22"></script>
     <script src="src/flux-demo-xon.js?v=5"></script>
     <script src="src/flux-demo-backtrack.js?v=7"></script>
     <script src="src/flux-demo-planner.js?v=11"></script>
-    <script src="src/flux-demo-ui.js?v=31"></script>
-    <script src="src/flux-demo.js?v=347"></script>
+    <script src="src/flux-demo-ui.js?v=36"></script>
+    <script src="src/flux-demo.js?v=349"></script>
     <script src="src/flux-solver-render.js?v=35"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=14"></script>

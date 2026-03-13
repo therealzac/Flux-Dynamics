@@ -164,6 +164,29 @@ function _computeEjectionEvenness() {
     return maxDev > 0 ? 1 - (deviation / maxDev) : 0;
 }
 
+// ── Balance History — ring buffer for time-series chart ──
+// Records one sample per planck second: {ps, quark, edge, ejection} as percentages [0-100]
+const _BALANCE_HISTORY_MAX = 5000;
+let _balanceHistory = [];
+let _balanceTimeframe = 'all';  // 'all' | '1000' | '250'
+
+function _recordBalanceSample() {
+    if (!_demoVisits) return;
+    // Quark evenness (same CV logic as updateDemoPanel)
+    const totals = [];
+    for (let f = 1; f <= 8; f++) totals.push(_demoVisits[f] ? _demoVisits[f].total : 0);
+    const mean = totals.reduce((a, b) => a + b, 0) / totals.length;
+    const stddev = Math.sqrt(totals.reduce((s, v) => s + (v - mean) ** 2, 0) / totals.length);
+    const cv = mean > 0 ? (stddev / mean) : 1;
+    const quark = Math.max(0, 1 - cv) * 100;
+
+    const edge = _computeEdgeEvenness() * 100;
+    const ejection = _computeEjectionEvenness() * 100;
+
+    _balanceHistory.push({ ps: _planckSeconds, quark, edge, ejection });
+    if (_balanceHistory.length > _BALANCE_HISTORY_MAX) _balanceHistory.shift();
+}
+
 // ── Oct Center Bias — xon movement prefers proximity to geometric oct center ──
 // The oct geometric center {0, -0.5774, 0} is the centroid of the 6 oct nodes.
 // This bias replaces the emergent spawn-point bias from _dirBalance with an

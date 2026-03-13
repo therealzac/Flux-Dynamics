@@ -1,12 +1,11 @@
 // flux-demo-ui.js — Demo panels, profiling, choreo logging, pause/resume/stop
 
 // Lightweight tick counter update — safe to call during backtrack retry loops.
-// Only touches the two tick counter DOM elements, no panel rebuild.
+// Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
-    const el = document.getElementById('nucleus-status');
-    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:var(--text-3);">${_demoTick} ticks</span>`;
     const dpT = document.getElementById('dp-title');
     if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
+    _updateTimelineScrubber();
 }
 
 function dumpProfile() {
@@ -48,14 +47,7 @@ function resetProfile() {
 }
 
 function updateDemoPanel() {
-    // Demand-driven: use fixed 64-tick epoch for display purposes
     const epoch = Math.floor(_demoTick / 64);
-
-    // ── Update demo-status (right panel, below button) ──
-    const ds = document.getElementById('demo-status');
-    if (ds) {
-        ds.innerHTML = `<span style="color:var(--text-2);">epoch ${epoch}</span>`;
-    }
 
     // ── Update left panel coverage bars (skip during non-PPO test execution) ──
     if (_testRunning && !_ppoTraining) return;
@@ -145,10 +137,6 @@ function updateDemoPanel() {
     html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
         + `<span style="color:var(--text-3);">n 1:1:1</span>`
         + `<span style="color:${nEven > 0.7 ? '#66dd66' : '#ccaa66'}; font-weight:bold;">${(nEven * 100).toFixed(1)}%</span>`
-        + `</div>`;
-    html += `<div style="display:flex; justify-content:space-between; font-size:9px;">`
-        + `<span style="color:var(--text-3);">epoch</span>`
-        + `<span style="color:var(--text-2);">${epoch}</span>`
         + `</div>`;
 
     // ── Ratio accuracy history sparkline ──
@@ -304,6 +292,144 @@ function _updateEjectionBalancePanel() {
     html += `<div style="font-size:7px; color:var(--text-3); margin-top:3px; font-style:italic;">chirality-forbidden edges (a↔b, c↔d) omitted</div>`;
 
     el.innerHTML = html;
+}
+
+// ── Balance History Chart ──
+
+function _drawBalanceChart() {
+    const canvas = document.getElementById('dp-balance-chart');
+    if (!canvas || _balanceHistory.length < 2) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const PAD = { top: 42, right: 14, bottom: 28, left: 46 };
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Filter data by timeframe
+    let data = _balanceHistory;
+    if (_balanceTimeframe === '1000') {
+        const cutoff = _planckSeconds - 1000;
+        data = data.filter(d => d.ps >= cutoff);
+    } else if (_balanceTimeframe === '250') {
+        const cutoff = _planckSeconds - 250;
+        data = data.filter(d => d.ps >= cutoff);
+    }
+    if (data.length < 2) return;
+
+    const plotW = W - PAD.left - PAD.right;
+    const plotH = H - PAD.top - PAD.bottom;
+    const minPS = data[0].ps;
+    const maxPS = data[data.length - 1].ps;
+    const psRange = maxPS - minPS || 1;
+
+    const toX = (ps) => PAD.left + ((ps - minPS) / psRange) * plotW;
+    const toY = (v) => PAD.top + plotH - (Math.min(100, Math.max(0, v)) / 100) * plotH;
+
+    // Background
+    ctx.fillStyle = 'rgba(8, 12, 20, 0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    // Gridlines
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+    ctx.lineWidth = 1;
+    for (const pct of [25, 50, 75]) {
+        const y = toY(pct);
+        ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    // Axes
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, H - PAD.bottom);
+    ctx.lineTo(W - PAD.right, H - PAD.bottom);
+    ctx.stroke();
+
+    // Y-axis labels
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'right';
+    for (const pct of [0, 50, 100]) {
+        ctx.fillText(pct + '%', PAD.left - 5, toY(pct) + 5);
+    }
+
+    // Series definitions (avg computed inline from the 3 metrics)
+    const series = [
+        { key: 'quark',    color: '#66dd66', label: 'Quark' },
+        { key: 'edge',     color: '#6699ff', label: 'Edge' },
+        { key: 'ejection', color: '#ff8844', label: 'Ejection' },
+        { key: 'avg',      color: '#ffffff', label: 'Avg' },
+    ];
+
+    // Downsample if too many points
+    let drawData = data;
+    if (data.length > plotW) {
+        const step = data.length / plotW;
+        drawData = [];
+        for (let i = 0; i < plotW; i++) drawData.push(data[Math.floor(i * step)]);
+    }
+
+    // Draw lines
+    for (const s of series) {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = s.key === 'avg' ? 2.8 : 2.2;
+        ctx.beginPath();
+        for (let i = 0; i < drawData.length; i++) {
+            const d = drawData[i];
+            const x = toX(d.ps);
+            const v = s.key === 'avg' ? (d.quark + d.edge + d.ejection) / 3 : d[s.key];
+            const y = toY(v);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    // Legend with latest values — 2 rows, 2 items each
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'left';
+    const last = data[data.length - 1];
+    const rowH = 16;
+    for (let i = 0; i < series.length; i++) {
+        const s = series[i];
+        const row = Math.floor(i / 2);
+        const col = i % 2;
+        const lx = PAD.left + 4 + col * ((W - PAD.left - PAD.right) / 2);
+        const ly = PAD.top - 26 + row * rowH;
+        const latest = s.key === 'avg' ? (last.quark + last.edge + last.ejection) / 3 : last[s.key];
+        // Colored swatch
+        ctx.fillStyle = s.color;
+        ctx.fillRect(lx, ly - 7, 12, 7);
+        // Label + value
+        ctx.fillStyle = s.color;
+        ctx.fillText(s.label, lx + 15, ly);
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.fillText(latest.toFixed(1) + '%', lx + 15 + ctx.measureText(s.label).width + 5, ly);
+    }
+}
+
+function _initBalanceChartControls() {
+    const wrap = document.getElementById('dp-balance-timeframe');
+    if (!wrap) return;
+    wrap.addEventListener('click', (e) => {
+        const btn = e.target.closest('.dp-tf-btn');
+        if (!btn) return;
+        _balanceTimeframe = btn.dataset.tf;
+        wrap.querySelectorAll('.dp-tf-btn').forEach(b => {
+            b.classList.toggle('dp-tf-active', b === btn);
+            b.style.background = b === btn ? 'rgba(255,255,255,0.08)' : 'transparent';
+            b.style.color = b === btn ? 'var(--text-2)' : 'var(--text-3)';
+        });
+        _drawBalanceChart();
+    });
+}
+
+// Init controls on load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initBalanceChartControls);
+} else {
+    _initBalanceChartControls();
 }
 
 // ── Choreographer logging helper ──
@@ -669,10 +795,9 @@ function stopReverse() {
 // NO solver or detectImplied() needed. Just update 3D scene from restored state.
 function _playbackUpdateDisplay() {
     // Tick counter
-    const el = document.getElementById('nucleus-status');
-    if (el) el.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:var(--text-3);">${_demoTick} ticks</span>`;
     const dpT = document.getElementById('dp-title');
     if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
+    _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
     // Rebuild state + SC lines + void spheres from restored SC sets
@@ -684,6 +809,75 @@ function _playbackUpdateDisplay() {
     updateDemoPanel();
     updateXonPanel();
 }
+
+// ── Timeline Scrubber ──
+// Updates the range slider to reflect current position in the snapshot timeline.
+// Total range = _btSnapshots.length (past) + _redoStack.length (future).
+// Current position = _btSnapshots.length (we're at the end of past snapshots).
+function _updateTimelineScrubber() {
+    const slider = document.getElementById('timeline-scrubber');
+    const valEl = document.getElementById('timeline-val');
+    if (!slider) return;
+    const total = (typeof _btSnapshots !== 'undefined' ? _btSnapshots.length : 0)
+                + (typeof _redoStack !== 'undefined' ? _redoStack.length : 0);
+    const pos = typeof _btSnapshots !== 'undefined' ? _btSnapshots.length : 0;
+    slider.max = total;
+    slider.value = pos;
+    if (valEl) valEl.textContent = _demoTick;
+}
+
+// Seek to a specific position in the snapshot timeline.
+function _timelineScrubTo(targetPos) {
+    if (!_demoActive) return;
+    if (_demoReversing && typeof stopReverse === 'function') stopReverse();
+    if (!_demoPaused && typeof pauseDemo === 'function') pauseDemo();
+    const currentPos = _btSnapshots.length;
+    if (targetPos === currentPos) return;
+
+    if (targetPos < currentPos) {
+        // Move backward: push snapshots to redo stack
+        const steps = currentPos - targetPos;
+        for (let i = 0; i < steps; i++) {
+            if (_btSnapshots.length === 0) break;
+            _btSaveSnapshot();
+            _redoStack.push(_btSnapshots.pop());
+            const snap = _btSnapshots.pop();
+            if (!snap) break;
+            _btRestoreSnapshot(snap);
+        }
+    } else {
+        // Move forward: pop from redo stack
+        const steps = targetPos - currentPos;
+        for (let i = 0; i < steps; i++) {
+            if (_redoStack.length === 0) break;
+            _btSaveSnapshot();
+            const snap = _redoStack.pop();
+            _btRestoreSnapshot(snap);
+        }
+    }
+    if (typeof simHalted !== 'undefined') simHalted = false;
+    _bfsReset(); _btReset();
+    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+    _playbackUpdateDisplay();
+    const pb = document.getElementById('btn-nucleus-pause');
+    if (pb) pb.textContent = '\u25B6';
+}
+
+// Init scrubber event listener
+(function _initTimelineScrubber() {
+    function attach() {
+        const slider = document.getElementById('timeline-scrubber');
+        if (!slider) return;
+        slider.addEventListener('input', function() {
+            _timelineScrubTo(parseInt(this.value, 10));
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attach);
+    } else {
+        attach();
+    }
+})();
 
 // Sync playback button visual states.
 function _updatePlaybackButtons() {

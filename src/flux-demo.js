@@ -1192,6 +1192,7 @@ function startDemoLoop() {
     }
     _demoTick = 0;
     _planckSeconds = 0;
+    _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
     _tickLog.length = 0;
@@ -1243,26 +1244,9 @@ function startDemoLoop() {
         if (q.trailLine) q.trailLine.visible = false;
     }
 
-    // Show demo status + L2/L3 toggle
+    // Demo status (hidden but kept for compatibility)
     const ds = document.getElementById('demo-status');
-    if (ds) {
-        ds.style.display = 'block';
-        // Add L2/L3 toggle if not already present
-        if (!document.getElementById('demo-lattice-toggle')) {
-            const toggleDiv = document.createElement('div');
-            toggleDiv.id = 'demo-lattice-toggle';
-            toggleDiv.style.cssText = 'margin-top:4px; text-align:center;';
-            toggleDiv.innerHTML = `<span style="font-size:8px; color:#667788; margin-right:4px;">lattice:</span>`
-                + `<button id="demo-l2-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#1a2a3a; color:#88bbdd; border:1px solid #3a5a7a; border-radius:3px; cursor:pointer;">L2</button>`
-                + `<button id="demo-l3-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#0a1a2a; color:#556677; border:1px solid #2a3a4a; border-radius:3px; cursor:pointer;">L3</button>`
-                + `<button id="demo-l4-btn" style="font-size:8px; padding:1px 6px; margin:0 2px; background:#0a1a2a; color:#556677; border:1px solid #2a3a4a; border-radius:3px; cursor:pointer;">L4</button>`;
-            ds.parentNode.insertBefore(toggleDiv, ds.nextSibling);
-            document.getElementById('demo-l2-btn').addEventListener('click', () => _setDemoLattice(2));
-            document.getElementById('demo-l3-btn').addEventListener('click', () => _setDemoLattice(3));
-            document.getElementById('demo-l4-btn').addEventListener('click', () => _setDemoLattice(4));
-        }
-        _updateDemoLatticeButtons();
-    }
+    if (ds) ds.style.display = 'none';
 
     // Update left panel header
     const dpTitle = document.getElementById('dp-title');
@@ -1602,6 +1586,7 @@ async function demoTick() {
             updateDemoPanel();
             _updateEdgeBalancePanel();
             _updateEjectionBalancePanel();
+            _drawBalanceChart();
             updateStatus();
             updateXonPanel();
         }
@@ -2813,6 +2798,7 @@ async function demoTick() {
     // ── Run solver if any SCs changed (unified architecture) ──
     if (_solverNeeded) {
         _planckSeconds++;
+        _recordBalanceSample();
         if (typeof _ppoDeformationThisTick !== 'undefined') _ppoDeformationThisTick = true;
     }
     if (_solverNeeded) {
@@ -3182,6 +3168,7 @@ async function demoTick() {
             updateDemoPanel();
             _updateEdgeBalancePanel();
             _updateEjectionBalancePanel();
+            _drawBalanceChart();
             updateStatus();
             updateXonPanel();
         });
