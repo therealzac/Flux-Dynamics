@@ -1173,6 +1173,68 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
+    // ── T87: Same-hadron edge exclusion ──
+    // Quarks of the same hadron must never simultaneously occupy tets that
+    // share an edge. The K₄,₄ bipartite structure guarantees this structurally
+    // (A-faces only neighbor B-faces), but this guard catches any violation
+    // from bugs in face assignment, mode transitions, or future refactors.
+    // "Same hadron" = both proton types (pu1/pu2/pd) or both neutron (nd1/nd2/nu).
+    {
+      id: 'T87', name: 'Same-hadron edge exclusion',
+      init: { _adjCache: null },
+      check(tick, g) {
+        if (tick < LIVE_GUARD_GRACE) return null;
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!_nucleusTetFaceData || !_demoXons) return null;
+
+        // Build adjacency cache once: face pairs that share ≥2 nodes
+        // Rebuild if empty (face data may not have been populated on first call)
+        if (!g._adjCache || g._adjCache.length === 0) {
+          g._adjCache = [];
+          const faces = Object.keys(_nucleusTetFaceData).map(Number);
+          for (let i = 0; i < faces.length; i++) {
+            for (let j = i + 1; j < faces.length; j++) {
+              const c1 = new Set(_nucleusTetFaceData[faces[i]].cycle);
+              const shared = _nucleusTetFaceData[faces[j]].cycle.filter(n => c1.has(n));
+              if (shared.length >= 2) {
+                g._adjCache.push([faces[i], faces[j]]);
+              }
+            }
+          }
+        }
+
+        // Collect active tet/idle_tet xons → face → quark type
+        const faceQuarks = new Map(); // faceId → [{xonIdx, quarkType}]
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'tet' && x._mode !== 'idle_tet') continue;
+          if (x._assignedFace == null || !x._quarkType) continue;
+          if (!faceQuarks.has(x._assignedFace)) faceQuarks.set(x._assignedFace, []);
+          faceQuarks.get(x._assignedFace).push({ idx: i, qt: x._quarkType });
+        }
+
+        const PROTON_TYPES = new Set(['pu1', 'pu2', 'pd']);
+        const NEUTRON_TYPES = new Set(['nd1', 'nd2', 'nu']);
+
+        for (const [f1, f2] of g._adjCache) {
+          const q1 = faceQuarks.get(f1);
+          const q2 = faceQuarks.get(f2);
+          if (!q1 || !q2) continue; // at most one face occupied
+          for (const a of q1) {
+            for (const b of q2) {
+              const bothProton = PROTON_TYPES.has(a.qt) && PROTON_TYPES.has(b.qt);
+              const bothNeutron = NEUTRON_TYPES.has(a.qt) && NEUTRON_TYPES.has(b.qt);
+              if (bothProton || bothNeutron) {
+                return `tick ${tick}: same-hadron edge conflict — X${a.idx}(${a.qt}) on F${f1} adjacent to X${b.idx}(${b.qt}) on F${f2}`;
+              }
+            }
+          }
+        }
+        return null;
+      }
+    },
+
     // ── T-DirBal: Directional balance convergence ──
     // After 64 ticks, each alive xon must have used >= 3 distinct direction
     // indices in _dirBalance. Validates the balance tracking is working and
