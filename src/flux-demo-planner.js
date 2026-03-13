@@ -414,10 +414,13 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     // Quark type selection (always needed for return value)
     const isProtonFace = A_SET.has(face);
     const candidates = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
+    // Pick most in-demand quark type, with optional jitter from slider.
+    // Jitter 0 = always pick highest deficit. Jitter 0.15 = original ±0.075 noise.
+    const jitter = _quarkJitter || 0;
     let quarkType = candidates[0];
     let bestDeficit = -Infinity;
     for (const t of candidates) {
-        const d = _ratioTracker.deficit(t) + (_sRng() - 0.5) * 0.15;
+        const d = _ratioTracker.deficit(t) + (jitter > 0 ? (_sRng() - 0.5) * jitter : 0);
         if (d > bestDeficit) { bestDeficit = d; quarkType = t; }
     }
 
@@ -905,6 +908,9 @@ function _returnXonToOct(xon, occupied) {
             if (!_octNodeSet.has(nb.node)) continue;
             if (_swapBlocked(xon.node, nb.node)) continue;
             if (occupied && (occupied.get(nb.node) || 0) > 0) continue;
+            // Backtracker exclusion: skip moves the DFS has already tried
+            const xi = _demoXons.indexOf(xon);
+            if (xi >= 0 && typeof _btIsMoveExcluded === 'function' && _btIsMoveExcluded(xi, nb.node)) continue;
             target = nb;
             break;
         }
@@ -996,6 +1002,9 @@ function _startIdleTetLoop(xon, occupied) {
                 const seq = _selectBestPermutation(xon, rotated, qType);
                 const dest = seq[1];
                 if (occupied && occupied.has(dest)) continue;
+                // Backtracker exclusion: skip face/dest combos the DFS has already tried
+                const xi = _demoXons.indexOf(xon);
+                if (xi >= 0 && typeof _btIsMoveExcluded === 'function' && _btIsMoveExcluded(xi, dest)) continue;
                 _promoteFaceSCs(face, xon);
                 _clearModeProps(xon);
                 xon._mode = 'idle_tet';

@@ -238,6 +238,155 @@ function _btIsMoveExcluded(xonIdx, destNode) {
     return tickLedger.has(`${xonIdx}:${destNode}`);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// DETERMINISTIC MATCHING ENUMERATION
+// ══════════════════════════════════════════════════════════════════════════
+
+// Enumerate ALL valid maximum-cardinality bipartite matchings.
+// plans: array of { xon, candidates: [{node, ...}] }
+// blocked: Set of nodes reserved by higher-priority moves (tet)
+// Returns: array of assignment arrays, where each assignment[i] = candidate for plan i (or null)
+function _enumerateAllMatchings(plans, blocked) {
+    const n = plans.length;
+    if (n === 0) return [[]];
+
+    // Build adjacency: for each plan, list of valid candidate nodes
+    const adj = plans.map(p =>
+        p.candidates.filter(c => !blocked.has(c.node)).map(c => c.node)
+    );
+
+    // First, find maximum cardinality via Kuhn's so we know the target size
+    const maxCard = _kuhnMaxCardinality(adj, n);
+
+    // Enumerate all matchings of size maxCard using recursive backtracking
+    const results = [];
+    const used = new Set(); // nodes claimed so far
+    const current = new Array(n).fill(null);
+
+    function enumerate(idx, matched) {
+        // Pruning: can we still reach maxCard even if all remaining plans match?
+        const remaining = n - idx;
+        if (matched + remaining < maxCard) return;
+
+        if (idx === n) {
+            if (matched === maxCard) {
+                results.push(current.slice());
+            }
+            return;
+        }
+
+        // Cap results to prevent combinatorial explosion
+        if (results.length >= 500) return;
+
+        // Option A: assign plan[idx] to each available candidate
+        for (const node of adj[idx]) {
+            if (used.has(node)) continue;
+            used.add(node);
+            current[idx] = node;
+            enumerate(idx + 1, matched + 1);
+            current[idx] = null;
+            used.delete(node);
+            if (results.length >= 500) return;
+        }
+
+        // Option B: skip plan[idx] (only if we can still reach maxCard without it)
+        if (matched + (n - idx - 1) >= maxCard) {
+            current[idx] = null;
+            enumerate(idx + 1, matched);
+        }
+    }
+
+    enumerate(0, 0);
+
+    // Convert node IDs back to candidate objects for compatibility
+    return results.map(assignment =>
+        assignment.map((node, i) => {
+            if (node === null) return null;
+            return plans[i].candidates.find(c => c.node === node) || null;
+        })
+    );
+}
+
+// Kuhn's algorithm to find maximum cardinality (just the count, not all matchings)
+function _kuhnMaxCardinality(adj, n) {
+    const match = new Map(); // node → plan index
+    function augment(idx, visited) {
+        for (const node of adj[idx]) {
+            if (visited.has(node)) continue;
+            visited.add(node);
+            const existing = match.get(node);
+            if (existing === undefined || augment(existing, visited)) {
+                match.set(node, idx);
+                return true;
+            }
+        }
+        return false;
+    }
+    let card = 0;
+    for (let i = 0; i < n; i++) {
+        if (augment(i, new Set())) card++;
+    }
+    return card;
+}
+
+// Compute a canonical fingerprint of ALL moves this tick (not just oct).
+// Format: "X0:5->9|X1:stay@0|X2:13->4|..." sorted by xon index.
+function _computeTickFingerprint() {
+    // Build a map from xon index to their move
+    const moves = new Map();
+    for (const trace of _moveTrace) {
+        moves.set(trace.xonIdx, trace);
+    }
+    const parts = [];
+    for (let i = 0; i < _demoXons.length; i++) {
+        const x = _demoXons[i];
+        if (!x.alive) continue;
+        const trace = moves.get(i);
+        if (trace) {
+            parts.push(`X${i}:${trace.from}->${trace.to}`);
+        } else {
+            parts.push(`X${i}:stay@${x.node}`);
+        }
+    }
+    return parts.join('|');
+}
+
+// Record the fingerprint for the current tick. Returns true if this is
+// a genuinely new fingerprint (never tried before), false if duplicate.
+function _btRecordFingerprint() {
+    const tick = _demoTick - 1; // tick was already incremented
+    const fp = _computeTickFingerprint();
+    if (!_btTriedFingerprints.has(tick)) _btTriedFingerprints.set(tick, new Set());
+    const fpSet = _btTriedFingerprints.get(tick);
+    if (fpSet.has(fp)) return false;
+    fpSet.add(fp);
+    return true;
+}
+
+// Check if the current tick is provably exhausted.
+// Returns true if ALL matchings have been tried (no more options).
+function _btIsTickExhausted() {
+    // If we have a matching cache and we've tried all of them, exhausted
+    if (_btMatchingCache !== null && _btMatchingIndex >= _btMatchingCache.length) {
+        return true;
+    }
+    return false;
+}
+
+// Get the next matching to try from the cache.
+// Returns the assignment array, or null if exhausted.
+function _btNextMatching() {
+    if (_btMatchingCache === null || _btMatchingIndex >= _btMatchingCache.length) return null;
+    return _btMatchingCache[_btMatchingIndex++];
+}
+
+// Reset matching cache (called when moving to a new tick or BFS layer)
+function _btResetMatchingCache() {
+    _btMatchingCache = null;
+    _btMatchingIndex = 0;
+    _btMatchingCacheLedgerSize = 0;
+}
+
 // Reset per-tick backtracking state (called after a clean tick).
 // BFS state (_bfsFailTick, _bfsLayer, _bfsLayerRetries) is NOT reset here —
 // it persists across demoTick() calls until the failure tick passes.
@@ -246,6 +395,8 @@ function _btReset() {
     _btActive = false;
     _rewindRequested = false;
     _rewindViolation = null;
+    _btResetMatchingCache();
+    _btStaleRetries = 0;
 }
 
 // Clear all BFS state (called when the failure tick finally passes or on demo restart).
@@ -254,4 +405,7 @@ function _bfsReset() {
     _bfsLayer = 0;
     _bfsLayerRetries = 0;
     _btBadMoveLedger.clear();
+    _btTriedFingerprints.clear();
+    _btResetMatchingCache();
+    _btStaleRetries = 0;
 }

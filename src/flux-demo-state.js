@@ -25,6 +25,7 @@ let _planckSeconds = 0;  // ticks where lattice deformation occurred (SC adds/re
 let _demoVisits = null;       // {face: {pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0}}
 let _demoTetAssignments = 0;  // total tet assignments (for hit rate = completions / assignments)
 let _actualizationVisits = null; // {face: {pu1:0,...}} — counts per-Planck-second tet actualization
+let _quarkJitter = 0; // quark type selection jitter (0 = deterministic, 0.15 = ±0.075 noise)
 
 // ── Per-Face Edge Epoch — tracks edge traversals since last manifestation ──
 // _faceEdgeEpoch[faceId] = { pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0 }
@@ -407,6 +408,50 @@ let _kuhnEnabled = false;
 // All choreography randomness MUST use _sRng() instead of Math.random().
 let _sRngState = 0;
 let _runSeed = 0; // randomized per demo run so DFS explores different branches
+let _forceSeed = null; // set via console or URL param to replay a specific seed
+let _maxTickReached = 0; // high-water mark for current run
+let _searchStartTime = 0; // performance.now() when demo started
+let _totalBacktrackRetries = 0; // total retries across all ticks/layers
+let _bestPathFingerprint = ''; // fingerprint of the tick that achieved _maxTickReached
+
+// Save run result to localStorage for DFS audit. Appends to a history array
+// so multiple runs can be compared. Key: 'flux_run_history'.
+function _saveRunResult(reason, violation) {
+    const elapsed = ((performance.now() - _searchStartTime) / 1000).toFixed(1);
+    const totalFP = [..._btTriedFingerprints.values()].reduce((s, set) => s + set.size, 0);
+    const entry = {
+        seed: '0x' + _runSeed.toString(16).padStart(8, '0'),
+        maxTick: _maxTickReached,
+        reason,
+        violation: violation || '',
+        searchSeconds: parseFloat(elapsed),
+        totalRetries: _totalBacktrackRetries,
+        totalFingerprints: totalFP,
+        bestPathId: _bestPathFingerprint,
+        ts: new Date().toISOString(),
+    };
+    const seedStr = entry.seed;
+    console.log(
+        `%c╔══════════════════════════════════════════════════════════╗\n` +
+        `║  SEARCH COMPLETE                                        ║\n` +
+        `╠══════════════════════════════════════════════════════════╣\n` +
+        `║  Seed:          ${seedStr.padEnd(39)}║\n` +
+        `║  Peak tick:     ${String(_maxTickReached).padEnd(39)}║\n` +
+        `║  Reason:        ${reason.padEnd(39)}║\n` +
+        `║  Search time:   ${(elapsed + 's').padEnd(39)}║\n` +
+        `║  Total retries: ${String(_totalBacktrackRetries).padEnd(39)}║\n` +
+        `║  Fingerprints:  ${String(totalFP).padEnd(39)}║\n` +
+        `║  Best path ID:  ${(_bestPathFingerprint || 'n/a').substring(0, 39).padEnd(39)}║\n` +
+        `╚══════════════════════════════════════════════════════════╝`,
+        'color:cyan;font-weight:bold;font-size:12px'
+    );
+    try {
+        const hist = JSON.parse(localStorage.getItem('flux_run_history') || '[]');
+        hist.push(entry);
+        if (hist.length > 50) hist.splice(0, hist.length - 50);
+        localStorage.setItem('flux_run_history', JSON.stringify(hist));
+    } catch (e) { console.error('[RUN RESULT] save failed:', e); }
+}
 function _sRng() {
     _sRngState |= 0;
     _sRngState = (_sRngState + 0x6D2B79F5) | 0;
@@ -443,7 +488,7 @@ let _nucleusFaceNodes = null;    // union of _nucleusTetFaceData[1..8].allNodes 
 let _ejectionForbidden = null;   // _octNodeSet ∪ _actualizedTetNodes — DYNAMIC
 let _purelyTetNodes = null;      // _actualizedTetNodes \ _octNodeSet — DYNAMIC
 // ── Gluon mode ──
-const GLUON_COLOR = 0x7f00ff;   // violet — cage maintenance mode (formerly weak color)
+const GLUON_COLOR = 0xffffff;   // white — visually merged with oct mode
 
 // ── SC attribution ──
 const _scAttribution = new Map();
@@ -473,6 +518,15 @@ const _BFS_MAX_LAYERS = Infinity;   // no artificial cap — can go all the way 
 // Accumulates across retries so the search space shrinks monotonically.
 let _btBadMoveLedger = new Map();
 
+// ── Deterministic matching enumeration ──
+// Instead of PRNG-based retries, we enumerate ALL valid oct matchings
+// for a tick and try them sequentially. Escalation only when provably exhausted.
+let _btTriedFingerprints = new Map();   // tick → Set of canonical fingerprint strings
+let _btMatchingCache = null;            // Array of all valid matchings for current tick (or null)
+let _btMatchingIndex = 0;              // next matching to try from _btMatchingCache
+let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (invalidate on change)
+let _btStaleRetries = 0;               // consecutive retries with no new fingerprint/exclusion
+
 // ── Tunable choreography parameters (genome for GA tournament) ──
 // All hardcoded magic numbers extracted here for parameterized optimization.
 const _choreoParams = {
@@ -501,15 +555,15 @@ const _choreoParamRanges = {
 // Loop topology → concrete node sequence, given tet cycle [a, b, c, d]
 // a=octNode0, b=extNode, c=octNode1, d=octNode2
 const LOOP_SEQUENCES = {
-    pu1: ([a, b, c, d]) => [a, b, a, c, a],     // Fork (proton up 1)
-    pu2: ([a, b, c, d]) => [a, b, c, b, a],     // Hook (proton up 2)
-    pd:  ([a, b, c, d]) => [a, b, c, d, a],     // Hamiltonian CW (proton down)
-    nd1: ([a, b, c, d]) => [a, b, a, c, a],     // Fork (neutron down 1)
-    nd2: ([a, b, c, d]) => [a, b, c, b, a],     // Hook (neutron down 2)
-    nu:  ([a, b, c, d]) => [a, d, c, b, a],     // Hamiltonian CCW (neutron up)
+    pu1: ([a, b, c, d]) => [a, b, c, d, a],     // Hamiltonian CW (proton up 1)
+    pu2: ([a, b, c, d]) => [a, d, c, b, a],     // Hamiltonian CCW (proton up 2)
+    pd:  ([a, b, c, d]) => [a, b, c, b, a],     // Hook (proton down)
+    nd1: ([a, b, c, d]) => [a, b, c, d, a],     // Hamiltonian CW (neutron down 1)
+    nd2: ([a, b, c, d]) => [a, d, c, b, a],     // Hamiltonian CCW (neutron down 2)
+    nu:  ([a, b, c, d]) => [a, b, a, c, a],     // Fork (neutron up)
 };
 
-const LOOP_TYPE_NAMES = { pu1: 'fork', pu2: 'hook', pd: 'ham_cw', nd1: 'fork', nd2: 'hook', nu: 'ham_ccw' };
+const LOOP_TYPE_NAMES = { pu1: 'ham_cw', pu2: 'ham_ccw', pd: 'hook', nd1: 'ham_cw', nd2: 'ham_ccw', nu: 'fork' };
 
 // All valid loop permutations per topology.
 // Each topology maps to an array of generator functions.
@@ -545,8 +599,8 @@ const LOOP_PERMUTATIONS = {
 
 // Map quark type → topology name
 const QUARK_TOPOLOGY = {
-    pu1: 'fork', pu2: 'hook', pd: 'hamCW',
-    nd1: 'fork', nd2: 'hook', nu: 'hamCCW',
+    pu1: 'hamCW', pu2: 'hamCCW', pd: 'hook',
+    nd1: 'hamCW', nd2: 'hamCCW', nu: 'fork',
 };
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.

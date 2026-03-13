@@ -817,7 +817,7 @@ const LIVE_GUARD_REGISTRY = [
         if (g.ok === true) return null;
         for (const xon of _demoXons) {
           if (!xon.alive || xon._mode !== 'gluon') continue;
-          // Gluon must be orange
+          // Gluon must be white (same as oct)
           if (xon.col !== GLUON_COLOR) return `tick ${tick}: gluon xon has color 0x${xon.col.toString(16)}, expected 0x${GLUON_COLOR.toString(16)}`;
           // Gluon must be on oct cage
           if (!_octNodeSet || !_octNodeSet.has(xon.node)) return `tick ${tick}: gluon xon at node ${xon.node} not on oct cage`;
@@ -1352,6 +1352,113 @@ const LIVE_GUARD_REGISTRY = [
                 return `tick ${tick}: same-hadron disjoint conflict — X${a.idx}(${a.qt}) on F${f1} shares no nodes with X${b.idx}(${b.qt}) on F${f2}`;
               }
             }
+          }
+        }
+        return null;
+      }
+    },
+
+    // ── T90: Don't destroy underrepresented tets ──
+    // When a tet face loses actualization (all SCs were active → no longer),
+    // the dominant quark type on that face must already be in first place
+    // (highest count) in _actualizationVisits for that face. Tearing down a
+    // tet whose dominant quark is still underrepresented wastes progress.
+    {
+      id: 'T90', name: 'First-place quark ejection',
+      init: { _prevActualized: null, _prevDominantWasLeader: null },
+      snapshot(g) {
+        if (!_nucleusTetFaceData) return;
+        g._prevActualized = {};
+        g._prevDominantWasLeader = {};
+        const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          g._prevActualized[fId] = allActive;
+          if (allActive && typeof _dominantQuarkForFace === 'function' && _actualizationVisits) {
+            const dominant = _dominantQuarkForFace(fId);
+            if (!dominant) { g._prevDominantWasLeader[fId] = false; continue; }
+            // Check if dominant is in 1st place for this face
+            const fv = _actualizationVisits[fId];
+            if (!fv) { g._prevDominantWasLeader[fId] = false; continue; }
+            let maxCount = 0;
+            for (const t of types) { if ((fv[t] || 0) > maxCount) maxCount = fv[t] || 0; }
+            const dominantCount = fv[dominant] || 0;
+            // Leader = dominant's count equals the max AND max > 0
+            g._prevDominantWasLeader[fId] = (dominantCount === maxCount && maxCount > 0);
+          }
+        }
+      },
+      check(tick, g) {
+        // No grace period — balance rules enforced from tick 0
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!g._prevActualized || !g._prevDominantWasLeader || !_nucleusTetFaceData) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const wasActive = g._prevActualized[fId];
+          const wasLeader = g._prevDominantWasLeader[fId];
+          // Rule: if face was actualized AND dominant was in 1st place → must be torn down this tick
+          if (!wasActive || !wasLeader) continue;
+          const nowActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (nowActive) {
+            const dominant = typeof _dominantQuarkForFace === 'function' ? _dominantQuarkForFace(fId) : '?';
+            return `tick ${tick}: face ${fId} still actualized but dominant ${dominant} is already in 1st place — must be ejected`;
+          }
+        }
+        return null;
+      }
+    },
+
+    // ── T91: First-place face ejection ──
+    // If a face has the most total actualization visits AND still has an
+    // actualized tet, it must be torn down on the next tick. Same mechanism
+    // as T90 but for inter-face balance instead of intra-face quark balance.
+    // Enforced via backtracker — no brute-force SC removal.
+    {
+      id: 'T91', name: 'First-place face ejection',
+      init: { _prevActualized: null, _prevFaceWasLeader: null },
+      snapshot(g) {
+        if (!_nucleusTetFaceData || !_actualizationVisits) return;
+        g._prevActualized = {};
+        g._prevFaceWasLeader = {};
+        // Compute total visits per face
+        const totals = {};
+        let maxTotal = 0;
+        for (const [fIdStr] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const fv = _actualizationVisits[fId];
+          let sum = 0;
+          if (fv) { for (const t of ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu']) sum += fv[t] || 0; }
+          totals[fId] = sum;
+          if (sum > maxTotal) maxTotal = sum;
+        }
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          g._prevActualized[fId] = allActive;
+          // Leader = this face has the max total AND max > 0 AND not tied with all others
+          const isLeader = (totals[fId] === maxTotal && maxTotal > 0);
+          // Only flag as leader if there's meaningful separation (not all faces tied)
+          const tiedCount = Object.values(totals).filter(v => v === maxTotal).length;
+          g._prevFaceWasLeader[fId] = isLeader && tiedCount < 8; // all 8 tied = balanced, no ejection
+        }
+      },
+      check(tick, g) {
+        // No grace period — balance rules enforced from tick 0
+        if (g.ok === null) { g.ok = true; g.msg = ''; }
+        if (!g._prevActualized || !g._prevFaceWasLeader || !_nucleusTetFaceData) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const wasActive = g._prevActualized[fId];
+          const wasLeader = g._prevFaceWasLeader[fId];
+          if (!wasActive || !wasLeader) continue;
+          const nowActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (nowActive) {
+            return `tick ${tick}: face ${fId} still actualized but has most total visits — must be ejected`;
           }
         }
         return null;
@@ -1985,6 +2092,37 @@ function runDemo3Tests() {
                 + `</div>`;
         }
         testResultsEl.innerHTML = html;
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // T-ENUM: Matching enumerator produces all valid matchings
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (typeof _enumerateAllMatchings === 'function') {
+        // 3 xons, triangle of candidates: A→{1,2}, B→{2,3}, C→{1,3}
+        // Max cardinality = 3 (each gets a distinct node)
+        // Valid matchings: A1-B2-C3, A1-B3-C?(no: 1 taken), A2-B3-C1, A2-B?(no 2 taken)...
+        // Should be exactly 2: [1,2,3] and [2,3,1]
+        const testPlans = [
+            { xon: {}, candidates: [{node:1},{node:2}] },
+            { xon: {}, candidates: [{node:2},{node:3}] },
+            { xon: {}, candidates: [{node:1},{node:3}] },
+        ];
+        const matchings = _enumerateAllMatchings(testPlans, new Set());
+        assert('T-ENUM Matching enumerator completeness',
+            matchings.length === 2,
+            `expected 2 matchings, got ${matchings.length}`);
+        // Verify all matchings are maximum cardinality (3)
+        const allMaxCard = matchings.every(m => m.filter(c => c !== null).length === 3);
+        assert('T-ENUM All matchings are max cardinality',
+            allMaxCard,
+            `some matchings are not max cardinality`);
+        // Verify no two matchings are identical
+        const fps = new Set(matchings.map(m => m.map(c => c ? c.node : 'null').join(',')));
+        assert('T-ENUM All matchings are distinct',
+            fps.size === matchings.length,
+            `duplicate matchings found`);
+    } else {
+        skip('T-ENUM Matching enumerator', '_enumerateAllMatchings not defined');
     }
 
     // ── Reset demo state after tests so visual demo starts clean ──

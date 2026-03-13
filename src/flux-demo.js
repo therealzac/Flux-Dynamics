@@ -830,9 +830,9 @@ function _tickDemoXons(dt) {
         xon.flashT = Math.max(0, xon.flashT - dt * 6.0);
         const flicker = 0.85 + Math.random() * 0.3;
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
-        const isGluon = xon.col === GLUON_COLOR;
+        const isGluon = xon._mode === 'gluon';
         const isWeak = xon._mode === 'weak';
-        const gluonBoost = isGluon ? 4.0 : 1.0;
+        const gluonBoost = isGluon ? 1.5 : 1.0;
         // Swap spark blending for weak xons (additive can't show black)
         if (isWeak && xon.sparkMat.blending !== THREE.NormalBlending) {
             xon.sparkMat.blending = THREE.NormalBlending;
@@ -1155,12 +1155,12 @@ function buildDeuteronSchedule(patP, patN, D4) {
             neutronFaces: [B[ancB_n[i]], B[i], B[dB_n[i]]],
             // Quark-type map: face → quarkType
             faceQuarks: {
-                [A[ancA_p[i]]]: 'pd',   // proton anchor (ham CW)
-                [A[i]]: 'pu1',           // proton follower-1 (fork)
-                [A[dA_p[i]]]: 'pu2',     // proton follower-2 (hook)
-                [B[ancB_n[i]]]: 'nu',    // neutron anchor (ham CCW)
-                [B[i]]: 'nd1',           // neutron follower-1 (fork)
-                [B[dB_n[i]]]: 'nd2',     // neutron follower-2 (hook)
+                [A[ancA_p[i]]]: 'pd',   // proton anchor (hook)
+                [A[i]]: 'pu1',           // proton follower-1 (ham CW)
+                [A[dA_p[i]]]: 'pu2',     // proton follower-2 (ham CCW)
+                [B[ancB_n[i]]]: 'nu',    // neutron anchor (fork)
+                [B[i]]: 'nd1',           // neutron follower-1 (ham CW)
+                [B[dB_n[i]]]: 'nd2',     // neutron follower-2 (ham CCW)
             },
         });
         // Odd tick 2i+1: proton on B, neutron on A
@@ -1198,7 +1198,20 @@ function startDemoLoop() {
     }
     _demoTick = 0;
     _planckSeconds = 0;
-    _runSeed = (Math.random() * 0xFFFFFFFF) >>> 0; // unique per run for stochastic DFS
+    // Allow fixed seed via URL param (?seed=0xABCD1234) or global override for replay.
+    const _urlSeed = new URLSearchParams(window.location.search).get('seed');
+    if (typeof _forceSeed !== 'undefined' && _forceSeed !== null) {
+        _runSeed = _forceSeed >>> 0;
+    } else if (_urlSeed) {
+        _runSeed = parseInt(_urlSeed, 16) >>> 0;
+    } else {
+        _runSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+    }
+    _maxTickReached = 0;
+    _searchStartTime = performance.now();
+    _totalBacktrackRetries = 0;
+    _bestPathFingerprint = '';
+    console.log(`%c[DEMO] seed=0x${_runSeed.toString(16).padStart(8,'0')}`, 'color:cyan;font-weight:bold');
     _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
     _btSnapshots.length = 0;
@@ -1617,7 +1630,7 @@ async function demoTick() {
     if (typeof _ppoTraining !== 'undefined' && _ppoTraining) {
         _sRngSeed(_demoTick * 65537 + _bfsLayer * 31);
     } else {
-        _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31);
+        _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31 + _bfsLayerRetries * 7919);
     }
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
@@ -1930,7 +1943,9 @@ async function demoTick() {
                 }
             }
         }
-        // Score & sort: (1) non-trail, (2) non-prevNode, (3) random tiebreaker
+        // Shuffle first for random tiebreaking, then stable-sort by priority.
+        // This avoids a non-transitive comparator (_sRng() - 0.5 violates contract).
+        _sRngShuffle(bestSteps);
         bestSteps.sort((a, b) => {
             const aInTrail = recentTrail.has(a) ? 1 : 0;
             const bInTrail = recentTrail.has(b) ? 1 : 0;
@@ -1938,8 +1953,7 @@ async function demoTick() {
             const aIsPrev = a === xon.prevNode ? 1 : 0;
             const bIsPrev = b === xon.prevNode ? 1 : 0;
             if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
-            // Random tiebreaker to prevent lattice-order bias
-            return _sRng() - 0.5;
+            return 0; // tied — shuffle already randomized order
         });
         // Try each first-step: first that passes guards + occupancy + swap wins
         let bestStep = null;
@@ -2462,35 +2476,40 @@ async function demoTick() {
 
     // T55 enforcement: Removed — T55 live guard fires into backtracker
 
-    // ── BFS BACKTRACK: systematic candidate rotation ──
-    // During retries, rotate each xon's candidate list so Kuhn's algorithm
-    // produces genuinely different matchings on each attempt.
-    // The effective seed combines retryCount + BFS layer * MAX_RETRIES so that
-    // layer escalation produces different rotations even when retryCount resets to 0.
-    if (_btActive) {
-        const effectiveSeed = _btRetryCount + _bfsLayer * _BT_MAX_RETRIES + _bfsLayerRetries;
-        if (effectiveSeed > 0) {
-            for (let i = 0; i < octPlans.length; i++) {
-                const cands = octPlans[i].candidates;
-                if (cands.length <= 1) continue;
-                // Each xon gets a different rotation based on seed.
-                // Stagger per xon so we explore the Cartesian product.
-                const shift = Math.floor(effectiveSeed / Math.max(1, i + 1)) % cands.length;
-                if (shift > 0) {
-                    octPlans[i].candidates = [...cands.slice(shift), ...cands.slice(0, shift)];
-                }
-            }
+    // ── DETERMINISTIC MATCHING ENUMERATION ──
+    // During backtrack retries, instead of rotating candidates and hoping Kuhn's
+    // produces a different matching, we enumerate ALL valid maximum-cardinality
+    // matchings and try them sequentially. This guarantees comprehensiveness.
+    if (_btActive && typeof _enumerateAllMatchings === 'function') {
+        // Enumerate all valid matchings for current candidate lists.
+        // Re-enumerate when exclusions change (ledger size differs from cached state).
+        const ledgerSize = (_btBadMoveLedger.get(_demoTick) || {size:0}).size || 0;
+        if (_btMatchingCache === null || _btMatchingCacheLedgerSize !== ledgerSize) {
+            _btMatchingCache = _enumerateAllMatchings(octPlans, planned);
+            _btMatchingIndex = 0;
+            _btMatchingCacheLedgerSize = ledgerSize;
+            _logChoreo(`ENUM: ${_btMatchingCache.length} valid matchings for tick ${_demoTick} (ledger: ${ledgerSize})`);
         }
-    }
-
-    // Move assignment: either Kuhn's augmenting-path matching or greedy first-fit.
-    if (_kuhnEnabled) {
-        // Maximum bipartite matching with arbitrary-depth backtracking (Kuhn's algorithm).
-        // Finds augmenting paths so the maximum number of oct xons get a valid destination.
+        // Apply the next matching from the cache, cycling with wrap-around.
+        // Each cycle pairs matchings with a different PRNG seed (via _btRetryCount
+        // / _bfsLayerRetries), so secondary choices (idle_tet face, weak BFS,
+        // return-to-oct neighbor) explore different paths each cycle.
+        if (_btMatchingCache.length > 0) {
+            const idx = _btMatchingIndex % _btMatchingCache.length;
+            _btMatchingIndex++;
+            const matching = _btMatchingCache[idx];
+            for (let i = 0; i < octPlans.length; i++) {
+                octPlans[i].assigned = matching[i];
+            }
+        } else {
+            // Zero valid matchings (all candidates excluded) — null assignments
+            for (const plan of octPlans) plan.assigned = null;
+        }
+    } else if (_kuhnEnabled) {
+        // Normal (non-backtrack) path: Kuhn's augmenting-path matching.
         _maxBipartiteAssignment(octPlans, planned);
     } else {
         // Greedy first-fit: assign each xon its best available candidate.
-        // Simpler than Kuhn's — no swap-removal, so no Pauli gap.
         const greedyClaimed = new Set();
         for (const plan of octPlans) {
             plan.assigned = null;
@@ -2820,6 +2839,12 @@ async function demoTick() {
     // ── Advance gluons along oct edges (also negotiates with vacuum) ──
     if (_advanceGluons()) _solverNeeded = true;
 
+    // ── T90: First-place quark ejection ──
+    // No direct enforcement here. T90 live guard detects first-place overstay
+    // and fires into the backtracker, which rewinds and lets the choreographer
+    // find a competing tet excitation that naturally destroys the dominant tet
+    // through geometric mutual exclusion (the "octa immune system").
+
     // ── Run solver if any SCs changed (unified architecture) ──
     if (_solverNeeded) {
         _planckSeconds++;
@@ -2957,12 +2982,20 @@ async function demoTick() {
     }
 
     _demoTick++;
+    if (_demoTick > _maxTickReached) {
+        _maxTickReached = _demoTick;
+        // Capture fingerprint of the tick that achieved the new high-water mark
+        if (typeof _computeTickFingerprint === 'function') {
+            _bestPathFingerprint = _computeTickFingerprint();
+        }
+    }
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
-    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>`;
+    const _hwm = _maxTickReached > _demoTick ? ` <span style="color:#ff8844;">(peak ${_maxTickReached})</span>` : '';
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks${_hwm}</span>`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks${_hwm}</span>`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
@@ -2974,12 +3007,14 @@ async function demoTick() {
     if (_rewindRequested) {
         _rewindRequested = false;
         _btActive = true;
+        _totalBacktrackRetries++;
         // Signal RL reward: penalize moves that trigger backtracks
         if (typeof _ppoBacktracksThisTick !== 'undefined') _ppoBacktracksThisTick++;
 
+        // Record fingerprint of the failed attempt for deduplication
+        const _isNewFingerprint = (typeof _btRecordFingerprint === 'function') ? _btRecordFingerprint() : true;
+
         // Extract exclusions and accumulate in persistent ledger.
-        // Track whether any GENUINELY NEW exclusions were added — if not, this
-        // layer is exhausted and we must escalate to a deeper BFS layer.
         const newExclusions = _btExtractExclusions();
         const currentTick = _demoTick - 1; // tick was already incremented
         if (!_btBadMoveLedger.has(currentTick)) _btBadMoveLedger.set(currentTick, new Set());
@@ -3017,6 +3052,7 @@ async function demoTick() {
             // are mathematically impossible. This is the ONLY true failure. ──
             if (targetTick < 0) {
                 console.error(`%c[CANARY] Rules are mathematically impossible — backtracker exhausted all possibilities to t=0. Last violation: ${_rewindViolation}`, 'color:red;font-weight:bold;font-size:14px');
+                _saveRunResult('canary-t0', _rewindViolation);
                 simHalted = true;
                 _btReset();
                 _bfsReset();
@@ -3028,16 +3064,19 @@ async function demoTick() {
                 // No snapshot for this tick — we've exhausted snapshot history.
                 // This is equivalent to reaching t=0.
                 console.error(`%c[CANARY] Rules are mathematically impossible — no snapshot for tick ${targetTick} (backed to t=0). Last violation: ${_rewindViolation}`, 'color:red;font-weight:bold;font-size:14px');
+                _saveRunResult('canary-no-snap', _rewindViolation);
                 simHalted = true;
                 _btReset();
                 _bfsReset();
                 return false;
             }
 
-            // Clear ledger entries for ticks after anchor (state will diverge)
-            for (const [t] of _btBadMoveLedger) {
-                if (t > targetTick) _btBadMoveLedger.delete(t);
-            }
+            // Clear ledger entries and fingerprints for ticks after anchor (state will diverge)
+            // Collect keys first to avoid deleting during iteration (undefined behavior).
+            const _staleKeys = [..._btBadMoveLedger.keys()].filter(t => t > targetTick);
+            for (const t of _staleKeys) _btBadMoveLedger.delete(t);
+            const _staleFPKeys = [..._btTriedFingerprints.keys()].filter(t => t > targetTick);
+            for (const t of _staleFPKeys) _btTriedFingerprints.delete(t);
             // Trim stale snapshots from the failed forward path so rewind
             // playback only shows the happy path, not BFS mistakes.
             while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
@@ -3057,13 +3096,34 @@ async function demoTick() {
             return true;
         };
 
-        // ── BFS LAYER TRACKING ──
-        if (!_addedNewExclusions) {
-            // No new information from this retry — layer is genuinely exhausted.
-            // Escalate to a deeper BFS layer.
-            _logChoreo(`BFS: no new exclusions at tick ${currentTick} (ledger: ${ledger.size}), escalating`);
-            if (!_escalateLayer()) break; // t=0 canary fired
-            continue;
+        // ── PROVABLE EXHAUSTION CHECK ──
+        // Escalate ONLY when fingerprints stop being new. The matching enumerator
+        // cycles with wrap-around, pairing each matching with different PRNG seeds
+        // (via _btRetryCount/_bfsLayerRetries). This explores secondary choices
+        // (idle_tet face, weak BFS, return-to-oct) that the matching alone doesn't cover.
+        // Escalation requires BOTH: no new exclusions AND no new fingerprints.
+        // Safety bound: if we've cycled through all matchings × enough PRNG seeds
+        // without new info, escalate (prevents infinite loops from edge cases).
+        if (!_addedNewExclusions && !_isNewFingerprint) {
+            // Count consecutive stale retries (no new info)
+            if (typeof _btStaleRetries === 'undefined') _btStaleRetries = 0;
+            _btStaleRetries++;
+            // Safety bound: 3 full cycles through all matchings with no new info.
+            // Each cycle pairs each matching with a different PRNG seed.
+            // If 3 full cycles produce no new fingerprint, all secondary choices
+            // have been covered for this matching set.
+            const cacheSize = (_btMatchingCache ? _btMatchingCache.length : 1);
+            const minRetries = Math.max(3, cacheSize * 3);
+            if (_btStaleRetries >= minRetries) {
+                _logChoreo(`BFS: tick ${currentTick} exhausted (${_btStaleRetries} stale retries, ${cacheSize} matchings, ledger: ${ledger.size}), escalating`);
+                _btResetMatchingCache();
+                _btStaleRetries = 0;
+                if (!_escalateLayer()) break; // t=0 canary fired
+                continue;
+            }
+        } else {
+            // Got new info — reset stale counter
+            if (typeof _btStaleRetries !== 'undefined') _btStaleRetries = 0;
         }
 
         // ── SAME-TICK RETRY (new exclusions were added) ──

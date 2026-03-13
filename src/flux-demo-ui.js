@@ -497,7 +497,7 @@ function updateXonPanel() {
         if (!x.alive) continue;
         const modeCol = x._mode === 'oct' ? '#ffffff' :
                         x._mode === 'weak' ? '#080808' :
-                        x._mode === 'gluon' ? '#7f00ff' :
+                        x._mode === 'gluon' ? '#ffffff' :
                         x._mode === 'oct_formation' ? '#ffffff' :
                         x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
                         x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';

@@ -352,21 +352,23 @@ const NucleusSimulator = (function(){
         if(!el) return;
         const toHex = c => '#' + c.toString(16).padStart(6, '0');
         const entries = [
-            { label: 'pu\u2081',  color: 0x0040ff },
-            { label: 'pu\u2082',  color: 0x00ff40 },
-            { label: 'pd',        color: 0x00ffff },
-            { label: 'nd\u2081',  color: 0xffbf00 },
-            { label: 'nd\u2082',  color: 0xff00bf },
-            { label: 'nu',        color: 0xff0000 },
-            { label: 'bos',       color: 0xffffff },
-            { label: 'glu',       color: 0x7f00ff },
-            { label: 'weak',      color: 0x080808 },
+            { label: 'pu\u2081',  color: 0x0040ff, pattern: 'ham CW' },
+            { label: 'pu\u2082',  color: 0x00ff40, pattern: 'ham CCW' },
+            { label: 'pd',        color: 0x00ffff, pattern: 'hook' },
+            { label: 'nd\u2081',  color: 0xffbf00, pattern: 'ham CW' },
+            { label: 'nd\u2082',  color: 0xff00bf, pattern: 'ham CCW' },
+            { label: 'nu',        color: 0xff0000, pattern: 'fork' },
+            { label: 'oct/glu',   color: 0xffffff, textColor: '#888' },
+            { label: 'weak',      color: 0x080808, textColor: '#333' },
         ];
         let html = `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 8px;">`;
         for(const e of entries){
+            const patternSpan = e.pattern
+                ? `<span style="color:#999; font-size:9px; margin-left:2px;">${e.pattern}</span>`
+                : '';
             html += `<div style="display:flex; align-items:center; gap:4px; font-size:13px;">`
-                + `<span style="display:inline-block; width:10px; height:10px; background:${toHex(e.color)}; border-radius:2px; flex-shrink:0;"></span>`
-                + `<span style="color:${toHex(e.color)}; white-space:nowrap;">${e.label}</span></div>`;
+                + `<span style="display:inline-block; width:10px; height:10px; background:${toHex(e.color)}; border-radius:2px; flex-shrink:0;${e.color === 0xffffff ? ' border:1px solid #ccc; box-sizing:border-box;' : ''}"></span>`
+                + `<span style="color:${e.textColor || toHex(e.color)}; white-space:nowrap;">${e.label}</span>${patternSpan}</div>`;
         }
         html += `</div>`;
         el.innerHTML = html;

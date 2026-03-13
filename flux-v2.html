@@ -278,7 +278,7 @@
         </div>
 
         <!-- Quark color legend -->
-        <div class="panel-section" style="margin-top:0; padding:8px 10px; background:rgba(60,65,80,0.85);">
+        <div class="panel-section" style="margin-top:0; padding:8px 10px; background:rgba(255,255,255,0.95); border-radius:4px;">
             <div id="dp-quark-legend"><!-- populated by JS --></div>
         </div>
 
@@ -418,6 +418,11 @@
                     style="flex:0 0 auto; padding:7px 12px; display:none;"
                     title="Pause/resume simulation">⏸</button>
             </div>
+            <div class="ctrl-row" style="margin-top:6px;">
+                <span class="ctrl-label" style="min-width:32px;">jitter</span>
+                <input type="range" id="quark-jitter-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
+                <span id="quark-jitter-val" class="ctrl-val" style="min-width:28px;">0</span>
+            </div>
             <div id="playback-controls" style="display:none; margin-top:6px;">
                 <div style="display:flex; gap:4px; margin-bottom:6px;">
                     <button class="btn-ghost" id="btn-rewind-start"
@@ -550,12 +555,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=28"></script>
+    <script src="src/flux-demo-state.js?v=37"></script>
     <script src="src/flux-demo-xon.js?v=6"></script>
-    <script src="src/flux-demo-backtrack.js?v=9"></script>
-    <script src="src/flux-demo-planner.js?v=13"></script>
-    <script src="src/flux-demo-ui.js?v=43"></script>
-    <script src="src/flux-demo.js?v=357"></script>
+    <script src="src/flux-demo-backtrack.js?v=11"></script>
+    <script src="src/flux-demo-planner.js?v=16"></script>
+    <script src="src/flux-demo-ui.js?v=44"></script>
+    <script src="src/flux-demo.js?v=366"></script>
     <script src="src/flux-solver-render.js?v=35"></script>
     <script src="src/flux-tournament.js?v=9"></script>
     <script src="src/flux-rl.js?v=17"></script>
@@ -563,8 +568,8 @@
     <script src="src/flux-electrons.js?v=15"></script>
     <script src="src/flux-voids.js?v=30"></script>
     <script src="src/flux-rules-v2.js?v=2"></script>
-    <script src="src/flux-nucleus.js?v=36"></script>
-    <script src="src/flux-tests.js?v=218"></script>
+    <script src="src/flux-nucleus.js?v=38"></script>
+    <script src="src/flux-tests.js?v=225"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -609,6 +614,17 @@
         slider.before(mkBtn('◂', -1));
         slider.after(mkBtn('▸', 1));
     });
+
+    // ── Quark jitter slider ─────────────────
+    const _jitterSlider = document.getElementById('quark-jitter-slider');
+    const _jitterVal = document.getElementById('quark-jitter-val');
+    if (_jitterSlider) {
+        _jitterSlider.addEventListener('input', () => {
+            const v = +_jitterSlider.value / 100;
+            _quarkJitter = v;
+            _jitterVal.textContent = v.toFixed(2);
+        });
+    }
 
     // ── Topbar sidebar toggles ─────────────────
     const _dpPanel = document.getElementById('deuteron-panel');
