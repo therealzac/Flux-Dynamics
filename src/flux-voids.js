@@ -1261,7 +1261,7 @@ document.getElementById('btn-excitation-play').addEventListener('click',toggleEx
 // populateModelSelect is called from NucleusSimulator wiring below.
 // Force rule title on init
 {
-    const _titleInit = document.getElementById('rule-title');
+    const _titleInit = document.getElementById('topbar-title');
     if(_titleInit) _titleInit.textContent = RULE_REGISTRY[activeRuleIndex]?.name || '';
 }
 

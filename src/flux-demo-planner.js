@@ -486,11 +486,8 @@ function _getOctCandidates(xon, occupied, blocked) {
             if (nb.node === xon.prevNode && xon.prevNode !== xon.node) continue;
             // T61: ejected weak xons must NOT target oct nodes (must eject away)
             if (isEjected && _octNodeSet && _octNodeSet.has(nb.node)) continue;
-            // Score by ejection balance: prefer edges with fewer traversals
-            const pid = pairId(xon.node, nb.node);
-            const ejCount = _ejectionBalance ? (_ejectionBalance.get(pid) || 0) : 0;
-            // Invert: fewer traversals = higher score. Add random tiebreaker.
-            const score = 1000 - ejCount + (_sRng() - 0.5) * 0.5;
+            // Random score with tiebreaker
+            const score = 1000 + (_sRng() - 0.5) * 0.5;
             candidates.push({ node: nb.node, dirIdx: nb.dirIdx, score, _scId: undefined, _needsMaterialise: false });
         }
         // Sort by score descending (fewest ejection traversals first)

@@ -6,7 +6,7 @@
 
 // ── V2 init (rule title + model selector) ──
 (function(){
-    const el = document.getElementById('rule-title');
+    const el = document.getElementById('topbar-title');
     if(el && typeof RULE_REGISTRY !== 'undefined' && typeof activeRuleIndex !== 'undefined'){
         el.textContent = RULE_REGISTRY[activeRuleIndex]?.name || '';
     }
@@ -36,7 +36,7 @@
                     NucleusSimulator.deactivate();
                 }
                 activeRuleIndex = idx;
-                const titleEl = document.getElementById('rule-title');
+                const titleEl = document.getElementById('topbar-title');
                 if(titleEl) titleEl.textContent = RULE_REGISTRY[idx]?.name || '';
                 if(typeof toggleBigBang === 'function') toggleBigBang();
             };
@@ -322,7 +322,7 @@ const NucleusSimulator = (function(){
         enterNucleusMode();
         _updateNucleusInfo();
 
-        const titleEl = document.getElementById('rule-title');
+        const titleEl = document.getElementById('topbar-title');
         if(titleEl) titleEl.textContent = 'NUCLEUS: DEUTERON';
 
         if(typeof updateVoidSpheres === 'function') updateVoidSpheres();
@@ -352,22 +352,23 @@ const NucleusSimulator = (function(){
         if(!el) return;
         const toHex = c => '#' + c.toString(16).padStart(6, '0');
         const entries = [
-            { label: 'pu\u2081 (fork)',    color: 0x0040ff },
-            { label: 'pu\u2082 (hook)',    color: 0x00ff40 },
-            { label: 'pd (ham CW)',        color: 0x00ffff },
-            { label: 'nd\u2081 (fork)',    color: 0xffbf00 },
-            { label: 'nd\u2082 (hook)',    color: 0xff00bf },
-            { label: 'nu (ham CCW)',       color: 0xff0000 },
-            { label: 'bosonic',            color: 0xffffff },
-            { label: 'gluon (cage)',       color: 0x7f00ff },
-            { label: 'weak',              color: 0x080808 },
+            { label: 'pu\u2081',  color: 0x0040ff },
+            { label: 'pu\u2082',  color: 0x00ff40 },
+            { label: 'pd',        color: 0x00ffff },
+            { label: 'nd\u2081',  color: 0xffbf00 },
+            { label: 'nd\u2082',  color: 0xff00bf },
+            { label: 'nu',        color: 0xff0000 },
+            { label: 'bos',       color: 0xffffff },
+            { label: 'glu',       color: 0x7f00ff },
+            { label: 'weak',      color: 0x080808 },
         ];
-        let html = `<div style="font-size:7px; color:#ccc; margin-bottom:2px;">xon types:</div>`;
+        let html = `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 8px;">`;
         for(const e of entries){
-            html += `<div style="display:flex; align-items:center; gap:4px; font-size:8px;">`
-                + `<span style="display:inline-block; width:8px; height:8px; background:${toHex(e.color)}; border-radius:2px;"></span>`
-                + `<span style="color:${toHex(e.color)};">${e.label}</span></div>`;
+            html += `<div style="display:flex; align-items:center; gap:4px; font-size:13px;">`
+                + `<span style="display:inline-block; width:10px; height:10px; background:${toHex(e.color)}; border-radius:2px; flex-shrink:0;"></span>`
+                + `<span style="color:${toHex(e.color)}; white-space:nowrap;">${e.label}</span></div>`;
         }
+        html += `</div>`;
         el.innerHTML = html;
     }
 
@@ -506,7 +507,7 @@ const NucleusSimulator = (function(){
         }
 
         exitNucleusMode();
-        const titleEl = document.getElementById('rule-title');
+        const titleEl = document.getElementById('topbar-title');
         if(titleEl) titleEl.textContent = RULE_REGISTRY[activeRuleIndex]?.name || '';
     }
 

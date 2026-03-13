@@ -1925,8 +1925,7 @@ async function demoTick() {
                 }
             }
         }
-        // Score & sort: (1) non-trail, (2) non-prevNode, (3) ejection balance
-        // bias toward underused edges, (4) random tiebreaker
+        // Score & sort: (1) non-trail, (2) non-prevNode, (3) random tiebreaker
         bestSteps.sort((a, b) => {
             const aInTrail = recentTrail.has(a) ? 1 : 0;
             const bInTrail = recentTrail.has(b) ? 1 : 0;
@@ -1934,12 +1933,6 @@ async function demoTick() {
             const aIsPrev = a === xon.prevNode ? 1 : 0;
             const bIsPrev = b === xon.prevNode ? 1 : 0;
             if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
-            // Ejection balance: prefer edges with fewer traversals
-            const aPid = pairId(xon.node, a);
-            const bPid = pairId(xon.node, b);
-            const aEj = _ejectionBalance ? (_ejectionBalance.get(aPid) || 0) : 0;
-            const bEj = _ejectionBalance ? (_ejectionBalance.get(bPid) || 0) : 0;
-            if (aEj !== bEj) return aEj - bEj; // fewer traversals = preferred
             // Random tiebreaker to prevent lattice-order bias
             return _sRng() - 0.5;
         });

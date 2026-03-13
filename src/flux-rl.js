@@ -33,7 +33,6 @@ const PPO_DEFORMATION_BONUS = 0.05; // reward for ticks with SC changes
 const PPO_IDLE_TICK_PENALTY = 0.02; // penalty for ticks without SC changes
 const PPO_TET_COMPLETION_BONUS = 0.2; // doubled — tet completions are the primary objective
 const PPO_EVENNESS_SCALE  = 5.0;     // reward scaling for edge evenness improvement
-const PPO_EJECTION_SCALE  = 5.0;     // reward scaling for ejection evenness improvement (equal weight)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // §2  TF.js AVAILABILITY
@@ -316,7 +315,7 @@ class PPOTrajectoryBuffer {
 
 let _ppoPrevAvgCV = null;
 let _ppoPrevEvenness = null;  // previous edge evenness for delta reward
-let _ppoPrevEjectionEvenness = null;  // previous ejection evenness for delta reward
+// (_ppoPrevEjectionEvenness removed — ejection balance no longer drives reward)
 let _ppoTetCompletionsThisTick = 0;
 let _ppoGuardFailedThisTick = false;
 let _ppoDeformationThisTick = false;
@@ -379,14 +378,7 @@ function computeTickReward() {
         _ppoPrevEvenness = currentEvenness;
     }
 
-    // Ejection evenness improvement (positive = evenness increased = good)
-    if (typeof _computeEjectionEvenness === 'function') {
-        const currentEjection = _computeEjectionEvenness();
-        if (_ppoPrevEjectionEvenness !== null) {
-            reward += (currentEjection - _ppoPrevEjectionEvenness) * PPO_EJECTION_SCALE;
-        }
-        _ppoPrevEjectionEvenness = currentEjection;
-    }
+    // (Ejection evenness reward removed — unevenness was caused by BFS ordering bias, not missing reward signal)
 
     // Idle oct xon penalty
     if (typeof _demoXons !== 'undefined') {
@@ -409,7 +401,6 @@ function computeTickReward() {
 function resetTickRewardState() {
     _ppoPrevAvgCV = null;
     _ppoPrevEvenness = null;
-    _ppoPrevEjectionEvenness = null;
     _ppoTetCompletionsThisTick = 0;
     _ppoGuardFailedThisTick = false;
     _ppoDeformationThisTick = false;
@@ -728,7 +719,8 @@ function extractRLFeatures(xon, candidate, occupied) {
     f[20] = ms.weak / totalTicks;
     // f[21..25]: global balance signals so the model can optimize for them
     f[21] = typeof _computeEdgeEvenness === 'function' ? _computeEdgeEvenness() : 0;
-    f[22] = typeof _computeEjectionEvenness === 'function' ? _computeEjectionEvenness() : 0;
+    // f[22] was ejection evenness — removed (bias was from BFS ordering, not missing signal)
+    f[22] = 0;
     // Per-xon quark balance: CV of assigned face visits (0 = no data, 1 = perfect imbalance)
     if (_demoVisits && xon._assignedFace && _demoVisits[xon._assignedFace]) {
         const v = _demoVisits[xon._assignedFace];
@@ -752,16 +744,8 @@ function extractRLFeatures(xon, candidate, occupied) {
             f[24] = maxEdge > 0 ? entry.total / maxEdge : 0; // relative usage [0,1]
         }
     }
-    // Ejection balance of candidate edge specifically
-    if (_ejectionBalance) {
-        const pid = pairId(xon.node, candidate.node);
-        const ejCount = _ejectionBalance.get(pid);
-        if (ejCount !== undefined) {
-            let maxEj = 0;
-            for (const [, c] of _ejectionBalance) if (c > maxEj) maxEj = c;
-            f[25] = maxEj > 0 ? ejCount / maxEj : 0; // relative usage [0,1]
-        }
-    }
+    // f[25] was per-edge ejection usage — removed (bias was from BFS ordering)
+    f[25] = 0;
     return f;
 }
 

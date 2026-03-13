@@ -2163,8 +2163,8 @@ function _startVisualTrial(params, maxTicks) {
         // Tournament no longer overrides visual settings — preserve user's view
         _tournamentVisualsApplied = true;
 
-        // Restore trial label (simulateNucleus overwrites rule-title)
-        const titleEl = document.getElementById('rule-title');
+        // Restore trial label (simulateNucleus overwrites topbar-title)
+        const titleEl = document.getElementById('topbar-title');
         if (titleEl && titleEl.dataset.trialLabel) titleEl.textContent = titleEl.dataset.trialLabel;
     });
 }
@@ -2348,7 +2348,7 @@ async function _runTournament() {
     const EPOCHS   = epochsEl ? Math.max(1, parseInt(epochsEl.value) || 10) : 10;
     const PLANCK_PER_EPOCH = tickEl ? Math.max(64, parseInt(tickEl.value) || 2000) : 2000;
     const statusEl = document.getElementById('tune-status');
-    const titleEl  = document.getElementById('rule-title');
+    const titleEl  = document.getElementById('topbar-title');
 
     // ── Network naming ──
     const usedNames = new Set(_networkLeaderboard.map(e => e.name));
@@ -2440,7 +2440,7 @@ async function _runTournament() {
         const pbCtrl = document.getElementById('playback-controls');
         if (pbCtrl) pbCtrl.style.display = '';
 
-        // Restore network name (simulateNucleus overwrites rule-title)
+        // Restore network name (simulateNucleus overwrites topbar-title)
         if (titleEl && titleEl.dataset.trialLabel) {
             titleEl.textContent = titleEl.dataset.trialLabel;
         }

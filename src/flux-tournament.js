@@ -233,7 +233,7 @@ function installTrialRule(algoIdx){
     NucleusSimulator.simulateNucleus();
 
     // Update title — prominent algo name during tournament
-    const titleEl = document.getElementById('rule-title');
+    const titleEl = document.getElementById('topbar-title');
     if(titleEl) {
         titleEl.textContent = algo?.name || '?';
         titleEl.style.fontSize = '18px';
