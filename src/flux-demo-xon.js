@@ -44,6 +44,10 @@ function _clearModeProps(xon) {
     xon._weakLeftOct = false;
     xon._pendingWeakEjection = false;
     xon._tetActualized = false;
+    // gluon-class: binding to tet face SCs
+    xon._gluonForFace = null;
+    xon._gluonBoundSCs = null;
+    xon._gluonClientXon = null;
 }
 
 // ── Trail helper: freeze 3D positions at record time so trails don't deform with solver ──
@@ -58,6 +62,14 @@ function _trailPush(xon, node, color) {
         xon._trailFrozenPos.shift();
     }
 }
+// Retroactively update the last trail segment color when a xon changes mode.
+// Called after setting xon.col so the transition segment shows the new color immediately.
+function _trailRecolor(xon) {
+    if (xon.trailColHistory && xon.trailColHistory.length > 0) {
+        xon.trailColHistory[xon.trailColHistory.length - 1] = xon.col;
+    }
+}
+
 // Initialize frozen pos array from current trail (for init/reset)
 function _trailInitFrozen(xon) {
     xon._trailFrozenPos = xon.trail.map(n => {
@@ -315,6 +327,8 @@ function _initPersistentXons() {
             _dirHistory: [],
             _dirBalance: new Array(10).fill(0),
             _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
+            // gluon-class: binding to tet face SCs
+            _gluonForFace: null, _gluonBoundSCs: null, _gluonClientXon: null,
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
             trail: [startNode], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,

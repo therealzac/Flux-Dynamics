@@ -36,6 +36,7 @@ function _btSaveSnapshot() {
             _movedThisTick: x._movedThisTick, _evictedThisTick: x._evictedThisTick,
             _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
             _t60Ejected: !!x._t60Ejected, _weakLeftOct: !!x._weakLeftOct, _pendingWeakEjection: !!x._pendingWeakEjection,
+            _gluonForFace: x._gluonForFace, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
             trail: x.trail.slice(),
@@ -102,6 +103,16 @@ function _btRestoreSnapshot(snap, reverse) {
         x._t60Ejected = !!s._t60Ejected;
         x._weakLeftOct = !!s._weakLeftOct;
         x._pendingWeakEjection = !!s._pendingWeakEjection;
+        x._gluonForFace = s._gluonForFace != null ? s._gluonForFace : null;
+        x._gluonBoundSCs = s._gluonBoundSCs ? s._gluonBoundSCs.slice() : null;
+        // Re-derive _gluonClientXon from face binding (can't serialize xon references)
+        x._gluonClientXon = null;
+        if (x._gluonForFace != null) {
+            const client = _demoXons.find((cx, ci) => cx.alive && snap.xons[ci] &&
+                (snap.xons[ci]._mode === 'tet' || snap.xons[ci]._mode === 'idle_tet') &&
+                snap.xons[ci]._assignedFace === x._gluonForFace && cx !== x);
+            if (client) x._gluonClientXon = client;
+        }
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
         x._modeStats = x._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
         x.trail = s.trail.slice();

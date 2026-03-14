@@ -1158,6 +1158,9 @@ const LIVE_GUARD_REGISTRY = [
       id: 'T86', name: 'No bare tetrahedra',
       check(tick, g) {
         if (tick < LIVE_GUARD_GRACE) return null;
+        // When _ruleBareTetrahedra is OFF, bare actualized tets are allowed —
+        // they simply don't count as quarks (no edges colored yet).
+        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!_nucleusTetFaceData) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
@@ -1394,6 +1397,7 @@ const LIVE_GUARD_REGISTRY = [
       },
       check(tick, g) {
         // No grace period — balance rules enforced from tick 0
+        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._prevActualized || !g._prevDominantWasLeader || !_nucleusTetFaceData) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
@@ -1450,6 +1454,7 @@ const LIVE_GUARD_REGISTRY = [
       },
       check(tick, g) {
         // No grace period — balance rules enforced from tick 0
+        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._prevActualized || !g._prevFaceWasLeader || !_nucleusTetFaceData) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {

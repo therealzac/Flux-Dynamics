@@ -980,9 +980,11 @@ function _tickDemoXons(dt) {
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
                     } else if (isGluon || isWeak) {
                         // Dark colors (black gluon, violet weak) go on NormalBlending overlay
+                        // Full brightness — no fadeCurve (matches normal-mode behavior);
+                        // material opacity (weakOp * sparkOp) handles overall brightness.
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) {
-                            xon._weakTrailCol[out*3] = scr*fadeCurve; xon._weakTrailCol[out*3+1] = scg*fadeCurve; xon._weakTrailCol[out*3+2] = scb*fadeCurve;
+                            xon._weakTrailCol[out*3] = scr; xon._weakTrailCol[out*3+1] = scg; xon._weakTrailCol[out*3+2] = scb;
                         }
                     } else {
                         const flashBoost = xon.flashT * 0.4 * progress;
@@ -1742,12 +1744,14 @@ function _executeOpeningTick(occupied) {
                 _clearModeProps(xon);
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             } else {
                 // Not on oct node → weak, navigate back via PHASE 0.5
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
         }
@@ -1911,6 +1915,7 @@ async function demoTick() {
             xon._loopSeq = null;
             xon._loopStep = 0;
             xon.col = WEAK_FORCE_COLOR;
+            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         }
     }
@@ -1937,8 +1942,10 @@ async function demoTick() {
                 if (!faceActualized) {
                     // Trail segments keep their original recorded color.
                     // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
-                    // Relinquish face SCs (protect oct cage) — guarded by switchboard
-                    if (_ruleRelinquishSCs) {
+                    // Relinquish face SCs — guarded by switchboard
+                    if (_ruleGluonMediatedSC) {
+                        _releaseGluon(xon._assignedFace);
+                    } else if (_ruleRelinquishSCs) {
                         const locked60 = _traversalLockedSCs();
                         const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
                         if (fd60) {
@@ -1963,6 +1970,7 @@ async function demoTick() {
                         xon._loopSeq = null;
                         xon._loopStep = 0;
                         xon.col = 0xffffff;
+                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                         if (_flashEnabled) xon.flashT = 1.0;
                     } else {
@@ -1975,6 +1983,7 @@ async function demoTick() {
                         xon._tetActualized = false;
                         xon._t60Ejected = true;
                         xon.col = WEAK_FORCE_COLOR;
+                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                         _weakLifecycleEnter(xon, 'non_actualized_tet');
                     }
@@ -1999,7 +2008,9 @@ async function demoTick() {
                 if (blocker && blocker._mode === 'idle_tet') {
                     // Evict the BLOCKER (idle_tet is expendable, but protect cage SCs)
                     const blockerFd = blocker._assignedFace != null ? _nucleusTetFaceData[blocker._assignedFace] : null;
-                    if (blockerFd && _ruleRelinquishSCs) {
+                    if (_ruleGluonMediatedSC && blocker._assignedFace != null) {
+                        _releaseGluon(blocker._assignedFace);
+                    } else if (blockerFd && _ruleRelinquishSCs) {
                         const locked0 = _traversalLockedSCs();
                         const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                         for (const scId of blockerFd.scIds) {
@@ -2041,7 +2052,9 @@ async function demoTick() {
             if (shouldEvictSelf) {
                 // Eviction is ALWAYS weak + _t60Ejected, NEVER _returnXonToOct
                 const evictFd = xon._assignedFace != null ? _nucleusTetFaceData[xon._assignedFace] : null;
-                if (evictFd && _ruleRelinquishSCs) {
+                if (_ruleGluonMediatedSC && xon._assignedFace != null) {
+                    _releaseGluon(xon._assignedFace);
+                } else if (evictFd && _ruleRelinquishSCs) {
                     const locked0 = _traversalLockedSCs();
                     const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                     for (const scId of evictFd.scIds) {
@@ -2063,6 +2076,7 @@ async function demoTick() {
                 xon._loopStep = 0;
                 xon._tetActualized = false;
                 xon.col = WEAK_FORCE_COLOR;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'phase0_eviction');
                 xon._evictedThisTick = true;
@@ -2089,6 +2103,7 @@ async function demoTick() {
                 xon._mode = 'oct';
                 if (_flashEnabled) xon.flashT = 1.0;
                 xon.col = 0xffffff;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 continue;
             }
@@ -2181,6 +2196,7 @@ async function demoTick() {
                     xon._mode = 'oct';
                     if (_flashEnabled) xon.flashT = 1.0;
                     xon.col = 0xffffff;
+                    _trailRecolor(xon);
                     if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 }
             }
@@ -2239,6 +2255,7 @@ async function demoTick() {
                         xon._mode = 'oct';
                         if (_flashEnabled) xon.flashT = 1.0;
                         xon.col = 0xffffff;
+                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                     }
                 }
@@ -2361,8 +2378,10 @@ async function demoTick() {
             }
             if (!_t60actualized) {
                 // Trail segments keep their original recorded color.
-                // Relinquish face SCs (before mode change, protect cage) — guarded by switchboard
-                if (_ruleRelinquishSCs && xon._assignedFace != null) {
+                // Relinquish face SCs (before mode change) — guarded by switchboard
+                if (_ruleGluonMediatedSC && xon._assignedFace != null) {
+                    _releaseGluon(xon._assignedFace);
+                } else if (_ruleRelinquishSCs && xon._assignedFace != null) {
                     const fd = _nucleusTetFaceData[xon._assignedFace];
                     if (fd) {
                         const locked60 = _traversalLockedSCs();
@@ -2387,6 +2406,7 @@ async function demoTick() {
                 xon._tetActualized = false;
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'non_actualized_tet');
                 continue; // PHASE 0.5 will move it; skip normal return-to-oct
@@ -2394,8 +2414,10 @@ async function demoTick() {
 
             // Loop complete + actualized — return to oct
             _returnXonToOct(xon, occupied);
-            // Relinquish face SCs that are no longer needed (protect cage, respect lock) — guarded by switchboard
-            if (_ruleRelinquishSCs && xon._assignedFace != null) {
+            // Relinquish face SCs that are no longer needed — guarded by switchboard
+            if (_ruleGluonMediatedSC && xon._assignedFace != null) {
+                _releaseGluon(xon._assignedFace);
+            } else if (_ruleRelinquishSCs && xon._assignedFace != null) {
                 const fd = _nucleusTetFaceData[xon._assignedFace];
                 const cage15 = _octSCIds ? new Set(_octSCIds) : new Set();
                 if (fd) {
@@ -2429,12 +2451,27 @@ async function demoTick() {
         //
         // Here we: (1) demote gluons back to oct if they've returned to the cage,
         //          (2) exclude cage-critical oct xons from face assignment.
+        // ── Gluon-mediated orphan cleanup: release gluons whose client is no longer active ──
+        if (_ruleGluonMediatedSC) {
+            for (const xon of _demoXons) {
+                if (!xon.alive || xon._gluonForFace == null) continue;
+                const client = xon._gluonClientXon;
+                if (!client || !client.alive ||
+                    (client._mode !== 'tet' && client._mode !== 'idle_tet') ||
+                    client._assignedFace !== xon._gluonForFace) {
+                    _releaseGluon(xon._gluonForFace);
+                }
+            }
+        }
         const gluonXons = _demoXons.filter(x => x.alive && x._mode === 'gluon' && !x._movedThisTick && !x._evictedThisTick);
         for (const xon of gluonXons) {
-            // Gluon that returned to oct cage → demote to oct
+            // Face-bound gluons stay gluon until released — skip auto-demotion
+            if (xon._gluonForFace != null) continue;
+            // Legacy gluon (cage-critical) that returned to oct cage → demote to oct
             if (_octNodeSet && _octNodeSet.has(xon.node)) {
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
+                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 octIdle.push(xon);
                 _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} returned to oct cage → oct mode`);
@@ -2452,6 +2489,10 @@ async function demoTick() {
         }
         // Remove cage-critical xons from face assignment candidates (but NOT from oct movement)
         octIdle = octIdle.filter(x => !_cageCriticalXons.has(x));
+        // Remove gluon-bound xons from face assignment (they're serving a tet face)
+        if (_ruleGluonMediatedSC) {
+            octIdle = octIdle.filter(x => x._gluonForFace == null);
+        }
 
         if (octIdle.length > 0 && _nucleusTetFaceData) {
             // ── FACE ASSIGNMENT: greedy + ranked enumeration ──
@@ -2572,6 +2613,41 @@ async function demoTick() {
                     assignedFaces.add(prop.face);
                     _demoVisitedFaces.add(prop.face);
                     _solverNeeded = true;
+                }
+            }
+
+            // ── Immediate first step for newly-assigned tet xons ──
+            // Xons assigned in PHASE 2a missed PHASE 1's tet planning.
+            // If they haven't moved (already on face node), plan their first step
+            // so PHASE 3 can execute it (prevents standing still for 1 tick).
+            for (const xon of assignedXons) {
+                if (xon._movedThisTick) continue; // walked to face during assignment
+                if (!xon._loopSeq || xon._mode !== 'tet') continue;
+                const effectiveStep = xon._loopStep >= 4 ? 0 : xon._loopStep;
+                const fromNode = xon._loopSeq[effectiveStep];
+                const toNode = xon._loopSeq[effectiveStep + 1];
+                if (toNode === undefined) continue;
+                if (planned.has(toNode)) continue;
+                if ((occupied.get(toNode) || 0) > 0) continue;
+                // Vacuum negotiation for first hop
+                const pid = pairId(fromNode, toNode);
+                const scId = scPairToId.get(pid);
+                const hasBase = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
+                let scOk = hasBase;
+                if (!scOk && scId !== undefined) {
+                    scOk = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
+                    if (!scOk && canMaterialiseQuick(scId)) {
+                        const xi = _demoXons.indexOf(xon);
+                        xonImpliedSet.add(scId);
+                        _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: xi, face: xon._assignedFace, tick: _demoTick });
+                        stateVersion++;
+                        _solverNeeded = true;
+                        scOk = true;
+                    }
+                }
+                if (scOk || scId === undefined) {
+                    tetPlans.push({ xon, fromNode, toNode, approved: true });
+                    planned.add(toNode);
                 }
             }
 
@@ -2912,6 +2988,7 @@ async function demoTick() {
             plan.xon._mode = 'weak';
             plan.xon._t60Ejected = true;
             plan.xon.col = WEAK_FORCE_COLOR;
+            _trailRecolor(plan.xon);
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
             // Find a neighbor node to escape to
@@ -2987,6 +3064,7 @@ async function demoTick() {
                 if (_cageCriticalXons.has(plan.xon) && _octNodeSet && !_octNodeSet.has(plan.xon.node)) {
                     plan.xon._mode = 'gluon';
                     plan.xon.col = GLUON_COLOR;
+                    _trailRecolor(plan.xon);
                     if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
                     _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
                 }
@@ -3072,6 +3150,7 @@ async function demoTick() {
         plan.xon._loopStep = 0;
         plan.xon._quarkType = null;
         plan.xon.col = WEAK_FORCE_COLOR;
+        _trailRecolor(plan.xon);
         if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         _weakLifecycleEnter(plan.xon, 'tet_stuck_ejection');
         // Try to move to a free neighbor so T20 doesn't fire
@@ -3117,6 +3196,7 @@ async function demoTick() {
             xon._mode = 'weak';
             xon._t60Ejected = true;
             xon.col = WEAK_FORCE_COLOR;
+            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(xon, 'pending_ejection_offcage');
         }
@@ -3231,8 +3311,35 @@ async function demoTick() {
         }
         if (violation) {
             // Soft recovery: try clearing xon-implied SCs (protect oct cage)
-            // When relinquishment is off, violations should halt (not silently recover)
-            if (_ruleRelinquishSCs && xonImpliedSet.size && !simHalted) {
+            // When relinquishment is off (and no gluon mediation), violations should halt
+            if (_ruleGluonMediatedSC && xonImpliedSet.size && !simHalted) {
+                // Release all gluon bindings first
+                for (const x of _demoXons) {
+                    if (x.alive && x._gluonForFace != null) {
+                        x._gluonForFace = null; x._gluonBoundSCs = null; x._gluonClientXon = null;
+                        x._mode = 'oct'; x.col = 0xffffff;
+                        if (x.sparkMat) x.sparkMat.color.setHex(0xffffff);
+                    }
+                }
+                const _cageSCSet = _octSCIds ? new Set(_octSCIds) : new Set();
+                for (const id of [...xonImpliedSet]) {
+                    if (_cageSCSet.has(id)) continue;
+                    xonImpliedSet.delete(id); impliedSet.delete(id); impliedBy.delete(id);
+                }
+                bumpState();
+                const pFinal = detectImplied();
+                applyPositions(pFinal);
+                let stillBad = false;
+                for (const [i,j] of BASE_EDGES) {
+                    if (Math.abs(vd(pos[i],pos[j]) - 1.0) > TOL) { stillBad = true; break; }
+                }
+                if (!stillBad) { /* recovered */ }
+                else {
+                    simHalted = true;
+                    document.getElementById('violation-msg').textContent = 'HALTED: ' + violation;
+                    document.getElementById('violation-banner').style.display = 'block';
+                }
+            } else if (_ruleRelinquishSCs && xonImpliedSet.size && !simHalted) {
                 const _cageSCSet = _octSCIds ? new Set(_octSCIds) : new Set();
                 for (const id of [...xonImpliedSet]) {
                     if (_cageSCSet.has(id)) continue; // NEVER clear oct cage SCs

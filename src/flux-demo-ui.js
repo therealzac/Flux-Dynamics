@@ -1404,3 +1404,9 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
 document.getElementById('rule-relinquish-toggle')?.addEventListener('change', e => {
     _ruleRelinquishSCs = e.target.checked;
 });
+document.getElementById('rule-gluon-mediated-toggle')?.addEventListener('change', e => {
+    _ruleGluonMediatedSC = e.target.checked;
+});
+document.getElementById('rule-bare-tet-toggle')?.addEventListener('change', e => {
+    _ruleBareTetrahedra = e.target.checked;
+});

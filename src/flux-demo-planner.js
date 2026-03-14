@@ -836,6 +836,119 @@ function _promoteFaceSCs(face, xon) {
     }
 }
 
+// ── Gluon-mediated SC lifecycle ─────────────────────────────────────────────
+// When _ruleGluonMediatedSC is ON, a companion gluon xon holds tet face SCs
+// open in xonImpliedSet on behalf of the tet xon executing the loop.
+
+// Find the best available oct-mode xon to serve as gluon for a tet face.
+// Returns null if no candidate available (graceful degradation).
+function _findGluonCandidate(tetXon, face) {
+    if (!_ruleGluonMediatedSC) return null;
+    const fd = _nucleusTetFaceData[face];
+    if (!fd) return null;
+    // Candidates: alive oct-mode xons that aren't already gluon-bound or the tet xon
+    const candidates = _demoXons.filter(x =>
+        x.alive && x !== tetXon &&
+        x._mode === 'oct' &&
+        x._gluonForFace == null
+    );
+    if (candidates.length === 0) return null;
+    // Score by proximity to face SC endpoints (prefer xons near the face)
+    const faceNodes = new Set(fd.allNodes);
+    let best = null, bestScore = Infinity;
+    for (const c of candidates) {
+        // Simple: is the candidate ON a face node? (distance 0)
+        if (faceNodes.has(c.node)) return c; // immediate match
+        // Otherwise count shared base neighbors with face nodes
+        const nbrs = baseNeighbors[c.node] || [];
+        let dist = 2; // default: not adjacent
+        for (const n of nbrs) {
+            if (faceNodes.has(n.node)) { dist = 1; break; }
+        }
+        if (dist < bestScore) { bestScore = dist; best = c; }
+    }
+    return best;
+}
+
+// Assign a xon as gluon to physically maintain a tet face's 2 SCs.
+function _assignGluon(gluonXon, face, clientXon) {
+    const fd = _nucleusTetFaceData[face];
+    if (!fd) return;
+    const gi = _demoXons.indexOf(gluonXon);
+    // Bind gluon to face
+    gluonXon._mode = 'gluon';
+    gluonXon._gluonForFace = face;
+    gluonXon._gluonBoundSCs = fd.scIds.slice(); // copy the 2 SC IDs
+    gluonXon._gluonClientXon = clientXon;
+    gluonXon.col = GLUON_COLOR;
+    if (gluonXon.sparkMat) gluonXon.sparkMat.color.setHex(GLUON_COLOR);
+    // Promote face SCs into xonImpliedSet (ensure they persist)
+    for (const scId of fd.scIds) {
+        if (!xonImpliedSet.has(scId) && !activeSet.has(scId)) {
+            if (canMaterialiseQuick(scId)) {
+                xonImpliedSet.add(scId);
+                _scAttribution.set(scId, { reason: 'gluonMaintain', xonIdx: gi, face, tick: _demoTick });
+                stateVersion++;
+            }
+        }
+    }
+    _logChoreo(`X${gi} → gluon for face ${face} (client X${_demoXons.indexOf(clientXon)}), SCs [${fd.scIds.join(',')}]`);
+}
+
+// Release a gluon from its face SC maintenance duty.
+// Removes face SCs from xonImpliedSet (same guards as _relinquishFaceSCs),
+// clears gluon binding, returns xon to oct mode.
+function _releaseGluon(face) {
+    if (face == null) return;
+    const gluonXon = _demoXons.find(x => x.alive && x._gluonForFace === face);
+    if (!gluonXon) {
+        // No gluon bound — fall through to direct SC deletion (graceful degradation)
+        // Only delete if relinquishment is also enabled
+        if (_ruleRelinquishSCs && _nucleusTetFaceData) {
+            const fd = _nucleusTetFaceData[face];
+            if (fd) {
+                const locked = _traversalLockedSCs();
+                const cageSCs = _octSCIds ? new Set(_octSCIds) : new Set();
+                for (const scId of fd.scIds) {
+                    if (locked.has(scId)) continue;
+                    if (cageSCs.has(scId)) continue;
+                    if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
+                        xonImpliedSet.delete(scId);
+                        _scAttribution.delete(scId);
+                        stateVersion++;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    const gi = _demoXons.indexOf(gluonXon);
+    // Release face SCs (same traversal-lock + cage-SC guards)
+    const fd = _nucleusTetFaceData[face];
+    if (fd) {
+        const locked = _traversalLockedSCs();
+        const cageSCs = _octSCIds ? new Set(_octSCIds) : new Set();
+        for (const scId of fd.scIds) {
+            if (locked.has(scId)) continue;
+            if (cageSCs.has(scId)) continue;
+            if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
+                xonImpliedSet.delete(scId);
+                _scAttribution.delete(scId);
+                stateVersion++;
+            }
+        }
+    }
+    // Clear gluon binding, return to oct
+    _logChoreo(`X${gi} gluon released from face ${face} → oct`);
+    gluonXon._gluonForFace = null;
+    gluonXon._gluonBoundSCs = null;
+    gluonXon._gluonClientXon = null;
+    gluonXon._mode = 'oct';
+    gluonXon.col = 0xffffff;
+    _trailRecolor(gluonXon);
+    if (gluonXon.sparkMat) gluonXon.sparkMat.color.setHex(0xffffff);
+}
+
 // Transition xon from oct mode to tet mode (assigned to actualize a face)
 function _assignXonToTet(xon, face, quarkType) {
     const fd = _nucleusTetFaceData[face];
@@ -884,6 +997,7 @@ function _assignXonToTet(xon, face, quarkType) {
     xon._loopSeq = seq;
     xon._loopStep = 0;
     xon.col = col;
+    _trailRecolor(xon); // immediate trail color on mode change
 
     // Update spark color
     if (xon.sparkMat) xon.sparkMat.color.setHex(col);
@@ -900,6 +1014,12 @@ function _assignXonToTet(xon, face, quarkType) {
         xon.col = 0xffffff;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
         return;
+    }
+
+    // Gluon-mediated: assign a companion gluon to hold face SCs open
+    if (_ruleGluonMediatedSC) {
+        const gluon = _findGluonCandidate(xon, face);
+        if (gluon) _assignGluon(gluon, face, xon);
     }
 
     // Immediate advance: don't stall for one tick at seq[0].
@@ -994,6 +1114,7 @@ function _walkToFace(xon, targetNodes) {
 // T42: Clean up face SCs from xonImpliedSet when a xon abandons its tet face.
 // Respects traversal lock — won't remove SCs being traversed by other xons.
 function _relinquishFaceSCs(xon) {
+    if (_ruleGluonMediatedSC) { _releaseGluon(xon._assignedFace); return; }
     if (!_ruleRelinquishSCs) return; // switchboard: SC persistence mode
     if (xon._assignedFace == null) return;
     const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
@@ -1044,6 +1165,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
+        _trailRecolor(xon);
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
 
@@ -1066,6 +1188,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
+        _trailRecolor(xon);
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
     }
@@ -1131,8 +1254,14 @@ function _startIdleTetLoop(xon, occupied) {
                 xon._quarkType = qType;
                 xon._loopType = LOOP_TYPE_NAMES[qType];
                 xon.col = QUARK_COLORS[qType];
+                _trailRecolor(xon);
                 if (_flashEnabled) xon.flashT = 1.0;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+                // Gluon-mediated: assign companion gluon for idle_tet face
+                if (_ruleGluonMediatedSC) {
+                    const gluon = _findGluonCandidate(xon, face);
+                    if (gluon) _assignGluon(gluon, face, xon);
+                }
                 return true;
             }
             if (!bestSeq) {
@@ -1154,8 +1283,14 @@ function _startIdleTetLoop(xon, occupied) {
             xon._quarkType = bestType;
             xon._loopType = bestType ? LOOP_TYPE_NAMES[bestType] : null;
             xon.col = bestType ? QUARK_COLORS[bestType] : 0x888888;
+            _trailRecolor(xon);
             if (_flashEnabled) xon.flashT = 1.0;
             if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+            // Gluon-mediated: assign companion gluon for idle_tet face
+            if (_ruleGluonMediatedSC) {
+                const gluon = _findGluonCandidate(xon, bestFace);
+                if (gluon) _assignGluon(gluon, bestFace, xon);
+            }
             return true;
         }
         return false;
