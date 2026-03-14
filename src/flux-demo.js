@@ -2805,6 +2805,8 @@ async function demoTick() {
     for (const plan of octPlans) {
         if (plan.assigned || plan.idleTet) continue;
         if (plan.xon._evictedThisTick) continue;
+        // Gluon xons must stay on the oct cage — never divert into tet loops
+        if (plan.xon._mode === 'gluon') continue;
 
         // ── Strategy 1: Divert into tet ──
         // Try _startIdleTetLoop first (uses Pauli-aware face selection)
