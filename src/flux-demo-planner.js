@@ -1265,8 +1265,8 @@ function _startIdleTetLoop(xon, occupied) {
                 return true;
             }
             if (!bestSeq) {
-                const fallbackType = existingXon
-                    ? shuffledTypes.find(t => QUARK_COLORS[t] === existingXon.col) || shuffledTypes[0]
+                const fallbackType = existingXon && existingXon._quarkType
+                    ? existingXon._quarkType
                     : shuffledTypes[0];
                 bestSeq = _selectBestPermutation(xon, rotated, fallbackType);
                 bestFace = face;

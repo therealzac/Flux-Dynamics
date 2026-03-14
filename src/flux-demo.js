@@ -910,6 +910,15 @@ function _tickDemoXons(dt) {
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
 
+        // Role-based overlay routing: weak/gluon segments always go to
+        // NormalBlending overlay so weak/gluon opacity sliders work at any phase.
+        const _rhArr = xon._trailRoleHistory;
+        const _isOverlayRole = (idx) => {
+            if (!_rhArr || !_rhArr[idx]) return false;
+            const r = _rhArr[idx];
+            return r === 'weak' || r === 'gluon';
+        };
+
         // Trail: fading vertex-colored path
         // Trails knob controls how many trail points are visible (0-250).
         // Always store full history; render only the last `visLen` points.
@@ -945,13 +954,14 @@ function _tickDemoXons(dt) {
                 // Teleport check between cp1 and cp2
                 const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
                 const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
-                // Segment color
-                const segCol = (_trailCH && _trailCH[i]) || xon.col;
+                // Segment color — prefer role-based resolution for phase independence
+                const _rh = xon._trailRoleHistory;
+                const segCol = (_rh && _rh[i]) ? _roleToColor(_rh[i])
+                    : ((_trailCH && _trailCH[i]) || xon.col);
                 const scr = ((segCol >> 16) & 0xff) / 255;
                 const scg = ((segCol >> 8) & 0xff) / 255;
                 const scb = (segCol & 0xff) / 255;
-                const isGluon = segCol === GLUON_COLOR;
-                const isWeak = segCol === WEAK_FORCE_COLOR;
+                const isOverlay = _isOverlayRole(i);
                 // Emit FJ_SUBS vertices along CR curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_LENGTH; s++) {
                     const u = s / FJ_SUBS;
@@ -966,20 +976,19 @@ function _tickDemoXons(dt) {
                     xon.trailPos[out * 3 + 1] = py;
                     xon.trailPos[out * 3 + 2] = pz;
                     if (xon._weakTrailPos) {
-                        const darkSeg = isGluon || isWeak;
-                        xon._weakTrailPos[out * 3]     = darkSeg ? px : NaN;
-                        xon._weakTrailPos[out * 3 + 1] = darkSeg ? py : NaN;
-                        xon._weakTrailPos[out * 3 + 2] = darkSeg ? pz : NaN;
+                        xon._weakTrailPos[out * 3]     = isOverlay ? px : NaN;
+                        xon._weakTrailPos[out * 3 + 1] = isOverlay ? py : NaN;
+                        xon._weakTrailPos[out * 3 + 2] = isOverlay ? pz : NaN;
                     }
                     // Progress through entire trail for alpha fade (0=tail, 1=head)
                     const progress = (vi + u) / Math.max(bodyLen - 1, 1);
-                    // Smooth fade: ramp from 0 at tail to full brightness at head
-                    const fadeCurve = progress * progress; // quadratic fade-in from tail
+                    // Gentle fade: linear with floor so long trails stay visible
+                    const fadeCurve = 0.15 + 0.85 * progress;
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
-                    } else if (isGluon || isWeak) {
-                        // Dark colors (black gluon, violet weak) go on NormalBlending overlay
+                    } else if (isOverlay) {
+                        // Weak/gluon segments go on NormalBlending overlay (role-based routing)
                         // Full brightness — no fadeCurve (matches normal-mode behavior);
                         // material opacity (weakOp * sparkOp) handles overall brightness.
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
@@ -1008,7 +1017,8 @@ function _tickDemoXons(dt) {
                     const _tdx = hp2[0]-hp1[0], _tdy = hp2[1]-hp1[1], _tdz = hp2[2]-hp1[2];
                     const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
                     const headCol = xon.col;
-                    const headIsWeak = headCol === WEAK_FORCE_COLOR;
+                    const headRole = _xonRole(xon);
+                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
@@ -1020,17 +1030,15 @@ function _tickDemoXons(dt) {
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
                         else { const cr = _catmullRom(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = cr[0]; py = cr[1]; pz = cr[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
-                        const headIsGluon = headCol === GLUON_COLOR;
-                        const headIsDark = headIsWeak || headIsGluon;
                         if (xon._weakTrailPos) {
-                            xon._weakTrailPos[out*3] = headIsDark ? px : NaN;
-                            xon._weakTrailPos[out*3+1] = headIsDark ? py : NaN;
-                            xon._weakTrailPos[out*3+2] = headIsDark ? pz : NaN;
+                            xon._weakTrailPos[out*3] = headIsOverlay ? px : NaN;
+                            xon._weakTrailPos[out*3+1] = headIsOverlay ? py : NaN;
+                            xon._weakTrailPos[out*3+2] = headIsOverlay ? pz : NaN;
                         }
-                        xon.trailCol[out*3] = headIsDark ? 0 : hcr*sparkOp;
-                        xon.trailCol[out*3+1] = headIsDark ? 0 : hcg*sparkOp;
-                        xon.trailCol[out*3+2] = headIsDark ? 0 : hcb*sparkOp;
-                        if (headIsDark && xon._weakTrailCol) {
+                        xon.trailCol[out*3] = headIsOverlay ? 0 : hcr*sparkOp;
+                        xon.trailCol[out*3+1] = headIsOverlay ? 0 : hcg*sparkOp;
+                        xon.trailCol[out*3+2] = headIsOverlay ? 0 : hcb*sparkOp;
+                        if (headIsOverlay && xon._weakTrailCol) {
                             xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
                         }
                         out++;
@@ -1085,12 +1093,15 @@ function _tickDemoXons(dt) {
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
-            const segCol = (xon.trailColHistory && xon.trailColHistory[i]) || xon.col;
+            // Prefer role-based resolution for phase independence
+            const _rh2 = xon._trailRoleHistory;
+            const segCol = (_rh2 && _rh2[i]) ? _roleToColor(_rh2[i])
+                : ((xon.trailColHistory && xon.trailColHistory[i]) || xon.col);
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Gluon + weak segments: render on overlay line (NormalBlending), hide on main (Additive)
-            if (segCol === GLUON_COLOR || segCol === WEAK_FORCE_COLOR) {
+            // Weak/gluon segments: render on overlay line (NormalBlending) so opacity slider works
+            if (_isOverlayRole(i)) {
                 // Main trail: zero out (invisible under additive = fine)
                 xon.trailCol[vi * 3] = 0;
                 xon.trailCol[vi * 3 + 1] = 0;
@@ -1114,9 +1125,9 @@ function _tickDemoXons(dt) {
                 xon._weakTrailPos[vi * 3 + 1] = NaN;
                 xon._weakTrailPos[vi * 3 + 2] = NaN;
             }
-            // Smooth fade: quadratic ramp from 0 at tail to full at head
+            // Gentle fade: linear with floor so long trails stay visible
             const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
-            const fadeCurve = progress * progress;
+            const fadeCurve = 0.15 + 0.85 * progress;
             const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
             const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);
@@ -1143,14 +1154,13 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 1] = xon.group.position.y;
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
-                    const headIsWeak = headCol === WEAK_FORCE_COLOR;
-                    const headIsGluon = headCol === GLUON_COLOR;
-                    const headIsDark = headIsWeak || headIsGluon;
+                    const headRole = _xonRole(xon);
+                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    if (headIsDark) {
-                        // Dark head (gluon/weak): hide on main, show on overlay
+                    if (headIsOverlay) {
+                        // Overlay head: hide on main, show on overlay
                         xon.trailCol[last * 3] = 0;
                         xon.trailCol[last * 3 + 1] = 0;
                         xon.trailCol[last * 3 + 2] = 0;
@@ -1161,8 +1171,7 @@ function _tickDemoXons(dt) {
                     }
                     // Mirror head to overlay
                     if (xon._weakTrailPos) {
-                        const showHeadOverlay = headIsDark && (!headIsWeak || weakOp > 0.01);
-                        if (headIsDark) {
+                        if (headIsOverlay) {
                             xon._weakTrailPos[last * 3] = xon.group.position.x;
                             xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
                             xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;

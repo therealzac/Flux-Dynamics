@@ -54,11 +54,15 @@ function _clearModeProps(xon) {
 function _trailPush(xon, node, color) {
     xon.trail.push(node);
     xon.trailColHistory.push(color);
+    // Store role key for phase-independent color resolution
+    if (!xon._trailRoleHistory) xon._trailRoleHistory = [];
+    xon._trailRoleHistory.push(_xonRole(xon));
     const p = pos[node];
     xon._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
     if (xon.trail.length > XON_TRAIL_LENGTH) {
         xon.trail.shift();
         xon.trailColHistory.shift();
+        xon._trailRoleHistory.shift();
         xon._trailFrozenPos.shift();
     }
 }
@@ -67,6 +71,9 @@ function _trailPush(xon, node, color) {
 function _trailRecolor(xon) {
     if (xon.trailColHistory && xon.trailColHistory.length > 0) {
         xon.trailColHistory[xon.trailColHistory.length - 1] = xon.col;
+    }
+    if (xon._trailRoleHistory && xon._trailRoleHistory.length > 0) {
+        xon._trailRoleHistory[xon._trailRoleHistory.length - 1] = _xonRole(xon);
     }
 }
 
@@ -125,7 +132,8 @@ function _spawnXon(face, quarkType, sign) {
         _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }, // ticks spent in each mode
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
-        trail: [seq[0]], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+        trail: [seq[0]], trailColHistory: [col], _trailRoleHistory: [quarkType],
+        _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
         _highlightT: 0,
         alive: true,
     };
@@ -164,6 +172,7 @@ function _destroyXon(xon) {
         return p ? [p[0], p[1], p[2]] : [0, 0, 0];
     });
     xon._frozenColors = xon.trailColHistory ? [...xon.trailColHistory] : null;
+    xon._frozenRoles = xon._trailRoleHistory ? [...xon._trailRoleHistory] : null;
     xon._dying = true; // signal to _tickDemoXons: decay trail
 }
 
@@ -331,7 +340,8 @@ function _initPersistentXons() {
             _gluonForFace: null, _gluonBoundSCs: null, _gluonClientXon: null,
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
-            trail: [startNode], trailColHistory: [col], _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+            trail: [startNode], trailColHistory: [col], _trailRoleHistory: ['oct'],
+            _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
             _highlightT: 0,
             alive: true,
         };
@@ -408,6 +418,7 @@ function _annihilateXonPair(xonA, xonB) {
             return p ? [p[0], p[1], p[2]] : [0, 0, 0];
         });
         xon._frozenColors = xon.trailColHistory ? [...xon.trailColHistory] : null;
+    xon._frozenRoles = xon._trailRoleHistory ? [...xon._trailRoleHistory] : null;
         xon._dying = true;
     }
     _gluonStoredPairs++;
@@ -464,6 +475,7 @@ function _manifestXonPair() {
     xonA._movedThisTick = false;
     xonA.trail = [nodeA];
     xonA.trailColHistory = [0xffffff];
+    xonA._trailRoleHistory = ['oct'];
     _trailInitFrozen(xonA);
     xonA.tweenT = 1;
     if (_flashEnabled) xonA.flashT = 1.0;
@@ -484,6 +496,7 @@ function _manifestXonPair() {
     xonB._movedThisTick = false;
     xonB.trail = [nodeB];
     xonB.trailColHistory = [0xffffff];
+    xonB._trailRoleHistory = ['oct'];
     _trailInitFrozen(xonB);
     xonB.tweenT = 1;
     if (_flashEnabled) xonB.flashT = 1.0;

@@ -206,8 +206,10 @@ const NucleusSimulator = (function(){
         // Hide only + excitation / big bang, keep select + export visible
         const sa = document.getElementById('side-actions');
         if(sa) sa.style.display = 'none';
-        document.getElementById('nucleus-info').style.display = 'block';
-        document.getElementById('nucleus-metrics').style.display = 'block';
+        const _niEl = document.getElementById('nucleus-info');
+        if (_niEl) _niEl.style.display = 'block';
+        const _nmEl = document.getElementById('nucleus-metrics');
+        if (_nmEl) _nmEl.style.display = 'block';
         document.getElementById('btn-nucleus-pause').style.display = '';
         const _pbCtrl = document.getElementById('playback-controls');
         if (_pbCtrl) _pbCtrl.style.display = '';
@@ -231,8 +233,10 @@ const NucleusSimulator = (function(){
         if(jigRow) jigRow.style.display = '';
         const sa = document.getElementById('side-actions');
         if(sa) sa.style.display = '';
-        document.getElementById('nucleus-info').style.display = 'none';
-        document.getElementById('nucleus-metrics').style.display = 'none';
+        const _niEl2 = document.getElementById('nucleus-info');
+        if (_niEl2) _niEl2.style.display = 'none';
+        const _nmEl2 = document.getElementById('nucleus-metrics');
+        if (_nmEl2) _nmEl2.style.display = 'none';
         document.getElementById('btn-nucleus-pause').style.display = 'none';
         const _pbCtrl2 = document.getElementById('playback-controls');
         if (_pbCtrl2) _pbCtrl2.style.display = 'none';
@@ -348,34 +352,44 @@ const NucleusSimulator = (function(){
             + `lattice: L${typeof latticeLevel !== 'undefined' ? latticeLevel : '?'} (${typeof N !== 'undefined' ? N : '?'} nodes)`;
     }
 
-    // ── Deuteron panel: populate quark/tet color legend (called once) ──
-    function _populateDeuteronQuarkLegend(){
-        const el = document.getElementById('dp-quark-legend');
+    // ── Color legend: reads live QUARK_COLORS/GLUON_COLOR/WEAK_FORCE_COLOR ──
+    // Called on init and whenever the color phase slider changes.
+    function _updateLegend(){
+        const el = document.getElementById('color-legend');
         if(!el) return;
         const toHex = c => '#' + c.toString(16).padStart(6, '0');
         const entries = [
-            { label: 'pu\u2081',  color: 0x0040ff, pattern: 'ham CW' },
-            { label: 'pu\u2082',  color: 0x00ff40, pattern: 'ham CCW' },
-            { label: 'pd',        color: 0x00ffff, pattern: 'hook' },
-            { label: 'nd\u2081',  color: 0xffbf00, pattern: 'ham CW' },
-            { label: 'nd\u2082',  color: 0xff00bf, pattern: 'ham CCW' },
-            { label: 'nu',        color: 0xff0000, pattern: 'fork' },
-            { label: 'oct',       color: 0xffffff, textColor: '#888' },
-            { label: 'gluon',     color: 0x000000, textColor: '#666' },
-            { label: 'weak',      color: 0x7f00ff },
+            { label: 'pu\u2081',  key: 'pu1', pattern: 'ham CW' },
+            { label: 'pu\u2082',  key: 'pu2', pattern: 'ham CCW' },
+            { label: 'pd',        key: 'pd',  pattern: 'hook' },
+            { label: 'nd\u2081',  key: 'nd1', pattern: 'ham CW' },
+            { label: 'nd\u2082',  key: 'nd2', pattern: 'ham CCW' },
+            { label: 'nu',        key: 'nu',  pattern: 'fork' },
+            { label: 'oct',       color: 0xffffff },
+            { label: 'gluon',     key: '_gluon' },
+            { label: 'weak',      key: '_weak' },
         ];
         let html = `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 8px;">`;
         for(const e of entries){
+            let color;
+            if (e.color !== undefined) color = e.color;
+            else if (e.key === '_gluon') color = GLUON_COLOR;
+            else if (e.key === '_weak') color = WEAK_FORCE_COLOR;
+            else color = QUARK_COLORS[e.key];
+            const hex = toHex(color);
             const patternSpan = e.pattern
-                ? `<span style="color:#999; font-size:9px; margin-left:2px;">${e.pattern}</span>`
+                ? `<span style="color:var(--text-3); font-size:9px; margin-left:2px;">${e.pattern}</span>`
                 : '';
-            html += `<div style="display:flex; align-items:center; gap:4px; font-size:13px;">`
-                + `<span style="display:inline-block; width:10px; height:10px; background:${toHex(e.color)}; border-radius:2px; flex-shrink:0;${e.color === 0xffffff ? ' border:1px solid #ccc; box-sizing:border-box;' : ''}"></span>`
-                + `<span style="color:${e.textColor || toHex(e.color)}; white-space:nowrap;">${e.label}</span>${patternSpan}</div>`;
+            const border = color === 0xffffff ? ' border:1px solid var(--text-3); box-sizing:border-box;' : '';
+            html += `<div style="display:flex; align-items:center; gap:4px; font-size:11px;">`
+                + `<span style="display:inline-block; width:10px; height:10px; background:${hex}; border-radius:2px; flex-shrink:0;${border}"></span>`
+                + `<span style="color:${hex === '#000000' ? 'var(--text-3)' : hex}; white-space:nowrap;">${e.label}</span>${patternSpan}</div>`;
         }
         html += `</div>`;
         el.innerHTML = html;
     }
+    // Alias for old call sites
+    function _populateDeuteronQuarkLegend() { _updateLegend(); }
 
     // ── Deuteron panel: update density display ──
     function _updateDeuteronDensity(){
@@ -532,7 +546,12 @@ const NucleusSimulator = (function(){
         enterNucleusMode,
         exitNucleusMode,
         updateDeuteronPanel: _updateDeuteronPanel,
+        updateLegend: _updateLegend,
     };
 })();
 window.NucleusSimulator = NucleusSimulator;
+// Expose _updateLegend globally so _recomputeColors() can call it
+window._updateLegend = NucleusSimulator.updateLegend;
+// Populate legend on page load (colors already initialized by _recomputeColors)
+_updateLegend();
 

@@ -41,6 +41,7 @@ function _btSaveSnapshot() {
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
+            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
             _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
         })),
         // Global SC sets (shallow copy — Set of primitive IDs)
@@ -117,11 +118,13 @@ function _btRestoreSnapshot(snap, reverse) {
         x._modeStats = x._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
         x.trail = s.trail.slice();
         x.trailColHistory = s.trailColHistory.slice();
+        x._trailRoleHistory = s._trailRoleHistory ? s._trailRoleHistory.slice() : [];
         x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
         // Pop most recent trail entry on reverse — visually removes the last hop
         if (fjReverse && x.trail.length > 0) {
             x.trail.pop();
             if (x.trailColHistory.length > 0) x.trailColHistory.pop();
+            if (x._trailRoleHistory && x._trailRoleHistory.length > 0) x._trailRoleHistory.pop();
             if (x._trailFrozenPos && x._trailFrozenPos.length > 0) x._trailFrozenPos.pop();
         }
         // Update visuals

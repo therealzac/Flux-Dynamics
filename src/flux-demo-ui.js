@@ -132,7 +132,8 @@ function updateDemoPanel() {
     const evenness = Math.max(0, 1 - cv);
 
     // Find max for bar normalization
-    const typeColors = { pu1: '#0040ff', pu2: '#00ff40', pd: '#00ffff', nd1: '#ffbf00', nd2: '#ff00bf', nu: '#ff0000' };
+    const _toHex6 = c => '#' + c.toString(16).padStart(6, '0');
+    const typeColors = { pu1: _toHex6(QUARK_COLORS.pu1), pu2: _toHex6(QUARK_COLORS.pu2), pd: _toHex6(QUARK_COLORS.pd), nd1: _toHex6(QUARK_COLORS.nd1), nd2: _toHex6(QUARK_COLORS.nd2), nu: _toHex6(QUARK_COLORS.nu) };
     const typeLabels = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
     let maxCount = 1;
     for (let f = 1; f <= 8; f++) {
@@ -257,7 +258,8 @@ function _updateEdgeBalancePanel() {
     if (!el || !_edgeBalance || _edgeBalance.size === 0) return;
 
     const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
-    const typeColors = { pu1: '#0040ff', pu2: '#00ff40', pd: '#00ffff', nd1: '#ffbf00', nd2: '#ff00bf', nu: '#ff0000' };
+    const _toH = c => '#' + c.toString(16).padStart(6, '0');
+    const typeColors = { pu1: _toH(QUARK_COLORS.pu1), pu2: _toH(QUARK_COLORS.pu2), pd: _toH(QUARK_COLORS.pd), nd1: _toH(QUARK_COLORS.nd1), nd2: _toH(QUARK_COLORS.nd2), nu: _toH(QUARK_COLORS.nu) };
 
     // Sort edges: oct↔oct first, then oct↔ext, by pairId
     // pairId() returns a number (a*20000+b), so decode it back to node pair
@@ -1145,7 +1147,7 @@ function _spawnPlaybackXon(startNode) {
         _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
-        trail: [startNode], trailColHistory: [col], _trailFrozenPos: [],
+        trail: [startNode], trailColHistory: [col], _trailRoleHistory: ['oct'], _trailFrozenPos: [],
         tweenT: 1, flashT: 1.0, _highlightT: 0, alive: true,
     };
     _trailInitFrozen(xon);
@@ -1355,13 +1357,19 @@ function _applyMovieFrame(idx) {
         const trailStart = Math.max(0, idx - _PLAYBACK_TRAIL_LEN + 1);
         x.trail = [];
         x.trailColHistory = [];
+        x._trailRoleHistory = [];
         x._trailFrozenPos = [];
         for (let t = trailStart; t <= idx; t++) {
             const tf = frames[t];
             if (!tf || !tf.xons[i]) continue;
             const tn = tf.xons[i].n;
+            const m = tf.xons[i].m, q = tf.xons[i].q;
             x.trail.push(tn);
-            x.trailColHistory.push(_modeColor(tf.xons[i].m, tf.xons[i].q));
+            x.trailColHistory.push(_modeColor(m, q));
+            // Derive role from mode + quark type
+            const role = (m === 'tet' || m === 'idle_tet') ? (q || 'oct') :
+                         m === 'gluon' ? 'gluon' : m === 'weak' ? 'weak' : 'oct';
+            x._trailRoleHistory.push(role);
             x._trailFrozenPos.push([rPos[tn][0], rPos[tn][1], rPos[tn][2]]);
         }
 

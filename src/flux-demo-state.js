@@ -529,7 +529,7 @@ let _nucleusFaceNodes = null;    // union of _nucleusTetFaceData[1..8].allNodes 
 let _ejectionForbidden = null;   // _octNodeSet ∪ _actualizedTetNodes — DYNAMIC
 let _purelyTetNodes = null;      // _actualizedTetNodes \ _octNodeSet — DYNAMIC
 // ── Gluon mode ──
-const GLUON_COLOR = 0x000000;   // black — pops against grey scene background
+let GLUON_COLOR = 0x000000;   // overwritten by _recomputeColors()
 
 // ── SC attribution ──
 const _scAttribution = new Map();
@@ -651,9 +651,8 @@ const QUARK_TOPOLOGY = {
     nd1: 'hamCW', nd2: 'hamCCW', nu: 'fork',
 };
 
-// Weak force escape color — purple/magenta, distinct from all quark + oct colors.
-// Used when a xon breaks confinement and enters the 'weak' mode.
-const WEAK_FORCE_COLOR = 0x7f00ff; // violet — distinct from all quark + oct colors
+// Weak force escape color — overwritten by _recomputeColors()
+let WEAK_FORCE_COLOR = 0x7f00ff;
 
 const XON_TRAIL_LENGTH = 250;
 
@@ -671,6 +670,102 @@ const WEAK_LIFECYCLE_MAX = 10;
 let _gluonStoredPairs = 0;
 
 const QUARK_COLORS = { pu1: 0x0040ff, pu2: 0x00ff40, pd: 0x00ffff, nd1: 0xffbf00, nd2: 0xff00bf, nu: 0xff0000 };
+
+// ── Color Wheel System ──
+// 8 roles at fixed 45° intervals; phase slider rotates all uniformly.
+// Opposite roles (proton↔neutron counterparts) are always 180° apart.
+let _colorPhaseShift = 0;
+const COLOR_ROLE_OFFSETS = {
+    nu: 0, nd1: 45, gluon: 90, nd2: 135,
+    pd: 180, pu1: 225, weak: 270, pu2: 315,
+};
+
+// Port of getExactColor() from colors.html — maps angle → {r, g, b, hex}
+function _hslToRgb(h, s, l) {
+    l /= 100;
+    const a = s * Math.min(l, 1 - l) / 100;
+    const f = n => {
+        const k = (n + h / 30) % 12;
+        return l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    };
+    return [f(0) * 255, f(8) * 255, f(4) * 255];
+}
+
+function _getWheelColor(angle) {
+    let h = ((angle % 360) + 360) % 360;
+    let r, g, b;
+    if (h >= 180) {
+        const rgb = _hslToRgb(h - 180, 100, 50);
+        r = 255 - Math.round(rgb[0]);
+        g = 255 - Math.round(rgb[1]);
+        b = 255 - Math.round(rgb[2]);
+    } else {
+        const rgb = _hslToRgb(h, 100, 50);
+        r = Math.round(rgb[0]);
+        g = Math.round(rgb[1]);
+        b = Math.round(rgb[2]);
+    }
+    return (r << 16) | (g << 8) | b;
+}
+
+// Resolve a role key to the CURRENT phase color
+function _roleToColor(role) {
+    if (role === 'gluon') return GLUON_COLOR;
+    if (role === 'weak') return WEAK_FORCE_COLOR;
+    if (role === 'oct') return 0xffffff;
+    return QUARK_COLORS[role] !== undefined ? QUARK_COLORS[role] : 0xffffff;
+}
+
+// Get the role key for a xon's current mode
+function _xonRole(xon) {
+    if (xon._mode === 'tet' || xon._mode === 'idle_tet') return xon._quarkType || 'oct';
+    if (xon._mode === 'gluon') return 'gluon';
+    if (xon._mode === 'weak') return 'weak';
+    return 'oct';
+}
+
+function _recomputeColors(phase) {
+    _colorPhaseShift = phase;
+
+    // Update all color constants from wheel
+    QUARK_COLORS.nu  = _getWheelColor(COLOR_ROLE_OFFSETS.nu + phase);
+    QUARK_COLORS.nd1 = _getWheelColor(COLOR_ROLE_OFFSETS.nd1 + phase);
+    QUARK_COLORS.nd2 = _getWheelColor(COLOR_ROLE_OFFSETS.nd2 + phase);
+    QUARK_COLORS.pd  = _getWheelColor(COLOR_ROLE_OFFSETS.pd + phase);
+    QUARK_COLORS.pu1 = _getWheelColor(COLOR_ROLE_OFFSETS.pu1 + phase);
+    QUARK_COLORS.pu2 = _getWheelColor(COLOR_ROLE_OFFSETS.pu2 + phase);
+    GLUON_COLOR      = _getWheelColor(COLOR_ROLE_OFFSETS.gluon + phase);
+    WEAK_FORCE_COLOR = _getWheelColor(COLOR_ROLE_OFFSETS.weak + phase);
+
+    // Update live xon visuals + sync trailColHistory from role history
+    if (typeof _demoXons !== 'undefined' && _demoXons) {
+        for (const xon of _demoXons) {
+            if (!xon || !xon.alive) continue;
+            // Update xon.col to current phase
+            xon.col = _roleToColor(_xonRole(xon));
+            if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
+            // Rebuild trailColHistory from role history so T24 sees valid current-phase colors
+            if (xon._trailRoleHistory && xon.trailColHistory) {
+                for (let i = 0; i < xon._trailRoleHistory.length; i++) {
+                    xon.trailColHistory[i] = _roleToColor(xon._trailRoleHistory[i]);
+                }
+            }
+            // Also rebuild frozen colors (used during playback/death animation)
+            if (xon._frozenRoles && xon._frozenColors) {
+                for (let i = 0; i < xon._frozenRoles.length; i++) {
+                    xon._frozenColors[i] = _roleToColor(xon._frozenRoles[i]);
+                }
+            }
+        }
+    }
+    // Refresh legend + stats panels
+    if (typeof _updateLegend === 'function') _updateLegend();
+    if (typeof updateDemoPanel === 'function') updateDemoPanel();
+}
+
+// Initialize colors from wheel at default phase
+_recomputeColors(0);
+
 const A_SET = new Set([1, 3, 6, 8]);
 
 const L1_VALID_TRIPLES = [

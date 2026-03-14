@@ -1262,6 +1262,12 @@ document.getElementById('bg-gray-slider').addEventListener('input', () => {
     document.getElementById('bg-gray-val').textContent = pct + '%';
 });
 
+document.getElementById('color-phase-slider').addEventListener('input', e => {
+    _colorPhaseShift = +e.target.value;
+    _recomputeColors(_colorPhaseShift);
+    document.getElementById('color-phase-val').textContent = e.target.value + '°';
+});
+
 document.getElementById('btn-add-excitation').addEventListener('click',toggleExcitationPlacement);
 // Big bang button handled by V2 dropdown menu in post-load script
 document.getElementById('btn-select-mode').addEventListener('click',toggleSelectMode);
