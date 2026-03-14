@@ -674,10 +674,12 @@ const QUARK_COLORS = { pu1: 0x0040ff, pu2: 0x00ff40, pd: 0x00ffff, nd1: 0xffbf00
 // ── Color Wheel System ──
 // 8 roles at fixed 45° intervals; phase slider rotates all uniformly.
 // Opposite roles (proton↔neutron counterparts) are always 180° apart.
+// Followers equidistant from anchor: pu1(135°) and pu2(45°) both 45° from pd(90°).
+// nd1(315°) and nd2(225°) both 45° from nu(270°).
 let _colorPhaseShift = 0;
 const COLOR_ROLE_OFFSETS = {
-    gluon: 0, nd2: 45, pd: 90, pu1: 135,
-    weak: 180, pu2: 225, nu: 270, nd1: 315,
+    gluon: 0, pu2: 45, pd: 90, pu1: 135,
+    weak: 180, nd2: 225, nu: 270, nd1: 315,
 };
 
 // Port of getExactColor() from colors.html — maps angle → {r, g, b, hex}
@@ -768,6 +770,28 @@ function _recomputeColors(phase) {
 
 // Initialize colors from wheel at default phase
 _recomputeColors(0);
+
+// ── Graph color phase system ──
+// 4 base direction angles (approximate wheel positions for default colors)
+let _graphPhaseShift = 0;
+const GRAPH_BASE_ANGLES = [180, 250, 0, 75]; // cyan, blue-violet, red, yellow-green
+const GRAPH_SC_ANGLES = { 1: 215, 2: 330, 3: 285, 4: 25, 5: 145, 6: 100 };
+
+function _recomputeGraphColors(phase) {
+    _graphPhaseShift = phase;
+    // Update base edge direction colors
+    if (typeof BASE_COLORS !== 'undefined') {
+        for (let i = 0; i < 4; i++) BASE_COLORS[i] = _getWheelColor(GRAPH_BASE_ANGLES[i] + phase);
+    }
+    // Update shortcut type colors
+    if (typeof S_COLOR !== 'undefined') {
+        for (const k of Object.keys(GRAPH_SC_ANGLES)) S_COLOR[+k] = _getWheelColor(GRAPH_SC_ANGLES[+k] + phase);
+    }
+    // Refresh graph rendering
+    if (typeof rebuildBaseLines === 'function') rebuildBaseLines();
+    if (typeof rebuildShortcutLines === 'function') rebuildShortcutLines();
+}
+_recomputeGraphColors(0);
 
 const A_SET = new Set([1, 3, 6, 8]);
 

@@ -632,20 +632,23 @@ function updateXonPanel() {
     // Current mode counts (live)
     const now = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
     for (const x of _demoXons) { if (x.alive && now[x._mode] !== undefined) now[x._mode]++; }
+    const _toH6 = c => '#' + c.toString(16).padStart(6, '0');
+    const gluonHex = _toH6(typeof GLUON_COLOR !== 'undefined' ? GLUON_COLOR : 0x80ff00);
+    const weakHex = _toH6(typeof WEAK_FORCE_COLOR !== 'undefined' ? WEAK_FORCE_COLOR : 0x7f00ff);
     const nowParts = [];
     if (now.oct > 0) nowParts.push(`<span style="color:#fff">oct:${now.oct}</span>`);
     if (now.tet > 0) nowParts.push(`<span style="color:#5bf">tet:${now.tet}</span>`);
     if (now.idle_tet > 0) nowParts.push(`<span style="color:#888">idle:${now.idle_tet}</span>`);
-    if (now.gluon > 0) nowParts.push(`<span style="color:#80ff00">gluon:${now.gluon}</span>`);
-    if (now.weak > 0) nowParts.push(`<span style="color:#7f00ff">weak:${now.weak}</span>`);
+    if (now.gluon > 0) nowParts.push(`<span style="color:${gluonHex}">gluon:${now.gluon}</span>`);
+    if (now.weak > 0) nowParts.push(`<span style="color:${weakHex}">weak:${now.weak}</span>`);
     html += `<div style="width:100%; text-align:center; font-size:9px; margin-top:4px; letter-spacing:0.03em;">${nowParts.join(' &middot; ')}</div>`;
     // Historical running totals
     const histParts = [];
     histParts.push(`<span style="color:#aaa">oct:${g.oct}</span>`);
     histParts.push(`<span style="color:#5bf">tet:${g.tet}</span>`);
     histParts.push(`<span style="color:#888">idle:${g.idle_tet}</span>`);
-    histParts.push(`<span style="color:#80ff00">gluon:${g.gluon}</span>`);
-    histParts.push(`<span style="color:#7f00ff">weak:${g.weak}</span>`);
+    histParts.push(`<span style="color:${gluonHex}">gluon:${g.gluon}</span>`);
+    histParts.push(`<span style="color:${weakHex}">weak:${g.weak}</span>`);
     html += `<div style="width:100%; text-align:center; font-size:8px; margin-top:2px; color:var(--text-3);">totals: ${histParts.join(' &middot; ')}</div>`;
 
     listEl.innerHTML = html;

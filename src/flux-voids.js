@@ -666,6 +666,11 @@ document.getElementById('energy-slider').addEventListener('input',updateEnergy);
 document.getElementById('lattice-slider').addEventListener('input',updateLatticeLevel);
 
 document.getElementById('graph-opacity-slider').addEventListener('input',updateGraphOpacity);
+document.getElementById('graph-phase-slider')?.addEventListener('input', e => {
+    const phase = +e.target.value;
+    if (typeof _recomputeGraphColors === 'function') _recomputeGraphColors(phase);
+    document.getElementById('graph-phase-val').textContent = phase + '°';
+});
 document.getElementById('sphere-opacity-slider').addEventListener('input',applySphereOpacity);
 document.getElementById('void-opacity-slider').addEventListener('input',applyVoidOpacity);
 document.getElementById('excitation-speed-slider').addEventListener('input', ()=>{

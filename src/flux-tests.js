@@ -247,11 +247,9 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T20', name: 'Never stand still',
       check(tick, g, ctx) {
         if (!ctx.prev) return null;
-        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
+        for (const { xon, node: fromNode } of ctx.prev) {
           if (!xon.alive) continue;
-          if (prevMode !== xon._mode) continue;
-          if (prevMode === 'oct_formation') continue; // formation phase: scripted movement
-          if (xon.node === fromNode) return `tick ${tick}: stuck at node ${fromNode} (${prevMode})`;
+          if (xon.node === fromNode) return `tick ${tick}: stuck at node ${fromNode} (${xon._mode})`;
         }
         return null;
       }

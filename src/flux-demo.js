@@ -3841,16 +3841,16 @@ async function demoTick() {
     // Update UI — throttled to ~1/sec for heavy panels, rAF for lightweight updates.
     // This prevents 19ms+ panel rebuilds from eating every frame budget.
     _demoPanelDirty = true;
+    // Lightweight updates (tick counter, xon panel, edge balance) every tick via rAF
+    if (!_demoLightDirty) {
+        _demoLightDirty = true;
+        requestAnimationFrame(() => {
+            _demoLightDirty = false;
+            updateXonPanel();
+            _updateEdgeBalancePanel();
+        });
+    }
     if (!_demoPanelTimer) {
-        // Lightweight updates (tick counter, xon panel, edge balance) still go via rAF
-        if (!_demoLightDirty) {
-            _demoLightDirty = true;
-            requestAnimationFrame(() => {
-                _demoLightDirty = false;
-                updateXonPanel();
-                _updateEdgeBalancePanel();
-            });
-        }
         // Heavy panel rebuilds (innerHTML) throttled to 1/sec
         _demoPanelTimer = setTimeout(() => {
             _demoPanelTimer = null;
