@@ -210,7 +210,7 @@ const NucleusSimulator = (function(){
         if (_niEl) _niEl.style.display = 'block';
         const _nmEl = document.getElementById('nucleus-metrics');
         if (_nmEl) _nmEl.style.display = 'block';
-        document.getElementById('btn-nucleus-pause').style.display = '';
+        // pause button visibility now managed by _setSimUIActive()
         const _pbCtrl = document.getElementById('playback-controls');
         if (_pbCtrl) _pbCtrl.style.display = '';
         const _fjLabel = document.getElementById('fighterjet-label');
@@ -237,7 +237,7 @@ const NucleusSimulator = (function(){
         if (_niEl2) _niEl2.style.display = 'none';
         const _nmEl2 = document.getElementById('nucleus-metrics');
         if (_nmEl2) _nmEl2.style.display = 'none';
-        document.getElementById('btn-nucleus-pause').style.display = 'none';
+        // pause button visibility now managed by _setSimUIActive()
         const _pbCtrl2 = document.getElementById('playback-controls');
         if (_pbCtrl2) _pbCtrl2.style.display = 'none';
         const _fjLabel2 = document.getElementById('fighterjet-label');

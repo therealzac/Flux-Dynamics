@@ -4,7 +4,7 @@
 // Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
     _updateTimelineScrubber();
 }
 
@@ -27,7 +27,7 @@ function _tickerMetaLines() {
         layerVisits = fpSet ? fpSet.size : 0;
     }
     const layerColor = _btActive ? '#ff9944' : '#556677';
-    const layer = `<span style="${s} color:${layerColor};">layer: tick ${layerTick} (visit ${layerVisits + 1})</span>`;
+    const layer = `<span style="${s} color:${layerColor};">layer: ps ${layerTick} (visit ${layerVisits + 1})</span>`;
 
     // ── Options this layer ──
     // How many valid options exist at the current tick, and which one we're on.
@@ -55,6 +55,8 @@ function _tickerMetaLines() {
 function _updateBottomStats() {
     const planckEl = document.getElementById('st-planck');
     if (planckEl) planckEl.textContent = _planckSeconds;
+    const ticksEl = document.getElementById('st-ticks');
+    if (ticksEl) ticksEl.textContent = _demoTick;
     const totalOpen = activeSet.size + impliedSet.size + (typeof xonImpliedSet !== 'undefined' ? xonImpliedSet.size : 0);
     const scEl = document.getElementById('st-sc');
     if (scEl) scEl.textContent = totalOpen + ' / ' + ALL_SC.length;
@@ -558,8 +560,8 @@ function updateXonPanel() {
         const x = _demoXons[i];
         if (!x.alive) continue;
         const modeCol = x._mode === 'oct' ? '#ffffff' :
-                        x._mode === 'weak' ? '#7f00ff' :
-                        x._mode === 'gluon' ? '#000000' :
+                        x._mode === 'weak' ? '#' + (WEAK_FORCE_COLOR || 0x7f00ff).toString(16).padStart(6, '0') :
+                        x._mode === 'gluon' ? '#' + (GLUON_COLOR || 0x000000).toString(16).padStart(6, '0') :
                         x._mode === 'oct_formation' ? '#ffffff' :
                         x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
                         x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
@@ -744,6 +746,7 @@ function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
+    _setSimUIActive(false);
     _demoReversing = false;
     if (_reverseInterval) { clearTimeout(_reverseInterval); _reverseInterval = null; }
     _tickLog.length = 0;
@@ -918,7 +921,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
     _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
@@ -1268,8 +1271,8 @@ function _reconstructPos(frameIdx) {
 // Color for a given mode+quark
 function _modeColor(mode, quark) {
     if (quark && QUARK_COLORS[quark]) return QUARK_COLORS[quark];
-    if (mode === 'weak') return 0x7f00ff;
-    if (mode === 'gluon') return 0x000000;
+    if (mode === 'weak') return WEAK_FORCE_COLOR;
+    if (mode === 'gluon') return GLUON_COLOR;
     return 0xffffff; // oct or unassigned
 }
 
@@ -1418,3 +1421,41 @@ document.getElementById('rule-gluon-mediated-toggle')?.addEventListener('change'
 document.getElementById('rule-bare-tet-toggle')?.addEventListener('change', e => {
     _ruleBareTetrahedra = e.target.checked;
 });
+
+// ── Simulation UI state: button swap + rule locking ──
+function _setSimUIActive(active) {
+    const startRow = document.getElementById('sim-start-buttons');
+    const activeRow = document.getElementById('sim-active-buttons');
+    if (startRow) startRow.style.display = active ? 'none' : 'flex';
+    if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
+    // Lock/unlock rule toggles
+    const toggleIds = ['rule-relinquish-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle'];
+    for (const id of toggleIds) {
+        const el = document.getElementById(id);
+        if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }
+    }
+    const sbPanel = document.getElementById('switchboard-panel');
+    if (sbPanel) sbPanel.style.opacity = active ? '0.6' : '1';
+}
+
+// Clear Simulation button with confirmation + cancel
+function _clearSimReset() {
+    const btn = document.getElementById('btn-clear-simulation');
+    const cancel = document.getElementById('btn-clear-cancel');
+    if (btn) { btn._confirmed = false; btn.textContent = 'Clear Simulation'; btn.style.background = 'rgba(255,60,60,0.15)'; }
+    if (cancel) cancel.style.display = 'none';
+}
+document.getElementById('btn-clear-simulation')?.addEventListener('click', function() {
+    if (!this._confirmed) {
+        this._confirmed = true;
+        this.textContent = 'Are you sure?';
+        this.style.background = 'rgba(255,60,60,0.3)';
+        const cancel = document.getElementById('btn-clear-cancel');
+        if (cancel) cancel.style.display = '';
+        return;
+    }
+    _clearSimReset();
+    if (typeof stopDemo === 'function') stopDemo();
+    _setSimUIActive(false);
+});
+document.getElementById('btn-clear-cancel')?.addEventListener('click', _clearSimReset);

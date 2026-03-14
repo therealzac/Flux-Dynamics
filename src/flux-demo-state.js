@@ -676,8 +676,8 @@ const QUARK_COLORS = { pu1: 0x0040ff, pu2: 0x00ff40, pd: 0x00ffff, nd1: 0xffbf00
 // Opposite roles (proton↔neutron counterparts) are always 180° apart.
 let _colorPhaseShift = 0;
 const COLOR_ROLE_OFFSETS = {
-    nu: 0, nd1: 45, gluon: 90, nd2: 135,
-    pd: 180, pu1: 225, weak: 270, pu2: 315,
+    gluon: 0, nd2: 45, pd: 90, pu1: 135,
+    weak: 180, pu2: 225, nu: 270, nd1: 315,
 };
 
 // Port of getExactColor() from colors.html — maps angle → {r, g, b, hex}
@@ -760,9 +760,10 @@ function _recomputeColors(phase) {
     }
     // Refresh shapes (tet void colors) to match new phase
     if (typeof _applyTetColoring === 'function' && typeof _nucleusTetFaceData !== 'undefined' && _nucleusTetFaceData) _applyTetColoring(false);
-    // Refresh legend + stats panels
+    // Refresh legend + stats + xon panels
     if (typeof _updateLegend === 'function') _updateLegend();
     if (typeof updateDemoPanel === 'function') updateDemoPanel();
+    if (typeof updateXonPanel === 'function') updateXonPanel();
 }
 
 // Initialize colors from wheel at default phase

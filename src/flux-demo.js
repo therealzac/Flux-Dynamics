@@ -915,8 +915,11 @@ function _tickDemoXons(dt) {
         const _rhArr = xon._trailRoleHistory;
         const _isOverlayRole = (idx) => {
             if (!_rhArr || !_rhArr[idx]) return false;
-            const r = _rhArr[idx];
-            return r === 'weak' || r === 'gluon';
+            return _rhArr[idx] === 'weak';
+        };
+        const _isGluonRole = (idx) => {
+            if (!_rhArr || !_rhArr[idx]) return false;
+            return _rhArr[idx] === 'gluon';
         };
 
         // Trail: fading vertex-colored path
@@ -962,6 +965,7 @@ function _tickDemoXons(dt) {
                 const scg = ((segCol >> 8) & 0xff) / 255;
                 const scb = (segCol & 0xff) / 255;
                 const isOverlay = _isOverlayRole(i);
+                const isGluon = _isGluonRole(i);
                 // Emit FJ_SUBS vertices along CR curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_LENGTH; s++) {
                     const u = s / FJ_SUBS;
@@ -987,10 +991,12 @@ function _tickDemoXons(dt) {
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
+                    } else if (isGluon) {
+                        // Gluon: solid laser beam — full brightness, no fade, on main trail (additive glow)
+                        xon.trailCol[out*3] = scr * sparkOp; xon.trailCol[out*3+1] = scg * sparkOp; xon.trailCol[out*3+2] = scb * sparkOp;
                     } else if (isOverlay) {
-                        // Weak/gluon segments go on NormalBlending overlay (role-based routing)
-                        // Full brightness — no fadeCurve (matches normal-mode behavior);
-                        // material opacity (weakOp * sparkOp) handles overall brightness.
+                        // Weak segments go on NormalBlending overlay (role-based routing)
+                        // Full brightness — no fadeCurve; material opacity (weakOp * sparkOp) handles brightness.
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) {
                             xon._weakTrailCol[out*3] = scr; xon._weakTrailCol[out*3+1] = scg; xon._weakTrailCol[out*3+2] = scb;
@@ -1018,7 +1024,8 @@ function _tickDemoXons(dt) {
                     const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
+                    const headIsOverlay = headRole === 'weak';
+                    const headIsGluon = headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
@@ -1035,11 +1042,16 @@ function _tickDemoXons(dt) {
                             xon._weakTrailPos[out*3+1] = headIsOverlay ? py : NaN;
                             xon._weakTrailPos[out*3+2] = headIsOverlay ? pz : NaN;
                         }
-                        xon.trailCol[out*3] = headIsOverlay ? 0 : hcr*sparkOp;
-                        xon.trailCol[out*3+1] = headIsOverlay ? 0 : hcg*sparkOp;
-                        xon.trailCol[out*3+2] = headIsOverlay ? 0 : hcb*sparkOp;
-                        if (headIsOverlay && xon._weakTrailCol) {
-                            xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
+                        if (headIsGluon) {
+                            // Gluon head: solid laser beam on main trail
+                            xon.trailCol[out*3] = hcr*sparkOp; xon.trailCol[out*3+1] = hcg*sparkOp; xon.trailCol[out*3+2] = hcb*sparkOp;
+                        } else if (headIsOverlay) {
+                            xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
+                            if (xon._weakTrailCol) {
+                                xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
+                            }
+                        } else {
+                            xon.trailCol[out*3] = hcr*sparkOp; xon.trailCol[out*3+1] = hcg*sparkOp; xon.trailCol[out*3+2] = hcb*sparkOp;
                         }
                         out++;
                     }
@@ -1100,13 +1112,23 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Weak/gluon segments: render on overlay line (NormalBlending) so opacity slider works
+            // Gluon segments: solid laser beam on main trail (additive glow), no fade
+            if (_isGluonRole(i)) {
+                xon.trailCol[vi * 3] = cr * sparkOp;
+                xon.trailCol[vi * 3 + 1] = cg * sparkOp;
+                xon.trailCol[vi * 3 + 2] = cb * sparkOp;
+                if (xon._weakTrailPos) {
+                    xon._weakTrailPos[vi * 3] = NaN;
+                    xon._weakTrailPos[vi * 3 + 1] = NaN;
+                    xon._weakTrailPos[vi * 3 + 2] = NaN;
+                }
+                continue;
+            }
+            // Weak segments: render on overlay line (NormalBlending) so opacity slider works
             if (_isOverlayRole(i)) {
-                // Main trail: zero out (invisible under additive = fine)
                 xon.trailCol[vi * 3] = 0;
                 xon.trailCol[vi * 3 + 1] = 0;
                 xon.trailCol[vi * 3 + 2] = 0;
-                // Overlay: position + color; full brightness, opacity via material
                 if (xon._weakTrailPos) {
                     xon._weakTrailPos[vi * 3]     = np[0];
                     xon._weakTrailPos[vi * 3 + 1] = np[1];
@@ -1119,7 +1141,7 @@ function _tickDemoXons(dt) {
                 }
                 continue;
             }
-            // Non-dark segment: break overlay line with NaN positions
+            // Non-overlay segment: break overlay line with NaN positions
             if (xon._weakTrailPos) {
                 xon._weakTrailPos[vi * 3] = NaN;
                 xon._weakTrailPos[vi * 3 + 1] = NaN;
@@ -1155,12 +1177,18 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
+                    const headIsOverlay = headRole === 'weak';
+                    const headIsGluon = headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    if (headIsOverlay) {
-                        // Overlay head: hide on main, show on overlay
+                    if (headIsGluon) {
+                        // Gluon head: solid laser beam on main trail
+                        xon.trailCol[last * 3] = hcr * sparkOp;
+                        xon.trailCol[last * 3 + 1] = hcg * sparkOp;
+                        xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+                    } else if (headIsOverlay) {
+                        // Weak head: hide on main, show on overlay
                         xon.trailCol[last * 3] = 0;
                         xon.trailCol[last * 3 + 1] = 0;
                         xon.trailCol[last * 3 + 2] = 0;
@@ -1203,6 +1231,25 @@ function _tickDemoXons(dt) {
 }
 
 // Emit a gluon between two tet faces along oct edges
+// Clear historical trail segments along gluon edge so the laser beam pops.
+// Sets frozen positions to NaN for any trail vertex at the gluon edge nodes,
+// which breaks the line at those points (Three.js skips NaN vertices).
+function _clearTrailsAlongEdges(edgeNodes) {
+    const nodeSet = new Set(edgeNodes);
+    const _nan3 = [NaN, NaN, NaN];
+    for (const xon of _demoXons) {
+        if (!xon.alive || !xon.trail || xon.trail.length < 2) continue;
+        if (!xon._trailFrozenPos) continue;
+        // Skip the gluon xon itself — don't clear its own trail
+        if (xon._mode === 'gluon') continue;
+        for (let i = 0; i < xon.trail.length; i++) {
+            if (nodeSet.has(xon.trail[i])) {
+                xon._trailFrozenPos[i] = _nan3;
+            }
+        }
+    }
+}
+
 function _emitGluon(fromFace, toFace) {
     const fdFrom = _nucleusTetFaceData[fromFace];
     const fdTo = _nucleusTetFaceData[toFace];
@@ -1231,6 +1278,8 @@ function _emitGluon(fromFace, toFace) {
                         scIds: [scId],
                         sprite: sprite,
                     });
+                    // Clear historical trails along this edge for laser pop effect
+                    _clearTrailsAlongEdges([fn, tn]);
                     return;
                 }
             }
@@ -1434,6 +1483,7 @@ function startDemoLoop() {
     _demoActive = true;
     _demoPaused = false;
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
+    if (typeof _setSimUIActive === 'function') _setSimUIActive(true);
 
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();
@@ -1460,7 +1510,7 @@ function startDemoLoop() {
 
     // Update left panel header
     const dpTitle = document.getElementById('dp-title');
-    if (dpTitle) dpTitle.textContent = '0 Planck seconds';
+    if (dpTitle) dpTitle.textContent = '0 Flux events';
 
     // Camera defaults are set in flux-ui.js — don't override user preferences here.
 
@@ -1895,7 +1945,12 @@ async function demoTick() {
         if (_demoTick < 2) {
             _executeOpeningTick(occupied);
             // Don't skip normal phases — free xons need coordinated movement
-            _solverNeeded = true;
+            // Propagate per-xon _solverNeeded flags (set by _executeOctMove when SCs
+            // are actually materialized). Only set global _solverNeeded when real
+            // vacuum deformation occurred — tick 0 uses base edges only (no SCs).
+            for (const xon of _demoXons) {
+                if (xon._solverNeeded) { _solverNeeded = true; xon._solverNeeded = false; }
+            }
             occupied = _occupiedNodes(); // refresh after opening moves
         } else {
             _openingPhase = false;
@@ -3439,9 +3494,9 @@ async function demoTick() {
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
     const _ml = typeof _tickerMetaLines === 'function' ? _tickerMetaLines() : '';
-    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.8em; color:#556677;">${_demoTick} ticks</span>${_ml}`;
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.8em; color:#556677;">${_demoTick} Planck seconds</span>${_ml}`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Planck seconds<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} ticks</span>${_ml}`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_ml}`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons
@@ -3787,12 +3842,13 @@ async function demoTick() {
     // This prevents 19ms+ panel rebuilds from eating every frame budget.
     _demoPanelDirty = true;
     if (!_demoPanelTimer) {
-        // Lightweight updates (tick counter, xon panel) still go via rAF
+        // Lightweight updates (tick counter, xon panel, edge balance) still go via rAF
         if (!_demoLightDirty) {
             _demoLightDirty = true;
             requestAnimationFrame(() => {
                 _demoLightDirty = false;
                 updateXonPanel();
+                _updateEdgeBalancePanel();
             });
         }
         // Heavy panel rebuilds (innerHTML) throttled to 1/sec
@@ -3801,7 +3857,6 @@ async function demoTick() {
             if (_demoPanelDirty) {
                 _demoPanelDirty = false;
                 updateDemoPanel();
-                _updateEdgeBalancePanel();
                 _updateEjectionBalancePanel();
                 _drawBalanceChart();
                 updateStatus();
