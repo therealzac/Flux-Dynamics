@@ -421,6 +421,22 @@
             <div id="atom-desc" style="font-size:11px; color:var(--text-3); margin:2px 0 8px;">8 tet quarks · 6 xons</div>
             <select id="model-select" style="display:none;"></select>
             <div id="model-desc" style="display:none;"></div>
+
+            <!-- ═══ RULES SWITCHBOARD ═══ -->
+            <div id="switchboard-panel" style="margin:8px 0; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+                <div style="font-size:9px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">Rules</div>
+                <div id="rule-relinquish-row" style="margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
+                        <input type="checkbox" id="rule-relinquish-toggle" checked style="accent-color:#66bbff;">
+                        Active SC relinquishment
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        When ON, shortcuts are actively removed when xons finish loops.
+                        When OFF, shortcuts persist until the vacuum severs them to make room for new ones (energy-conserving).
+                    </div>
+                </div>
+            </div>
+
             <!-- Action buttons -->
             <div style="display:flex; gap:6px; margin-top:4px;">
                 <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
@@ -430,7 +446,10 @@
                     style="flex:0 0 auto; padding:7px 12px; display:none;"
                     title="Pause/resume simulation">⏸</button>
             </div>
-            <div id="playback-controls" style="display:none; margin-top:6px;">
+
+            <!-- ═══ REPLAY CONTROLS ═══ -->
+            <div id="playback-controls" style="display:none; margin-top:10px; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
+                <div style="font-size:9px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">Replay</div>
                 <div style="display:flex; gap:4px; margin-bottom:6px;">
                     <button class="btn-ghost" id="btn-rewind-start"
                         style="flex:0 0 auto; padding:6px 8px;" title="Rewind to t=0">|◀◀</button>
@@ -450,6 +469,7 @@
                     <span id="timeline-val" class="ctrl-val" style="min-width:28px;">0</span>
                 </div>
             </div>
+
             <label id="fighterjet-label" style="display:none; align-items:center; gap:5px; font-size:10px; color:#8aa; margin-top:6px; cursor:pointer; user-select:none;">
                 <input type="checkbox" id="fighterjet-toggle" style="accent-color:#66bbff;"> ✈ Fighterjet
             </label>
@@ -523,12 +543,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=50"></script>
+    <script src="src/flux-demo-state.js?v=51"></script>
     <script src="src/flux-demo-xon.js?v=8"></script>
     <script src="src/flux-demo-backtrack.js?v=28"></script>
-    <script src="src/flux-demo-planner.js?v=28"></script>
-    <script src="src/flux-demo-ui.js?v=63"></script>
-    <script src="src/flux-demo.js?v=420"></script>
+    <script src="src/flux-demo-planner.js?v=29"></script>
+    <script src="src/flux-demo-ui.js?v=64"></script>
+    <script src="src/flux-demo.js?v=421"></script>
     <script src="src/flux-solver-render.js?v=39"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->

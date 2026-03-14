@@ -1937,17 +1937,19 @@ async function demoTick() {
                 if (!faceActualized) {
                     // Trail segments keep their original recorded color.
                     // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
-                    // Relinquish face SCs (protect oct cage)
-                    const locked60 = _traversalLockedSCs();
-                    const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
-                    if (fd60) {
-                        for (const scId of fd60.scIds) {
-                            if (locked60.has(scId)) continue;
-                            if (cage60.has(scId)) continue;
-                            if (xonImpliedSet.delete(scId)) {
-                                _scAttribution.delete(scId);
-                                _solverNeeded = true;
-                                stateVersion++;
+                    // Relinquish face SCs (protect oct cage) — guarded by switchboard
+                    if (_ruleRelinquishSCs) {
+                        const locked60 = _traversalLockedSCs();
+                        const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
+                        if (fd60) {
+                            for (const scId of fd60.scIds) {
+                                if (locked60.has(scId)) continue;
+                                if (cage60.has(scId)) continue;
+                                if (xonImpliedSet.delete(scId)) {
+                                    _scAttribution.delete(scId);
+                                    _solverNeeded = true;
+                                    stateVersion++;
+                                }
                             }
                         }
                     }
@@ -1997,7 +1999,7 @@ async function demoTick() {
                 if (blocker && blocker._mode === 'idle_tet') {
                     // Evict the BLOCKER (idle_tet is expendable, but protect cage SCs)
                     const blockerFd = blocker._assignedFace != null ? _nucleusTetFaceData[blocker._assignedFace] : null;
-                    if (blockerFd) {
+                    if (blockerFd && _ruleRelinquishSCs) {
                         const locked0 = _traversalLockedSCs();
                         const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                         for (const scId of blockerFd.scIds) {
@@ -2039,7 +2041,7 @@ async function demoTick() {
             if (shouldEvictSelf) {
                 // Eviction is ALWAYS weak + _t60Ejected, NEVER _returnXonToOct
                 const evictFd = xon._assignedFace != null ? _nucleusTetFaceData[xon._assignedFace] : null;
-                if (evictFd) {
+                if (evictFd && _ruleRelinquishSCs) {
                     const locked0 = _traversalLockedSCs();
                     const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                     for (const scId of evictFd.scIds) {
@@ -2359,8 +2361,8 @@ async function demoTick() {
             }
             if (!_t60actualized) {
                 // Trail segments keep their original recorded color.
-                // Relinquish face SCs (before mode change, protect cage)
-                if (xon._assignedFace != null) {
+                // Relinquish face SCs (before mode change, protect cage) — guarded by switchboard
+                if (_ruleRelinquishSCs && xon._assignedFace != null) {
                     const fd = _nucleusTetFaceData[xon._assignedFace];
                     if (fd) {
                         const locked60 = _traversalLockedSCs();
@@ -2392,8 +2394,8 @@ async function demoTick() {
 
             // Loop complete + actualized — return to oct
             _returnXonToOct(xon, occupied);
-            // Relinquish face SCs that are no longer needed (protect cage, respect lock)
-            if (xon._assignedFace != null) {
+            // Relinquish face SCs that are no longer needed (protect cage, respect lock) — guarded by switchboard
+            if (_ruleRelinquishSCs && xon._assignedFace != null) {
                 const fd = _nucleusTetFaceData[xon._assignedFace];
                 const cage15 = _octSCIds ? new Set(_octSCIds) : new Set();
                 if (fd) {
@@ -3229,7 +3231,8 @@ async function demoTick() {
         }
         if (violation) {
             // Soft recovery: try clearing xon-implied SCs (protect oct cage)
-            if (xonImpliedSet.size && !simHalted) {
+            // When relinquishment is off, violations should halt (not silently recover)
+            if (_ruleRelinquishSCs && xonImpliedSet.size && !simHalted) {
                 const _cageSCSet = _octSCIds ? new Set(_octSCIds) : new Set();
                 for (const id of [...xonImpliedSet]) {
                     if (_cageSCSet.has(id)) continue; // NEVER clear oct cage SCs

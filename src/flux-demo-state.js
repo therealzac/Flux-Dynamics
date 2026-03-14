@@ -381,6 +381,9 @@ let _demoOctRevealed = false;      // oct renders once all 8 faces visited
 let _demoXons = [];               // active xon objects (dynamic count)
 let _demoGluons = [];             // active gluon objects (lightweight)
 let _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }; // running total of xon-ticks per mode
+
+// ── Rule switches (switchboard) ────────────────────────────────────────────
+let _ruleRelinquishSCs = true; // When true, SCs actively removed after loops. When false, persist until vacuum severs.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
 const T79_MAX_FULL_TICKS = 1;     // T79: max consecutive ticks allowed with all 6 xons on oct nodes

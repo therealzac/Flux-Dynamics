@@ -994,6 +994,7 @@ function _walkToFace(xon, targetNodes) {
 // T42: Clean up face SCs from xonImpliedSet when a xon abandons its tet face.
 // Respects traversal lock — won't remove SCs being traversed by other xons.
 function _relinquishFaceSCs(xon) {
+    if (!_ruleRelinquishSCs) return; // switchboard: SC persistence mode
     if (xon._assignedFace == null) return;
     const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
     if (!fd) return;

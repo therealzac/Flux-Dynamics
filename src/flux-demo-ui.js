@@ -1399,3 +1399,8 @@ function _stopMoviePlayback() {
 document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
     _fighterjetMode = e.target.checked;
 });
+
+// ── Rules switchboard toggles ──
+document.getElementById('rule-relinquish-toggle')?.addEventListener('change', e => {
+    _ruleRelinquishSCs = e.target.checked;
+});
