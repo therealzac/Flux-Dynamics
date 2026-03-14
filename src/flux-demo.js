@@ -689,21 +689,10 @@ function _cageWouldBreak(xon) {
     if (!_octSCIds || !_octNodeSet || !xon.alive) return false;
     if (!_octNodeSet.has(xon.node)) return false; // not on cage
 
-    // Count how many oct-mode xons are currently on the cage
-    let octOnCage = 0;
-    for (const x of _demoXons) {
-        if (x.alive && x._mode === 'oct' && _octNodeSet.has(x.node)) octOnCage++;
-    }
-
-    // If plenty of oct xons remain (3+), removing one won't break the cage
-    if (octOnCage >= 3) return false;
-
-    // If only 1-2 oct xons on cage, check if all cage SCs are stable.
-    // If any cage SC is not in any active set, the cage needs this xon.
+    // Check if all cage SCs are stable. If any cage SC is missing from all
+    // active sets, the cage needs this xon to help repair/maintain it.
     for (const scId of _octSCIds) {
         if (!activeSet.has(scId) && !xonImpliedSet.has(scId) && !impliedSet.has(scId)) {
-            // A cage SC is not in any active set — cage is already broken!
-            // This xon is needed to help repair it.
             return true;
         }
     }
