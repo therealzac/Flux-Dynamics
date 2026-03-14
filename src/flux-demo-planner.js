@@ -735,6 +735,8 @@ function _promoteFaceSCs(face, xon) {
 function _assignXonToTet(xon, face, quarkType) {
     const fd = _nucleusTetFaceData[face];
     if (!fd) return;
+    // Tet loops can only be initiated from oct nodes — xon must be on the oct cage
+    if (!_octNodeSet || !_octNodeSet.has(xon.node)) return;
     _demoTetAssignments++;  // track for hit rate
     // No preemptive face SC promotion — xons negotiate with the vacuum
     // before each hop. SCs are only locked if traversed (prevNode→node).
@@ -967,6 +969,8 @@ function _returnXonToOct(xon, occupied) {
 // Returns true if a loop was started, false if no actualized face found.
 function _startIdleTetLoop(xon, occupied) {
     if (!_nucleusTetFaceData) return false;
+    // Tet loops can only be initiated from oct nodes
+    if (!_octNodeSet || !_octNodeSet.has(xon.node)) return false;
 
     const types = ['pu1', 'pu2', 'nd1', 'nd2', 'pd', 'nu'];
 

@@ -1833,14 +1833,8 @@ async function demoTick() {
     }
     // Clear stale movement flags from previous tick so WB processing isn't blocked
     for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
-    // Revert gluon xons to oct (fresh evaluation each tick per spec §2)
-    for (const xon of _demoXons) {
-        if (xon.alive && xon._mode === 'gluon') {
-            xon._mode = 'oct';
-            xon.col = 0xffffff;
-            if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-        }
-    }
+    // Gluon mode is now sticky — cleared in PHASE 2a only when cage is stable.
+    // (Previously reverted here every tick, allowing gluons to immediately enter tets.)
     _moveRecord.clear(); // T41: clear tick-level move record
     _moveTrace.length = 0; // diagnostic: clear trace for this tick
     // _scAttribution persists across ticks — only cleared on SC deletion
@@ -2431,7 +2425,20 @@ async function demoTick() {
         let octIdle = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
 
         // ── GLUON CHECK: cage integrity takes priority over face assignment ──
-        // (see spec §2: gluon mode, §4: PHASE 2a)
+        // Bidirectional: promote oct→gluon when cage needs help, demote gluon→oct
+        // when cage is stable. Gluon mode is sticky between ticks (not reverted at
+        // tick start) so gluons can't immediately enter tet loops.
+        // Also check existing gluon xons for demotion.
+        const gluonXons = _demoXons.filter(x => x.alive && x._mode === 'gluon' && !x._movedThisTick && !x._evictedThisTick);
+        for (const xon of gluonXons) {
+            if (!_cageWouldBreak(xon)) {
+                xon._mode = 'oct';
+                xon.col = 0xffffff;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                octIdle.push(xon);
+                _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} demoted to oct (cage stable)`);
+            }
+        }
         for (const xon of octIdle) {
             if (_cageWouldBreak(xon)) {
                 _clearModeProps(xon);
