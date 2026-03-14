@@ -279,7 +279,7 @@
         <!-- Quark color legend moved to right panel (#color-legend) -->
 
         <!-- Quark balance per void face -->
-        <div class="panel-section" style="padding:10px;">
+        <div id="quark-balance-section" class="panel-section" style="padding:10px;">
             <div class="panel-section-header" style="margin-bottom:6px;">QUARK BALANCE / VOID FACE</div>
             <div id="dp-coverage-bars" style="font-size:10px; line-height:1.8;"><!-- populated by JS --></div>
         </div>
@@ -319,7 +319,7 @@
         </div>
 
         <!-- BFS Exhaustiveness Test (results shown here during/after test) -->
-        <div class="panel-section" style="padding:10px;">
+        <div id="bfs-section" class="panel-section" style="padding:10px; display:none;">
             <div class="panel-section-header" style="margin-bottom:6px;">
                 <span>BFS EXHAUSTIVENESS</span>
             </div>
@@ -490,8 +490,8 @@
             </div>
             <div class="ctrl-row" style="margin-top:4px;">
                 <span class="ctrl-label">bg</span>
-                <input type="range" id="bg-gray-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
-                <span id="bg-gray-val" class="ctrl-val">20%</span>
+                <input type="range" id="bg-gray-slider" class="ctrl-slider" min="0" max="100" value="17" step="1">
+                <span id="bg-gray-val" class="ctrl-val">17%</span>
             </div>
         </div>
         <!-- ═══ COLOR ═══ -->
@@ -586,12 +586,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=9"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=62"></script>
+    <script src="src/flux-demo-state.js?v=66"></script>
     <script src="src/flux-demo-xon.js?v=11"></script>
-    <script src="src/flux-demo-backtrack.js?v=30"></script>
-    <script src="src/flux-demo-planner.js?v=32"></script>
-    <script src="src/flux-demo-ui.js?v=74"></script>
-    <script src="src/flux-demo.js?v=436"></script>
+    <script src="src/flux-demo-backtrack.js?v=36"></script>
+    <script src="src/flux-demo-planner.js?v=35"></script>
+    <script src="src/flux-demo-ui.js?v=75"></script>
+    <script src="src/flux-demo.js?v=442"></script>
     <script src="src/flux-solver-render.js?v=40"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -599,7 +599,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=35"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
-    <script src="src/flux-tests.js?v=244"></script>
+    <script src="src/flux-tests.js?v=246"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

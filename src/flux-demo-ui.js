@@ -35,14 +35,10 @@ function _tickerMetaLines() {
     if (_btActive || _bfsFailTick >= 0) {
         const fpSet = _btTriedFingerprints.get(layerTick);
         optCurrent = fpSet ? fpSet.size : 0;
-        // Total = enumerated options if available, otherwise just show tried count
-        if (_relayPhase === 'replaying' && _relayScoredQueue) {
-            optTotal = optCurrent + (_relayScoredQueue.length - _relayScoredIndex);
-        } else if (_relayPhase === 'enumerating' && _relayEnumFingerprints) {
-            optTotal = optCurrent + _relayEnumFingerprints.size;
-        } else {
-            optTotal = optCurrent; // still discovering
-        }
+        // Total = combo space size from caches if available
+        const mCount = _btMatchingCache ? _btMatchingCache.length : 0;
+        const fCount = _btFaceAssignCache ? _btFaceAssignCache.length : 1;
+        optTotal = mCount * fCount;
     }
     const optColor = _btActive ? '#66bbff' : '#556677';
     const opts = `<span style="${s} color:${optColor};">options: ${optCurrent}${optTotal > optCurrent ? '/' + optTotal : '+'}</span>`;

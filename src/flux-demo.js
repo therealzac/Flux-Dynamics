@@ -2208,19 +2208,39 @@ async function demoTick() {
                 }
             }
         }
-        // Shuffle first for random tiebreaking, then stable-sort by priority.
-        // This avoids a non-transitive comparator (_sRng() - 0.5 violates contract).
-        // PRNG seed changes per retry, so shuffle produces different orderings.
-        _sRngShuffle(bestSteps);
-        bestSteps.sort((a, b) => {
-            const aInTrail = recentTrail.has(a) ? 1 : 0;
-            const bInTrail = recentTrail.has(b) ? 1 : 0;
-            if (aInTrail !== bInTrail) return aInTrail - bInTrail;
-            const aIsPrev = a === xon.prevNode ? 1 : 0;
-            const bIsPrev = b === xon.prevNode ? 1 : 0;
-            if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
-            return 0; // tied — shuffle already randomized order
-        });
+        // During backtrack retries: deterministic ordering + cycling index for exhaustive exploration.
+        // First forward pass and normal demo: shuffle + stable-sort for random tiebreaking.
+        if (_btActive) {
+            bestSteps.sort((a, b) => {
+                const aInTrail = recentTrail.has(a) ? 1 : 0;
+                const bInTrail = recentTrail.has(b) ? 1 : 0;
+                if (aInTrail !== bInTrail) return aInTrail - bInTrail;
+                const aIsPrev = a === xon.prevNode ? 1 : 0;
+                const bIsPrev = b === xon.prevNode ? 1 : 0;
+                if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
+                return a - b; // deterministic tiebreak by node ID
+            });
+            // Rotate by weak step index to cycle through first-step choices
+            if (bestSteps.length > 1) {
+                const offset = _btWeakStepIndex % bestSteps.length;
+                if (offset > 0) {
+                    const rotated = [...bestSteps.slice(offset), ...bestSteps.slice(0, offset)];
+                    bestSteps.length = 0;
+                    bestSteps.push(...rotated);
+                }
+            }
+        } else {
+            _sRngShuffle(bestSteps);
+            bestSteps.sort((a, b) => {
+                const aInTrail = recentTrail.has(a) ? 1 : 0;
+                const bInTrail = recentTrail.has(b) ? 1 : 0;
+                if (aInTrail !== bInTrail) return aInTrail - bInTrail;
+                const aIsPrev = a === xon.prevNode ? 1 : 0;
+                const bIsPrev = b === xon.prevNode ? 1 : 0;
+                if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
+                return 0; // tied — shuffle already randomized order
+            });
+        }
         // Try each first-step: first that passes guards + occupancy + swap wins
         let bestStep = null;
         for (const step of bestSteps) {
@@ -2268,8 +2288,10 @@ async function demoTick() {
             // All BFS steps blocked — try free neighbor (avoiding hadron-occupied nodes)
             // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
             // — weak xons have freedom to roam the full lattice.
-            // Shuffle to prevent lattice-order bias in fallback selection.
-            const allNbs = _sRngShuffle((baseNeighbors[xon.node] || []).slice());
+            // During backtrack retries: deterministic order. Otherwise: shuffle to prevent lattice-order bias.
+            const allNbs = _btActive
+                ? (baseNeighbors[xon.node] || []).slice().sort((a, b) => a.node - b.node)
+                : _sRngShuffle((baseNeighbors[xon.node] || []).slice());
             const hadronFilter = nb => !_isHadronOccupied(nb.node);
             // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
             let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
@@ -2565,9 +2587,11 @@ async function demoTick() {
             let assignedCombo = null; // the combo that actually gets assigned
 
             if (_btActive && typeof _enumerateAllFaceAssignments === 'function') {
-                // Build/refresh face assignment cache when ledger changes
-                const ledgerSize = (_btBadMoveLedger.get(_demoTick) || {size:0}).size || 0;
-                if (_btFaceAssignCache === null || _btFaceAssignLedgerSize !== ledgerSize) {
+                // Build face assignment cache once per matching.
+                // The rewind handler nulls the cache when advancing to the next matching.
+                // Face proposals don't depend on the bad move ledger — they depend on
+                // which xons are idle, which is independent of matching.
+                if (_btFaceAssignCache === null) {
                     // Collect ALL valid proposals across all xons, faces, quark types
                     const allProposals = [];
                     for (const xon of octIdle) {
@@ -2575,16 +2599,14 @@ async function demoTick() {
                         for (const opp of opps) allProposals.push(opp);
                     }
                     _btFaceAssignCache = _enumerateAllFaceAssignments(allProposals);
-                    _btFaceAssignIndex = 0;
-                    _btFaceAssignLedgerSize = ledgerSize;
+                    // Don't reset _btFaceAssignIndex — rewind handler manages it
                     _logChoreo(`FACE ENUM: ${_btFaceAssignCache.length} valid combos for tick ${_demoTick}`);
                 }
 
-                // Try the next combo from the cache
-                if (_btFaceAssignCache.length > 0) {
-                    const idx = _btFaceAssignIndex % _btFaceAssignCache.length;
-                    _btFaceAssignIndex++;
-                    const combo = _btFaceAssignCache[idx];
+                // Apply the face combo at the current index (managed by rewind handler).
+                // No wrap-around — exhaustion detected by rewind handler.
+                if (_btFaceAssignCache.length > 0 && _btFaceAssignIndex < _btFaceAssignCache.length) {
+                    const combo = _btFaceAssignCache[_btFaceAssignIndex];
                     // Validate each proposal in the combo (vacuum + lookahead)
                     const validatedCombo = [];
                     const usedXons = new Set();
@@ -2630,9 +2652,12 @@ async function demoTick() {
                 }
 
                 // Shuffle proposals — no xon gets priority by index order
-                for (let i = proposals.length - 1; i > 0; i--) {
-                    const j = Math.floor(_sRng() * (i + 1));
-                    [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+                // During backtrack retries: deterministic order (score descending, then xon index)
+                if (!_btActive) {
+                    for (let i = proposals.length - 1; i > 0; i--) {
+                        const j = Math.floor(_sRng() * (i + 1));
+                        [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+                    }
                 }
 
                 // Resolve conflicts: one xon per face, first-after-shuffle wins
@@ -2754,10 +2779,9 @@ async function demoTick() {
         let excess = allOnOct - OCT_CAPACITY_MAX + t79Pressure;
         if (excess > 0) {
             // Priority 1: oct-mode xons (easiest to redirect)
-            const octCandidates = _sRngShuffle(_demoXons.filter(x =>
-                x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
-                _octNodeSet.has(x.node)
-            ));
+            const octCandidates = _btActive
+                ? _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick && _octNodeSet.has(x.node))
+                : _sRngShuffle(_demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick && _octNodeSet.has(x.node)));
             for (const xon of octCandidates) {
                 if (excess <= 0) break;
                 if (_startIdleTetLoop(xon, occupied)) {
@@ -2772,10 +2796,9 @@ async function demoTick() {
             }
             // Priority 2: idle_tet xons on oct nodes (interrupt loop, mark for ejection)
             if (excess > 0) {
-                const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
+                const idleCandidates = _btActive
+                    ? _demoXons.filter(x => x.alive && x._mode === 'idle_tet' && !x._movedThisTick && _octNodeSet.has(x.node))
+                    : _sRngShuffle(_demoXons.filter(x => x.alive && x._mode === 'idle_tet' && !x._movedThisTick && _octNodeSet.has(x.node)));
                 for (const xon of idleCandidates) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -2790,10 +2813,9 @@ async function demoTick() {
             }
             // Priority 3: weak xons on oct nodes (force off-oct movement)
             if (excess > 0) {
-                const weakOnOct = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'weak' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
+                const weakOnOct = _btActive
+                    ? _demoXons.filter(x => x.alive && x._mode === 'weak' && !x._movedThisTick && _octNodeSet.has(x.node))
+                    : _sRngShuffle(_demoXons.filter(x => x.alive && x._mode === 'weak' && !x._movedThisTick && _octNodeSet.has(x.node)));
                 for (const xon of weakOnOct) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
@@ -2924,16 +2946,16 @@ async function demoTick() {
             _btMatchingCache = _enumerateAllMatchings(octPlans, planned);
             _btMatchingIndex = 0;
             _btMatchingCacheLedgerSize = ledgerSize;
+            // New exclusions change the search space — face cache must also rebuild
+            _btFaceAssignCache = null;
+            _btFaceAssignIndex = 0;
             _logChoreo(`ENUM: ${_btMatchingCache.length} valid matchings for tick ${_demoTick} (ledger: ${ledgerSize})`);
         }
-        // Apply the next matching from the cache, cycling with wrap-around.
-        // Each cycle pairs matchings with a different PRNG seed (via _btRetryCount
-        // / _bfsLayerRetries), so secondary choices (idle_tet face, weak BFS,
-        // return-to-oct neighbor) explore different paths each cycle.
-        if (_btMatchingCache.length > 0) {
-            const idx = _btMatchingIndex % _btMatchingCache.length;
-            _btMatchingIndex++;
-            const matching = _btMatchingCache[idx];
+        // Apply the matching at the current index (managed by rewind handler).
+        // No wrap-around — exhaustion is detected by the rewind handler when
+        // _btMatchingIndex >= _btMatchingCache.length.
+        if (_btMatchingCache.length > 0 && _btMatchingIndex < _btMatchingCache.length) {
+            const matching = _btMatchingCache[_btMatchingIndex];
             for (let i = 0; i < octPlans.length; i++) {
                 octPlans[i].assigned = matching[i];
             }
@@ -3599,14 +3621,7 @@ async function demoTick() {
             // Reset guard delta baseline so replayed ticks get full guard state
             _tickLogLastGuards = {};
             _btRetryCount = 0;
-            // Reset relay state — deeper layer starts fresh with normal choreographer
-            _relayPhase = 'normal';
-            _bfsTestRandomChoreographer = false;
-            _relayEnumFingerprints = null;
-            _relayEnumAttempts = 0;
-            _relayEnumStale = 0;
-            _relayScoredQueue = null;
-            _relayScoredIndex = 0;
+            _btResetMatchingCache(); // fresh combo enumeration at new layer
             _btRestoreSnapshot(anchorSnap);
             _updateTickCounter(); // show tick decrement during backtrack
             _logChoreo(`BFS: rewound to layer ${_bfsLayer} anchor tick ${targetTick}`);
@@ -3614,146 +3629,79 @@ async function demoTick() {
         };
 
         // ══════════════════════════════════════════════════════════════
-        // THREE-PHASE EXHAUSTION: normal → enumerate → scored replay
+        // COMBINATORIAL EXHAUSTION
         //
-        // Phase 1 (normal): Greedy choreographer tries all matchings
-        //   with PRNG-varied secondary choices. Escalates to Phase 2
-        //   when stale (no new fingerprints or exclusions).
-        //
-        // Phase 2 (enumerating): Random scoring explores the full
-        //   decision space (face assignments, quark types, etc.).
-        //   Collects ALL valid fingerprints into _relayEnumFingerprints.
-        //   Transitions to Phase 3 when stale.
-        //
-        // Phase 3 (replaying): Choreographer scores all enumerated
-        //   fingerprints by preference, tries them best-first.
-        //   Escalates to deeper BFS layer when all exhausted.
+        // The combo space per tick = matchings × face_assignments.
+        // The rewind handler is the odometer: each failed retry advances
+        // the face index. When face exhausted, advance matching index.
+        // When all matchings exhausted, tick is provably exhausted → escalate.
+        // No stale detection needed — every combo is tried exactly once.
         // ══════════════════════════════════════════════════════════════
-        const _relayBlocked = _bfsTestActive && _bfsTestRunIdx === 1;
 
-        if (_relayPhase === 'replaying') {
-            // ── PHASE 3: Scored replay — trying enumerated options in order ──
-            // A failed replay attempt means this fingerprint's path also fails.
-            // Move to the next scored option.
-            _relayScoredIndex++;
-            if (_relayScoredQueue && _relayScoredIndex < _relayScoredQueue.length) {
-                // Try the next scored option
-                const nextOpt = _relayScoredQueue[_relayScoredIndex];
-                _logChoreo(`RELAY: tick ${currentTick} — replay option ${_relayScoredIndex + 1}/${_relayScoredQueue.length} (score: ${nextOpt.score.toFixed(1)})`);
-                const snap = _btSnapshots[_btSnapshots.length - 1];
-                _btRestoreSnapshot(snap);
-                _btRetryCount++;
-                // Seed PRNG to reproduce this fingerprint's decisions
-                // (use a hash of the fingerprint string for reproducibility)
-                let fpHash = 0;
-                for (let i = 0; i < nextOpt.fp.length; i++) fpHash = ((fpHash << 5) - fpHash + nextOpt.fp.charCodeAt(i)) | 0;
-                _sRngSeed(fpHash >>> 0);
-                continue;
+        // ── COMBO ADVANCEMENT ──
+        // Advance face assignment index (inner axis of the combo odometer).
+        // Also advance perm/weak indices for variety on future ticks and secondary choices.
+        if (_btFaceAssignCache !== null) {
+            _btFaceAssignIndex++;
+
+            // ── OCT RESIDUAL DEDUP ──
+            // For oct-related failures (T20 stuck, T19 collision), the face
+            // assignment only matters insofar as it changes WHICH xons are in
+            // oct mode. Two combos with the same "oct residual" (same xons in
+            // oct) produce identical PHASE 2 behavior. Track tried residual
+            // keys and skip combos whose residual was already tried — preserves
+            // exhaustiveness because every UNIQUE oct configuration is still tried.
+            // (2.4M combos → ~32 unique residuals on a 6-xon deuteron.)
+            if (_btFaceAssignCache.length > 0 && _btFaceAssignIndex < _btFaceAssignCache.length
+                && _rewindViolation && typeof _faceComboOctResidualKey === 'function') {
+                const isOctFailure = /stuck at node|has \d+ xons|oct xons > capacity/.test(_rewindViolation);
+                if (isOctFailure) {
+                    // Record the residual key of the combo that just failed
+                    const failedIdx = _btFaceAssignIndex - 1;
+                    if (failedIdx >= 0 && failedIdx < _btFaceAssignCache.length) {
+                        if (!_btTriedOctResiduals) _btTriedOctResiduals = new Set();
+                        const failedKey = _faceComboOctResidualKey(_btFaceAssignCache[failedIdx]);
+                        _btTriedOctResiduals.add(failedKey);
+                        // Skip forward past ALL combos whose residual is already tried
+                        let skipped = 0;
+                        while (_btFaceAssignIndex < _btFaceAssignCache.length) {
+                            const nextKey = _faceComboOctResidualKey(_btFaceAssignCache[_btFaceAssignIndex]);
+                            if (!_btTriedOctResiduals.has(nextKey)) break; // new oct config — try it
+                            _btFaceAssignIndex++;
+                            skipped++;
+                        }
+                        if (skipped > 0) {
+                            _logChoreo(`OCT RESIDUAL SKIP: ${skipped} combos skipped (${_btTriedOctResiduals.size} residuals tried)`);
+                        }
+                    }
+                }
             }
-            // All scored options exhausted — escalate to deeper layer
-            _logChoreo(`RELAY: tick ${currentTick} — all ${_relayScoredQueue ? _relayScoredQueue.length : 0} scored options exhausted, escalating`);
-            _relayPhase = 'normal';
-            _bfsTestRandomChoreographer = false;
-            _relayEnumFingerprints = null;
-            _relayScoredQueue = null;
-            _btStaleRetries = 0;
+        }
+        // Perm and weak always advance for variety (independent of caches)
+        _btPermutationIndex++;
+        _btWeakStepIndex++;
+
+        // Face combos exhausted for current matching?
+        // When face cache is null (no face assignments at this tick, e.g. opening phase),
+        // the matching was tried once with no face variation — advance to next matching.
+        if (_btFaceAssignCache === null || _btFaceAssignIndex >= _btFaceAssignCache.length) {
+            _btMatchingIndex++;
+            _btFaceAssignCache = null; // force rebuild with next matching
+            _btFaceAssignIndex = 0;
+            _btPermutationIndex = 0;
+            _btWeakStepIndex = 0;
+            _btTriedOctResiduals = null; // fresh residual tracking for next matching
+        }
+
+        // ALL combos exhausted → tick provably exhausted → escalate to deeper BFS layer
+        if (_btMatchingCache !== null && _btMatchingIndex >= _btMatchingCache.length) {
+            _logChoreo(`EXHAUSTED: tick ${currentTick} — all ${_btMatchingCache.length} matchings × ${_btFaceAssignCache ? _btFaceAssignCache.length : '?'} face combos tried`);
             _btResetMatchingCache();
             if (!_escalateLayer()) break;
             continue;
         }
 
-        if (!_addedNewExclusions && !_isNewFingerprint) {
-            if (typeof _btStaleRetries === 'undefined') _btStaleRetries = 0;
-            _btStaleRetries++;
-            const cacheSize = (_btMatchingCache ? _btMatchingCache.length : 1);
-            const minRetries = Math.max(3, cacheSize * 3);
-
-            if (_btStaleRetries >= minRetries) {
-                if (_relayPhase === 'normal' && !_relayBlocked) {
-                    // ── Transition: normal → enumerating ──
-                    _relayPhase = 'enumerating';
-                    _bfsTestRandomChoreographer = true;
-                    _relayEnumFingerprints = new Map();
-                    _relayEnumAttempts = 0;
-                    _relayEnumStale = 0;
-                    _btStaleRetries = 0;
-                    _btResetMatchingCache();
-                    _logChoreo(`RELAY: tick ${currentTick} — normal exhausted, starting enumeration phase`);
-                    const snap = _btSnapshots[_btSnapshots.length - 1];
-                    _btRestoreSnapshot(snap);
-                    _btRetryCount++;
-                    continue;
-                }
-
-                if (_relayPhase === 'enumerating') {
-                    // Enumeration stale — check if we've found any options
-                    _relayEnumStale++;
-                    const enumMinStale = Math.max(5, cacheSize * 3);
-                    if (_relayEnumStale >= enumMinStale) {
-                        _bfsTestRandomChoreographer = false;
-                        if (_relayEnumFingerprints && _relayEnumFingerprints.size > 0) {
-                            // ── Transition: enumerating → replaying ──
-                            // Score all enumerated fingerprints and sort best-first
-                            const scored = [];
-                            for (const [fp, data] of _relayEnumFingerprints) {
-                                const score = _relayScoreFingerprint(fp, null);
-                                scored.push({ fp, score });
-                            }
-                            scored.sort((a, b) => b.score - a.score);
-                            _relayScoredQueue = scored;
-                            _relayScoredIndex = 0;
-                            _relayPhase = 'replaying';
-                            _relayEnumTotal += scored.length;
-                            _logChoreo(`RELAY: tick ${currentTick} — enumerated ${scored.length} valid options, starting scored replay (best: ${scored[0].score.toFixed(1)})`);
-                            const snap = _btSnapshots[_btSnapshots.length - 1];
-                            _btRestoreSnapshot(snap);
-                            _btRetryCount++;
-                            // Seed PRNG for first scored option
-                            let fpHash = 0;
-                            for (let i = 0; i < scored[0].fp.length; i++) fpHash = ((fpHash << 5) - fpHash + scored[0].fp.charCodeAt(i)) | 0;
-                            _sRngSeed(fpHash >>> 0);
-                            continue;
-                        }
-                        // No valid options found — escalate directly
-                        _logChoreo(`RELAY: tick ${currentTick} — enumeration found 0 options, escalating`);
-                        _relayPhase = 'normal';
-                        _relayEnumFingerprints = null;
-                        _btStaleRetries = 0;
-                        _btResetMatchingCache();
-                        if (!_escalateLayer()) break;
-                        continue;
-                    }
-                }
-
-                if (_relayBlocked) {
-                    // Relay blocked (Test 2 explicit random) — escalate directly
-                    _btStaleRetries = 0;
-                    _logChoreo(`BFS: tick ${currentTick} exhausted, escalating`);
-                    _btResetMatchingCache();
-                    if (!_escalateLayer()) break;
-                    continue;
-                }
-            }
-        } else {
-            // Got new info — reset stale counter
-            if (typeof _btStaleRetries !== 'undefined') _btStaleRetries = 0;
-
-            // During enumeration phase, collect valid fingerprints
-            if (_relayPhase === 'enumerating' && _isNewFingerprint) {
-                _relayEnumAttempts++;
-                _relayEnumStale = 0; // got new info, reset stale
-                const fp = _computeTickFingerprint();
-                if (!_relayEnumFingerprints.has(fp)) {
-                    _relayEnumFingerprints.set(fp, { fp });
-                }
-            }
-            // During normal phase, new info is just progress — keep going
-            if (_relayPhase === 'normal' && _isNewFingerprint) {
-                _relayEscapes++; // normal choreographer found a path
-            }
-        }
-
-        // ── SAME-TICK RETRY (new exclusions were added) ──
+        // ── SAME-TICK RETRY ──
         if (_bfsFailTick >= 0 && currentTick === _bfsFailTick) {
             _bfsLayerRetries++;
         } else {
@@ -3763,7 +3711,11 @@ async function demoTick() {
         const snap = _btSnapshots[_btSnapshots.length - 1];
         _btRestoreSnapshot(snap);
         _updateTickCounter(); // show tick decrement during backtrack
-        _logChoreo(`BACKTRACK retry at tick ${currentTick} (ledger: ${ledger.size} exclusions)`);
+        const mIdx = _btMatchingIndex !== undefined ? _btMatchingIndex : '?';
+        const fIdx = _btFaceAssignIndex !== undefined ? _btFaceAssignIndex : '?';
+        const mTotal = _btMatchingCache ? _btMatchingCache.length : '?';
+        const fTotal = _btFaceAssignCache ? _btFaceAssignCache.length : '?';
+        _logChoreo(`BACKTRACK retry tick ${currentTick} combo(${mIdx}/${mTotal}, ${fIdx}/${fTotal}) ledger:${ledger.size}`);
         continue;
     }
 

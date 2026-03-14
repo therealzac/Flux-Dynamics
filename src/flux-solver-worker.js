@@ -20,8 +20,9 @@ let gpuBindGroupLayout = null;
 let gpuShaderModule = null;
 let gpuPersistentBuffers = null; // { restPositions, repulsionPairs, params }
 
-// Max constraints per instance (padded to handle varying SC counts)
-const MAX_CONSTRAINTS = 800;
+// Max constraints per instance — computed dynamically from actual data.
+// No artificial cap; the lattice is finite so basePairs.length + 1 is always bounded.
+let MAX_CONSTRAINTS = 800; // default, overridden per call
 // Max batch size
 const MAX_BATCH = 32;
 // GPU Jacobi iterations (needs more than GS to converge)
@@ -246,6 +247,9 @@ async function gpuBatchSolve(basePairs, candidateScPairs) {
         }
         return results;
     }
+
+    // Compute actual constraint count: base pairs + 1 candidate SC per instance
+    MAX_CONSTRAINTS = basePairs.length + 1;
 
     // Build per-instance constraint arrays
     const constraintData = new Uint32Array(B * MAX_CONSTRAINTS * 2);

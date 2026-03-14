@@ -566,7 +566,7 @@ let _btTriedFingerprints = new Map();   // tick → Set of canonical fingerprint
 let _btMatchingCache = null;            // Array of all valid matchings for current tick (or null)
 let _btMatchingIndex = 0;              // next matching to try from _btMatchingCache
 let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (invalidate on change)
-let _btStaleRetries = 0;               // consecutive retries with no new fingerprint/exclusion
+// _btStaleRetries removed — combinatorial exhaustion replaces stale detection
 
 // ── Face assignment enumeration (greedy + ranked alternatives) ──
 // During backtracking, enumerate ALL valid (xon, face, quarkType) assignments.
@@ -574,6 +574,9 @@ let _btStaleRetries = 0;               // consecutive retries with no new finger
 let _btFaceAssignCache = null;         // Array of valid assignment combos [{xon, face, quarkType, score}[]]
 let _btFaceAssignIndex = 0;            // next face assignment combo to try
 let _btFaceAssignLedgerSize = 0;       // ledger size when cache was built
+let _btTriedOctResiduals = null;       // Set<string> of oct residual keys tried for current matching (dedup)
+let _btPermutationIndex = 0;           // cycles through loop permutations during BFS exhaustive search
+let _btWeakStepIndex = 0;              // cycles through weak BFS first-step choices during BFS exhaustive search
 
 // ── Tunable choreography parameters (genome for GA tournament) ──
 // All hardcoded magic numbers extracted here for parameterized optimization.

@@ -256,6 +256,10 @@ const LIVE_GUARD_REGISTRY = [
     },
     { id: 'T21', name: 'Oct cage permanence', init: { _octSnapshot: null },
       activate(g) {
+        // Cage may not exist yet (opening phase hasn't run); safe no-op
+        if (typeof _octSCIds === 'undefined' || !_octSCIds || _octSCIds.length === 0) {
+          g.ok = null; g.msg = 'no oct cage yet'; return;
+        }
         const snap = new Set();
         const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
         for (const scId of _octSCIds) { if (_scActive(scId)) snap.add(scId); }
@@ -263,6 +267,8 @@ const LIVE_GUARD_REGISTRY = [
         if (snap.size === 0) { g.ok = null; g.msg = 'no oct SCs active yet'; }
       },
       check(tick, g) {
+        // Cage may not exist yet during opening phase or early replay ticks
+        if (typeof _octSCIds === 'undefined' || !_octSCIds || _octSCIds.length === 0) return null;
         const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
         // Update snapshot with newly active oct SCs
         if (g._octSnapshot) {
@@ -2478,6 +2484,7 @@ async function startBfsExhaustivenessTest(latticeLevel) {
     _bfsTestComparison = null;
     _bfsTestReferenceFingerprints = null;
     _bfsTestEarlyAbort = false;
+    _setBfsTestPanelVisible(true);
     _bfsTestNovelCount = 0;
     _bfsTestNovelDetail = null;
     _bfsTestDecisionTrace = [];
@@ -2671,30 +2678,70 @@ function _updateBfsTestPanel(message) {
 
     let html = `<div style="color:#9abccc; font-size:11px; margin-bottom:8px;">${message}</div>`;
 
+    // Show choreographer stats from Test 1 if available (during Test 2 or after)
+    if (_bfsTestResults[0] && !_bfsTestComparison) {
+        const r1 = _bfsTestResults[0];
+        html += `<div style="margin-bottom:6px; padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px;">`;
+        html += `<div style="color:#6a8aaa; font-size:9px;">CHOREOGRAPHER (completed)</div>`;
+        html += `<div style="font-size:10px; color:#9abccc;">` +
+            `highest: <b>${r1.maxTick}</b> &middot; fps: ${r1.totalFingerprints} &middot; ` +
+            `retries: ${r1.totalRetries} &middot; ${(r1.elapsedMs / 1000).toFixed(1)}s</div>`;
+        html += `</div>`;
+    }
+
     if (_bfsTestComparison) {
         const c = _bfsTestComparison;
+        const _bigRedBox = (label) =>
+            `<div style="color:#ff4444; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
+            `padding:8px; background:rgba(255,50,50,0.12); border:2px solid #ff4444; border-radius:4px; ` +
+            `text-align:center; animation:dp-alarm 0.8s ease-in-out infinite alternate;">` +
+            `✗ ${label}</div>`;
 
         if (c.earlyAbort) {
-            // ── FAIL: choreographer not exhaustive ──
-            html += `<div style="color:#ff4444; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
-                    `padding:6px; background:rgba(255,50,50,0.1); border:1px solid #ff4444; border-radius:4px;">` +
-                    `✗ CHOREOGRAPHER NOT EXHAUSTIVE</div>`;
+            // ── Box 1: CHOREOGRAPHER NOT EXHAUSTIVE ──
+            html += _bigRedBox('CHOREOGRAPHER NOT EXHAUSTIVE');
             html += `<div style="font-size:10px; color:#ff8866; margin-bottom:6px; line-height:1.5;">` +
                 `Random found <b>${c.novelCount || 1}</b> novel solution${(c.novelCount || 1) !== 1 ? 's' : ''} (first at tick <b>${c.novelTick}</b>)<br>` +
-                (c.randomHalted ? `<span style="color:#ffaa44;">Random halted at tick ${c.randomMaxTick} — finite valid paths</span><br>` : '') +
                 `<span style="font-size:9px; color:#cc7755; word-break:break-all;">${c.novelFingerprint}</span>` +
                 `</div>`;
+
+            // ── Box 2: RANDOM HALTED (if random halted before reaching choreographer's peak) ──
+            if (c.randomHalted) {
+                html += _bigRedBox('RANDOM HALTED');
+                html += `<div style="font-size:10px; color:#ffaa44; margin-bottom:6px;">` +
+                    `Random halted at tick ${c.randomMaxTick} — finite valid paths (rules may be impossible)</div>`;
+            }
+
+            // ── Box 3: RANDOM INCOMPLETE (if random found fewer total fps than choreographer) ──
+            const r1 = _bfsTestResults[0], r2 = _bfsTestResults[1];
+            if (r1 && r2 && r2.totalFingerprints < r1.totalFingerprints) {
+                html += `<div style="color:#ffaa00; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
+                    `padding:8px; background:rgba(255,170,0,0.12); border:2px solid #ffaa00; border-radius:4px; ` +
+                    `text-align:center;">` +
+                    `⚠ RANDOM INCOMPLETE</div>`;
+                html += `<div style="font-size:10px; color:#cc9944; margin-bottom:6px;">` +
+                    `Random explored only ${r2.totalFingerprints} fps vs choreographer's ${r1.totalFingerprints}</div>`;
+            }
+
+            // Sanity check: if choreographer found MORE outcomes than random, random is broken
+            if (r1 && r2 && r1.totalFingerprints > r2.totalFingerprints && !c.randomHalted) {
+                html += _bigRedBox('RANDOM BROKEN — FEWER OUTCOMES THAN CHOREOGRAPHER');
+                html += `<div style="font-size:10px; color:#ff8866; margin-bottom:6px;">` +
+                    `Choreographer: ${r1.totalFingerprints} fps, Random: ${r2.totalFingerprints} fps. ` +
+                    `Random should find at least as many — something is wrong.</div>`;
+            }
         } else {
             // ── PASS: exhaustive ──
             html += `<div style="color:#44ff44; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
-                    `padding:6px; background:rgba(50,255,50,0.1); border:1px solid #44ff44; border-radius:4px;">` +
+                    `padding:8px; background:rgba(50,255,50,0.1); border:2px solid #44ff44; border-radius:4px; ` +
+                    `text-align:center;">` +
                     `✓ MODEL IS EXHAUSTIVE</div>`;
         }
 
         for (let i = 0; i < 2; i++) {
             const r = _bfsTestResults[i];
             if (!r) continue;
-            const modeLabel = r.mode === 'random' ? '🎲 RANDOM' : '🧠 CHOREOGRAPHER';
+            const modeLabel = r.mode === 'random' ? 'RANDOM' : 'CHOREOGRAPHER';
             html += `<div style="margin-bottom:4px; padding:4px; background:rgba(255,255,255,0.03); border-radius:3px;">`;
             html += `<div style="color:#6a8aaa; font-size:9px;">${modeLabel} &mdash; seed 0x${r.seed.toString(16).padStart(8,'0')}</div>`;
             html += `<div style="font-size:10px; color:#9abccc;">` +
@@ -2723,6 +2770,22 @@ function _updateBfsTestPanel(message) {
     if (exportBtn) {
         const showExport = _bfsTestComparison && !_bfsTestComparison.earlyAbort;
         exportBtn.style.display = showExport ? 'inline-block' : 'none';
+    }
+}
+
+// Show/hide BFS panel and move to top of left panels during tests
+function _setBfsTestPanelVisible(visible) {
+    const bfsSection = document.getElementById('bfs-section');
+    const qbSection = document.getElementById('quark-balance-section');
+    if (!bfsSection) return;
+    if (visible) {
+        bfsSection.style.display = '';
+        // Move BFS section before quark balance (top of panel)
+        if (qbSection && bfsSection.parentNode === qbSection.parentNode) {
+            qbSection.parentNode.insertBefore(bfsSection, qbSection);
+        }
+    } else {
+        bfsSection.style.display = 'none';
     }
 }
 
