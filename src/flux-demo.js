@@ -689,10 +689,11 @@ function _cageWouldBreak(xon) {
     if (!_octSCIds || !_octNodeSet || !xon.alive) return false;
     if (!_octNodeSet.has(xon.node)) return false; // not on cage
 
-    // Check if all cage SCs are stable. If any cage SC is missing from all
-    // active sets, the cage needs this xon to help repair/maintain it.
+    // Check if all cage SCs are physically maintained. Only count activeSet
+    // and impliedSet (physics-derived) — xonImpliedSet protection doesn't
+    // count as genuine stability (it's a safety net, not xon-induced).
     for (const scId of _octSCIds) {
-        if (!activeSet.has(scId) && !xonImpliedSet.has(scId) && !impliedSet.has(scId)) {
+        if (!activeSet.has(scId) && !impliedSet.has(scId)) {
             return true;
         }
     }
@@ -1371,6 +1372,7 @@ function startDemoLoop() {
     }
     _demoTick = 0;
     _planckSeconds = 0;
+    _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
     // Allow fixed seed via URL param (?seed=0xABCD1234) or global override for replay.
     const _urlSeed = new URLSearchParams(window.location.search).get('seed');
     if (typeof _forceSeed !== 'undefined' && _forceSeed !== null) {
@@ -3604,17 +3606,19 @@ async function demoTick() {
 
     } // end backtracking retry loop
 
-    // Increment per-xon mode stats + track oct idle duration
+    // Increment per-xon mode stats + global running totals + track oct idle duration
     for (const x of _demoXons) {
         if (!x.alive || !x._modeStats) continue;
         const m = x._mode;
         if (m === 'oct' || m === 'oct_formation') {
             x._modeStats.oct++;
+            _globalModeStats.oct++;
             if (!x._octModeSince) x._octModeSince = _demoTick;
         } else {
-            if (m === 'tet') x._modeStats.tet++;
-            else if (m === 'idle_tet') x._modeStats.idle_tet++;
-            else if (m === 'weak') x._modeStats.weak++;
+            if (m === 'tet') { x._modeStats.tet++; _globalModeStats.tet++; }
+            else if (m === 'idle_tet') { x._modeStats.idle_tet++; _globalModeStats.idle_tet++; }
+            else if (m === 'weak') { x._modeStats.weak++; _globalModeStats.weak++; }
+            else if (m === 'gluon') { x._modeStats.gluon++; _globalModeStats.gluon++; }
             x._octModeSince = 0;
         }
     }

@@ -1,5 +1,13 @@
 # Flux Dynamics — Claude Context Document
 
+# ⚠️⚠️⚠️ SCIENTIFIC SIMULATION — RESEARCHER APPROVAL REQUIRED ⚠️⚠️⚠️
+# This is a particle physics simulation. It is EXTREMELY SENSITIVE.
+# ALL code updates must be approved by researchers BEFORE implementation.
+# If you update something without telling the researchers, we run the
+# risk of reaching INCORRECT SCIENTIFIC CONCLUSIONS.
+# The importance of this cannot be overstated.
+# ⚠️⚠️⚠️ ALWAYS EXPLAIN CHANGES AND GET APPROVAL FIRST ⚠️⚠️⚠️
+
 # ⛔⛔⛔ NEVER PUSH TO GITHUB ⛔⛔⛔
 # UNLESS THE USER SAYS "PUSH" IN **THIS EXACT MESSAGE**
 #

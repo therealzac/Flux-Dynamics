@@ -603,8 +603,8 @@ function updateXonPanel() {
         const balStr = `${Math.round(balPct * 100)}%`;
 
         // Mode stats line
-        const ms = x._modeStats || { oct: 0, tet: 0, idle_tet: 0, weak: 0 };
-        const msStr = `o:${ms.oct} t:${ms.tet} i:${ms.idle_tet}` + (ms.weak > 0 ? ` w:${ms.weak}` : '');
+        const ms = x._modeStats || { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
+        const msStr = `o:${ms.oct} t:${ms.tet} i:${ms.idle_tet}` + (ms.gluon > 0 ? ` g:${ms.gluon}` : '') + (ms.weak > 0 ? ` w:${ms.weak}` : '');
 
         // Tooltip: full 10-direction breakdown
         const db = x._dirBalance || new Array(10).fill(0);
@@ -621,6 +621,29 @@ function updateXonPanel() {
             + `<span style="color:var(--text-3); font-size:6px;">${msStr}</span>`
             + `</button>`;
     }
+    // Running totals: xon-ticks spent in each mode (global across all xons)
+    const g = typeof _globalModeStats !== 'undefined' ? _globalModeStats : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
+    const totalTicks = g.oct + g.tet + g.idle_tet + g.weak + g.gluon;
+    const pct = (v) => totalTicks > 0 ? Math.round(v / totalTicks * 100) : 0;
+    // Current mode counts (live)
+    const now = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
+    for (const x of _demoXons) { if (x.alive && now[x._mode] !== undefined) now[x._mode]++; }
+    const nowParts = [];
+    if (now.oct > 0) nowParts.push(`<span style="color:#fff">oct:${now.oct}</span>`);
+    if (now.tet > 0) nowParts.push(`<span style="color:#5bf">tet:${now.tet}</span>`);
+    if (now.idle_tet > 0) nowParts.push(`<span style="color:#888">idle:${now.idle_tet}</span>`);
+    if (now.gluon > 0) nowParts.push(`<span style="color:#80ff00">gluon:${now.gluon}</span>`);
+    if (now.weak > 0) nowParts.push(`<span style="color:#7f00ff">weak:${now.weak}</span>`);
+    html += `<div style="width:100%; text-align:center; font-size:9px; margin-top:4px; letter-spacing:0.03em;">${nowParts.join(' &middot; ')}</div>`;
+    // Historical running totals
+    const histParts = [];
+    histParts.push(`<span style="color:#aaa">oct:${g.oct}</span>`);
+    histParts.push(`<span style="color:#5bf">tet:${g.tet}</span>`);
+    histParts.push(`<span style="color:#888">idle:${g.idle_tet}</span>`);
+    histParts.push(`<span style="color:#80ff00">gluon:${g.gluon}</span>`);
+    histParts.push(`<span style="color:#7f00ff">weak:${g.weak}</span>`);
+    html += `<div style="width:100%; text-align:center; font-size:8px; margin-top:2px; color:var(--text-3);">totals: ${histParts.join(' &middot; ')}</div>`;
+
     listEl.innerHTML = html;
 
     // Click delegation: attach ONE handler to parent (survives innerHTML rebuilds).
@@ -1119,7 +1142,7 @@ function _spawnPlaybackXon(startNode) {
         _assignedFace: null, _quarkType: null,
         _mode: 'oct', _lastDir: null, _dirHistory: [],
         _dirBalance: new Array(10).fill(0),
-        _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0 },
+        _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
         trail: [startNode], trailColHistory: [col], _trailFrozenPos: [],
