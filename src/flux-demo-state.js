@@ -758,6 +758,8 @@ function _recomputeColors(phase) {
             }
         }
     }
+    // Refresh shapes (tet void colors) to match new phase
+    if (typeof _applyTetColoring === 'function' && typeof _nucleusTetFaceData !== 'undefined' && _nucleusTetFaceData) _applyTetColoring(false);
     // Refresh legend + stats panels
     if (typeof _updateLegend === 'function') _updateLegend();
     if (typeof updateDemoPanel === 'function') updateDemoPanel();
