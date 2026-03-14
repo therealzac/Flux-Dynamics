@@ -1394,6 +1394,12 @@ function startRenderLoop(){
         if (typeof updateBraneHighlights === 'function') updateBraneHighlights();
         if (typeof updateWavefunction === 'function') updateWavefunction();
         tickOctVoids();
+        // Background grayness slider: 0 = black, 100 = white
+        const _bgEl = document.getElementById('bg-gray-slider');
+        if (_bgEl) {
+            const _g = (+_bgEl.value) / 100;
+            renderer.setClearColor(new THREE.Color(_g, _g, _g), 1);
+        }
         renderer.render(scene, camera);
     })();
 }

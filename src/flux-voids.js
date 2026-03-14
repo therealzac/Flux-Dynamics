@@ -1257,6 +1257,11 @@ function applyWavefunctionOpacity() {
 
 document.getElementById('wf-opacity-slider').addEventListener('input', applyWavefunctionOpacity);
 
+document.getElementById('bg-gray-slider').addEventListener('input', () => {
+    const pct = +document.getElementById('bg-gray-slider').value;
+    document.getElementById('bg-gray-val').textContent = pct + '%';
+});
+
 document.getElementById('btn-add-excitation').addEventListener('click',toggleExcitationPlacement);
 // Big bang button handled by V2 dropdown menu in post-load script
 document.getElementById('btn-select-mode').addEventListener('click',toggleSelectMode);
