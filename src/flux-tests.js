@@ -259,20 +259,22 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T21', name: 'Oct cage permanence', init: { _octSnapshot: null },
       activate(g) {
         const snap = new Set();
-        for (const scId of _octSCIds) { if (activeSet.has(scId)) snap.add(scId); }
+        const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
+        for (const scId of _octSCIds) { if (_scActive(scId)) snap.add(scId); }
         g._octSnapshot = snap;
         if (snap.size === 0) { g.ok = null; g.msg = 'no oct SCs active yet'; }
       },
       check(tick, g) {
+        const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
         // Update snapshot with newly active oct SCs
         if (g._octSnapshot) {
-          for (const scId of _octSCIds) { if (activeSet.has(scId)) g._octSnapshot.add(scId); }
+          for (const scId of _octSCIds) { if (_scActive(scId)) g._octSnapshot.add(scId); }
           if (g._octSnapshot.size > 0 && g.ok === null) { g.ok = true; g.msg = ''; }
         }
-        // Verify all snapshotted oct SCs still active
+        // Verify all snapshotted oct SCs still active in any set
         if (g._octSnapshot && g._octSnapshot.size > 0) {
           for (const scId of g._octSnapshot) {
-            if (!activeSet.has(scId)) return `tick ${tick}: oct SC ${scId} lost`;
+            if (!_scActive(scId)) return `tick ${tick}: oct SC ${scId} lost`;
           }
         }
         return null;
@@ -1664,6 +1666,7 @@ function _liveGuardResetForRewind() {
     for (const entry of LIVE_GUARD_REGISTRY) {
         _liveGuards[entry.id] = { ok: null, msg: 'grace period', failed: false, ...(entry.init || {}) };
     }
+    _liveGuardActivated = false;
     _liveGuardFailTick = null;
     _liveGuardDumped = false;
     if (typeof _liveGuardRender === 'function') _liveGuardRender();
@@ -1673,6 +1676,7 @@ function _liveGuardResetForRewind() {
 // Generic dispatcher — iterates LIVE_GUARD_REGISTRY and calls each
 // entry's check() function. No per-test if-blocks needed.
 // ══════════════════════════════════════════════════════════════════
+let _liveGuardActivated = false;
 function _liveGuardCheck() {
     if (!_demoActive || !_liveGuardsActive || _testRunning) return;
     const tick = _demoTick;
@@ -1680,6 +1684,7 @@ function _liveGuardCheck() {
     // ── During grace: stay null ──
     if (tick <= LIVE_GUARD_GRACE) {
         if (tick === LIVE_GUARD_GRACE) {
+            _liveGuardActivated = true;
             // Promote non-convergence guards to green
             for (const entry of LIVE_GUARD_REGISTRY) {
                 if (entry.convergence) continue;
@@ -1693,6 +1698,20 @@ function _liveGuardCheck() {
             _liveGuardRender();
         }
         return;
+    }
+
+    // ── Deferred activation: if grace was 0 and tick jumped past it ──
+    if (!_liveGuardActivated) {
+        _liveGuardActivated = true;
+        for (const entry of LIVE_GUARD_REGISTRY) {
+            if (entry.convergence) continue;
+            const g = _liveGuards[entry.id];
+            if (!g.failed) { g.ok = true; g.msg = ''; }
+        }
+        for (const entry of LIVE_GUARD_REGISTRY) {
+            if (entry.activate) entry.activate(_liveGuards[entry.id]);
+        }
+        _liveGuardRender();
     }
 
     let anyFailed = false;
@@ -2411,13 +2430,17 @@ function _executeBfsTestRun(runIdx) {
         const pollId = setInterval(() => {
             // Update progress panel
             const testLabel = runIdx === 0 ? 'Test 1 (choreographer)' : 'Test 2 (random)';
+            const novelWarning = (runIdx === 1 && _bfsTestNovelCount > 0)
+                ? `<br><span style="color:#ff4444;font-weight:bold;font-size:1.1em;">⚠ NOT EXHAUSTIVE — ${_bfsTestNovelCount} novel solution${_bfsTestNovelCount !== 1 ? 's' : ''} found</span>`
+                : '';
             _updateBfsTestPanel(
                 `${testLabel}: tick ${_demoTick}, highest ${_maxTickReached}, ` +
                 `retries ${_totalBacktrackRetries}, ` +
-                `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}`
+                `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}` +
+                novelWarning
             );
-            // Check termination: canary fired, demo stopped, or early abort
-            if (simHalted || !_demoActive || _bfsTestEarlyAbort) {
+            // Check termination: canary fired or demo stopped (no early abort — let random run to completion)
+            if (simHalted || !_demoActive) {
                 clearInterval(pollId);
                 resolve();
             }
@@ -2442,8 +2465,9 @@ function _setBfsTestTitle(runIdx, test1Best) {
     }
 }
 
-async function startBfsExhaustivenessTest() {
+async function startBfsExhaustivenessTest(latticeLevel) {
     if (_bfsTestActive || _demoActive) return;
+    const lvl = latticeLevel || 1; // default L1
 
     _bfsTestActive = true;
     _bfsTestRunIdx = 0;
@@ -2451,13 +2475,14 @@ async function startBfsExhaustivenessTest() {
     _bfsTestComparison = null;
     _bfsTestReferenceFingerprints = null;
     _bfsTestEarlyAbort = false;
+    _bfsTestNovelCount = 0;
     _bfsTestNovelDetail = null;
     _bfsTestDecisionTrace = [];
 
-    // Force L1 lattice for fast testing
+    // Set lattice level
     const slider = document.getElementById('lattice-slider');
-    if (slider && +slider.value !== 1) {
-        slider.value = 1;
+    if (slider && +slider.value !== lvl) {
+        slider.value = lvl;
         slider.dispatchEvent(new Event('input'));
         await new Promise(r => setTimeout(r, 100));
     }
@@ -2467,7 +2492,7 @@ async function startBfsExhaustivenessTest() {
     _bfsTestSeeds[0] = seed;
     _bfsTestSeeds[1] = seed;
 
-    console.log(`%c[DFS TEST] Starting model exhaustiveness test (L1)\n` +
+    console.log(`%c[DFS TEST] Starting model exhaustiveness test (L${lvl})\n` +
         `  Seed: 0x${seed.toString(16).padStart(8,'0')}\n` +
         `  Test 1: CHOREOGRAPHER (normal heuristic scoring)\n` +
         `  Test 2: RANDOM (no heuristics) — early abort if novel solution found`,
@@ -2509,6 +2534,7 @@ async function startBfsExhaustivenessTest() {
     _bfsTestRunIdx = 1;
     _bfsTestRandomChoreographer = true; // all scoring → uniform random
     _bfsTestEarlyAbort = false;
+    _bfsTestNovelCount = 0;
     NucleusSimulator.simulateNucleus();
     await new Promise(r => setTimeout(r, 100));
     _setBfsTestTitle(1, _bfsTestResults[0].totalFingerprints);
@@ -2532,28 +2558,36 @@ async function startBfsExhaustivenessTest() {
     _bfsTestReferenceFingerprints = null;
 
     if (_bfsTestEarlyAbort) {
-        // ── FAIL: Random found a novel solution ──
+        // ── FAIL: Random found novel solutions ──
         const nd = _bfsTestNovelDetail || { tick: '?', fingerprint: '?' };
         const refCount = refFPs ? (refFPs.get(nd.tick)?.size || 0) : '?';
+        const r1 = _bfsTestResults[0], r2 = _bfsTestResults[1];
+        const randomHalted = r2 && r2.maxTick < 200;
         const failMsg = `FAIL: Choreographer not exhaustive — ` +
-            `random found novel solution at tick ${nd.tick}`;
+            `random found ${_bfsTestNovelCount} novel solution${_bfsTestNovelCount !== 1 ? 's' : ''} (first at tick ${nd.tick}). ` +
+            `Random reached tick ${r2 ? r2.maxTick : '?'}${randomHalted ? ' (halted — finite paths)' : ''}.`;
         _bfsTestComparison = {
             identical: false,
             earlyAbort: true,
             novelTick: nd.tick,
             novelFingerprint: nd.fingerprint,
+            novelCount: _bfsTestNovelCount,
             summary: failMsg,
             sameLongestSolution: false,
             sameTotalFingerprints: false,
             differentPaths: true,
+            randomMaxTick: r2 ? r2.maxTick : 0,
+            randomHalted,
             fingerprintDiff: { ticksOnlyA: [], ticksOnlyB: [], ticksMismatch: [] },
         };
         _updateBfsTestPanel(failMsg);
         _setBfsTestTitle(-1);
         console.log(`%c[DFS TEST] ${failMsg}`, 'color:red;font-weight:bold');
-        console.log(`  Novel fingerprint: ${nd.fingerprint}`);
-        console.log(`  At tick: ${nd.tick}`);
-        console.log(`  Choreographer had ${refCount} solutions at that tick`);
+        console.log(`  Total novel fingerprints: ${_bfsTestNovelCount}`);
+        console.log(`  First novel at tick: ${nd.tick}`);
+        console.log(`  Choreographer: highest=${r1 ? r1.maxTick : '?'}, fps=${r1 ? r1.totalFingerprints : '?'}`);
+        console.log(`  Random: highest=${r2 ? r2.maxTick : '?'}, fps=${r2 ? r2.totalFingerprints : '?'}${randomHalted ? ' (HALTED — rules may be impossible)' : ''}`);
+        console.log(`  Choreographer had ${refCount} solutions at first novel tick`);
 
         // ── Dump decision trace around divergent tick ──
         if (_bfsTestDecisionTrace && _bfsTestDecisionTrace.length > 0 && nd.tick) {
@@ -2638,12 +2672,13 @@ function _updateBfsTestPanel(message) {
         const c = _bfsTestComparison;
 
         if (c.earlyAbort) {
-            // ── FAIL: early abort — choreographer not exhaustive ──
+            // ── FAIL: choreographer not exhaustive ──
             html += `<div style="color:#ff4444; font-weight:bold; font-size:13px; margin-bottom:6px; ` +
                     `padding:6px; background:rgba(255,50,50,0.1); border:1px solid #ff4444; border-radius:4px;">` +
                     `✗ CHOREOGRAPHER NOT EXHAUSTIVE</div>`;
             html += `<div style="font-size:10px; color:#ff8866; margin-bottom:6px; line-height:1.5;">` +
-                `Random found a novel solution at tick <b>${c.novelTick}</b><br>` +
+                `Random found <b>${c.novelCount || 1}</b> novel solution${(c.novelCount || 1) !== 1 ? 's' : ''} (first at tick <b>${c.novelTick}</b>)<br>` +
+                (c.randomHalted ? `<span style="color:#ffaa44;">Random halted at tick ${c.randomMaxTick} — finite valid paths</span><br>` : '') +
                 `<span style="font-size:9px; color:#cc7755; word-break:break-all;">${c.novelFingerprint}</span>` +
                 `</div>`;
         } else {
@@ -2885,10 +2920,14 @@ function _exportBfsTestResults() {
         else startTournament();
     });
 
-    // BFS exhaustiveness test button
-    document.getElementById('btn-bfs-test')?.addEventListener('click', function(){
-        if (_bfsTestActive) return; // prevent double-click
-        startBfsExhaustivenessTest();
+    // BFS exhaustiveness test buttons (L1 and L2)
+    document.getElementById('btn-bfs-test-l1')?.addEventListener('click', function(){
+        if (_bfsTestActive) return;
+        startBfsExhaustivenessTest(1);
+    });
+    document.getElementById('btn-bfs-test-l2')?.addEventListener('click', function(){
+        if (_bfsTestActive) return;
+        startBfsExhaustivenessTest(2);
     });
 
     // BFS export button
@@ -2898,6 +2937,13 @@ function _exportBfsTestResults() {
 
     // Play/pause button — pauses/resumes the demo tick interval
     document.getElementById('btn-nucleus-pause')?.addEventListener('click', function(){
+        // Movie playback mode: toggle pause
+        if (_playbackMode) {
+            _demoPaused = !_demoPaused;
+            this.textContent = _demoPaused ? '\u25B6' : '\u23F8';
+            this.title = _demoPaused ? 'Resume playback' : 'Pause playback';
+            return;
+        }
         if (typeof isDemoPaused === 'function' && _demoActive) {
             // If reversing, just stop reverse and stay paused — don't toggle
             if (_demoReversing) {
@@ -2930,6 +2976,13 @@ function _exportBfsTestResults() {
 
     // ── Playback controls ──
     document.getElementById('btn-step-back')?.addEventListener('click', function() {
+        if (_playbackMode && _importedMovie) {
+            _demoPaused = true;
+            if (_playbackFrame > 0) { _playbackFrame--; _pbPosCache = null; _applyMovieFrame(_playbackFrame); }
+            const s = document.getElementById('timeline-scrubber'); if (s) s.value = _playbackFrame;
+            const v = document.getElementById('timeline-val'); if (v) v.textContent = _playbackFrame;
+            return;
+        }
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
@@ -2939,6 +2992,13 @@ function _exportBfsTestResults() {
     });
 
     document.getElementById('btn-step-forward')?.addEventListener('click', function() {
+        if (_playbackMode && _importedMovie) {
+            _demoPaused = true;
+            if (_playbackFrame < _importedMovie.totalFrames - 1) { _playbackFrame++; _applyMovieFrame(_playbackFrame); }
+            const s = document.getElementById('timeline-scrubber'); if (s) s.value = _playbackFrame;
+            const v = document.getElementById('timeline-val'); if (v) v.textContent = _playbackFrame;
+            return;
+        }
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
@@ -2948,6 +3008,12 @@ function _exportBfsTestResults() {
     });
 
     document.getElementById('btn-reverse')?.addEventListener('click', function() {
+        if (_playbackMode) {
+            _demoReversing = !_demoReversing;
+            _demoPaused = false;
+            _updatePlaybackButtons();
+            return;
+        }
         if (!_demoActive) return;
         if (_demoReversing) {
             stopReverse();
@@ -2958,6 +3024,13 @@ function _exportBfsTestResults() {
 
     // Rewind all the way to t=0
     document.getElementById('btn-rewind-start')?.addEventListener('click', function() {
+        if (_playbackMode && _importedMovie) {
+            _demoPaused = true; _playbackFrame = 0; _pbPosCache = null;
+            _applyMovieFrame(0);
+            const s = document.getElementById('timeline-scrubber'); if (s) s.value = 0;
+            const v = document.getElementById('timeline-val'); if (v) v.textContent = 0;
+            return;
+        }
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
@@ -2980,6 +3053,13 @@ function _exportBfsTestResults() {
 
     // Fast-forward: drain redo stack instantly, then pause
     document.getElementById('btn-forward-end')?.addEventListener('click', function() {
+        if (_playbackMode && _importedMovie) {
+            _demoPaused = true; _playbackFrame = _importedMovie.totalFrames - 1;
+            _pbPosCache = null; _applyMovieFrame(_playbackFrame);
+            const s = document.getElementById('timeline-scrubber'); if (s) s.value = _playbackFrame;
+            const v = document.getElementById('timeline-val'); if (v) v.textContent = _playbackFrame;
+            return;
+        }
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();

@@ -545,8 +545,8 @@ function updateXonPanel() {
     if (_testRunning) return;
     const panel = document.getElementById('xon-panel');
     if (!panel) return;
-    panel.style.display = _demoActive ? 'block' : 'none';
-    if (!_demoActive) return;
+    panel.style.display = (_demoActive || _playbackMode) ? 'block' : 'none';
+    if (!_demoActive && !_playbackMode) return;
 
     const listEl = document.getElementById('xon-panel-list');
     if (!listEl) return;
@@ -556,8 +556,8 @@ function updateXonPanel() {
         const x = _demoXons[i];
         if (!x.alive) continue;
         const modeCol = x._mode === 'oct' ? '#ffffff' :
-                        x._mode === 'weak' ? '#080808' :
-                        x._mode === 'gluon' ? '#ffffff' :
+                        x._mode === 'weak' ? '#7f00ff' :
+                        x._mode === 'gluon' ? '#000000' :
                         x._mode === 'oct_formation' ? '#ffffff' :
                         x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
                         x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
@@ -722,6 +722,9 @@ function stopDemo() {
     _demoReversing = false;
     if (_reverseInterval) { clearTimeout(_reverseInterval); _reverseInterval = null; }
     _tickLog.length = 0;
+    _movieFrames.length = 0;
+    _lastMoviePos = null;
+    _stopMoviePlayback();
     _redoStack.length = 0;
     _openingPhase = false;
     const pbEl = document.getElementById('playback-controls');
@@ -927,6 +930,16 @@ function _updateTimelineScrubber() {
 
 // Seek to a specific position in the snapshot timeline.
 function _timelineScrubTo(targetPos) {
+    // Movie playback scrubbing
+    if (_playbackMode && _importedMovie) {
+        const idx = Math.max(0, Math.min(targetPos, _importedMovie.totalFrames - 1));
+        _playbackFrame = idx;
+        _pbPosCache = null; // invalidate cache for random seek
+        _applyMovieFrame(idx);
+        const val = document.getElementById('timeline-val');
+        if (val) val.textContent = idx;
+        return;
+    }
     if (!_demoActive) return;
     if (_demoReversing && typeof stopReverse === 'function') stopReverse();
     if (!_demoPaused && typeof pauseDemo === 'function') pauseDemo();
@@ -1013,6 +1026,350 @@ function exportTickLog() {
     a.click();
     URL.revokeObjectURL(url);
     console.log(`[export] Downloaded ${_tickLog.length} tick log entries`);
+}
+
+// ── Movie export ──
+function exportMovie() {
+    if (_movieFrames.length === 0) {
+        console.warn('[movie] No movie frames to export');
+        return;
+    }
+    const data = {
+        version: 3,
+        type: 'movie',
+        exported: new Date().toISOString(),
+        latticeLevel: latticeLevel,
+        nodeCount: N,
+        totalFrames: _movieFrames.length,
+        frames: _movieFrames
+    };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `flux-movie-${_movieFrames.length}f-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    console.log(`[movie] Downloaded ${_movieFrames.length} frames`);
+}
+
+// ── Movie import ──
+function importMovie() {
+    const input = document.getElementById('movie-file-input');
+    if (input) input.click();
+}
+
+function _handleMovieFileSelect(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        try {
+            const data = JSON.parse(ev.target.result);
+            if (data.version < 3 || data.type !== 'movie') {
+                console.error('[movie] Invalid movie file (need version ≥ 3, type=movie)');
+                return;
+            }
+            if (!data.frames || data.frames.length === 0) {
+                console.error('[movie] No frames in movie file');
+                return;
+            }
+            _importedMovie = data;
+            _startMoviePlayback();
+        } catch (err) {
+            console.error('[movie] Failed to parse movie file:', err);
+        }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // reset so same file can be re-imported
+}
+
+// ── Movie playback engine ──
+// Create a bare xon with Three.js visuals for movie playback (no nucleus data needed).
+function _spawnPlaybackXon(startNode) {
+    const col = 0xffffff;
+    const sparkMat = new THREE.SpriteMaterial({
+        color: col, map: _sparkTex, transparent: true, opacity: 1.0,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    });
+    const spark = new THREE.Sprite(sparkMat);
+    spark.scale.set(0.28, 0.28, 1);
+    spark.renderOrder = 22;
+    const group = new THREE.Group();
+    group.add(spark);
+    if (pos[startNode]) group.position.set(pos[startNode][0], pos[startNode][1], pos[startNode][2]);
+    scene.add(group);
+
+    const trailGeo = new THREE.BufferGeometry();
+    const trailPos = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+    const trailCol = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+    trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+    const trailMat = new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 1.0,
+        depthTest: false, blending: THREE.AdditiveBlending,
+    });
+    const trailLine = new THREE.Line(trailGeo, trailMat);
+    trailLine.renderOrder = 20;
+    scene.add(trailLine);
+
+    const xon = {
+        node: startNode, prevNode: startNode, sign: 1,
+        _loopType: null, _loopSeq: null, _loopStep: 0,
+        _assignedFace: null, _quarkType: null,
+        _mode: 'oct', _lastDir: null, _dirHistory: [],
+        _dirBalance: new Array(10).fill(0),
+        _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0 },
+        col, group, spark, sparkMat,
+        trailLine, trailGeo, trailPos, trailCol,
+        trail: [startNode], trailColHistory: [col], _trailFrozenPos: [],
+        tweenT: 1, flashT: 1.0, _highlightT: 0, alive: true,
+    };
+    _trailInitFrozen(xon);
+    _demoXons.push(xon);
+    return xon;
+}
+
+function _startMoviePlayback() {
+    if (!_importedMovie) return;
+    // Stop any running demo
+    if (_demoActive) {
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        _demoActive = false;
+    }
+    // Build lattice if not already built
+    if (!pos || pos.length === 0) {
+        buildLattice(_importedMovie.latticeLevel || 2);
+    }
+    // Apply frame 0 positions so lattice is correct before spawning
+    const f0 = _importedMovie.frames[0];
+    if (f0 && f0.pos) {
+        for (let i = 0; i < f0.pos.length && i < pos.length; i++) {
+            pos[i][0] = f0.pos[i][0]; pos[i][1] = f0.pos[i][1]; pos[i][2] = f0.pos[i][2];
+        }
+    }
+    // Spawn playback xons (clean slate)
+    for (const x of _demoXons) {
+        if (x.group) scene.remove(x.group);
+        if (x.trailLine) scene.remove(x.trailLine);
+    }
+    _demoXons.length = 0;
+    const xonCount = f0 ? f0.xons.length : 6;
+    for (let i = 0; i < xonCount; i++) {
+        const startNode = f0 ? f0.xons[i].n : 0;
+        _spawnPlaybackXon(startNode);
+    }
+    _playbackMode = true;
+    _playbackFrame = 0;
+    _demoPaused = false;
+    _demoReversing = false;
+    // Show playback controls + pause button
+    const pc = document.getElementById('playback-controls');
+    if (pc) pc.style.display = '';
+    const pauseBtn = document.getElementById('btn-nucleus-pause');
+    if (pauseBtn) { pauseBtn.style.display = ''; pauseBtn.textContent = '\u23F8'; }
+    const scrubber = document.getElementById('timeline-scrubber');
+    if (scrubber) {
+        scrubber.max = _importedMovie.totalFrames - 1;
+        scrubber.value = 0;
+    }
+    const val = document.getElementById('timeline-val');
+    if (val) val.textContent = '0';
+    // Show deuteron panel + populate legend (normally done by enterNucleusMode)
+    const dp = document.getElementById('deuteron-panel');
+    if (dp) dp.style.display = 'block';
+    if (typeof _populateDeuteronQuarkLegend === 'function') _populateDeuteronQuarkLegend();
+    // Reset visit tracking for sidebar
+    _demoVisits = {};
+    for (let f = 1; f <= 8; f++) _demoVisits[f] = {};
+    _demoTypeBalanceHistory = [];
+    _demoTick = 0;
+    _pbVisitsUpTo = -1;
+    // Apply first frame
+    _applyMovieFrame(0);
+    // Start playback interval (same speed as demo: 60fps tick)
+    _demoInterval = setInterval(_moviePlaybackTick, 17);
+    console.log(`[movie] Playing back ${_importedMovie.totalFrames} frames`);
+}
+
+function _moviePlaybackTick() {
+    if (!_playbackMode || !_importedMovie) return;
+    if (_demoPaused) return;
+    if (_demoReversing) {
+        if (_playbackFrame > 0) {
+            _playbackFrame--;
+            _applyMovieFrame(_playbackFrame);
+        }
+    } else {
+        if (_playbackFrame < _importedMovie.totalFrames - 1) {
+            _playbackFrame++;
+            _applyMovieFrame(_playbackFrame);
+        }
+    }
+    // Update scrubber
+    const scrubber = document.getElementById('timeline-scrubber');
+    if (scrubber) scrubber.value = _playbackFrame;
+    const val = document.getElementById('timeline-val');
+    if (val) val.textContent = _playbackFrame;
+}
+
+// Cached position reconstruction — avoids re-walking from frame 0 each time.
+// _pbPosCache stores { idx, pos[][] } for the last reconstructed frame.
+let _pbPosCache = null;
+
+function _reconstructPos(frameIdx) {
+    const frames = _importedMovie.frames;
+    // If cache is at or before target, continue from cache; else restart from 0
+    let startIdx = 0;
+    let p;
+    if (_pbPosCache && _pbPosCache.idx <= frameIdx) {
+        startIdx = _pbPosCache.idx + 1;
+        p = _pbPosCache.pos.map(v => [v[0], v[1], v[2]]);
+    } else {
+        p = frames[0].pos.map(v => [v[0], v[1], v[2]]);
+        startIdx = 1;
+    }
+    for (let i = startIdx; i <= frameIdx; i++) {
+        if (frames[i].dp) {
+            for (const [nodeIdx, x, y, z] of frames[i].dp) {
+                p[nodeIdx][0] = x; p[nodeIdx][1] = y; p[nodeIdx][2] = z;
+            }
+        }
+    }
+    _pbPosCache = { idx: frameIdx, pos: p.map(v => [v[0], v[1], v[2]]) };
+    return p;
+}
+
+// Color for a given mode+quark
+function _modeColor(mode, quark) {
+    if (quark && QUARK_COLORS[quark]) return QUARK_COLORS[quark];
+    if (mode === 'weak') return 0x7f00ff;
+    if (mode === 'gluon') return 0x000000;
+    return 0xffffff; // oct or unassigned
+}
+
+const _PLAYBACK_TRAIL_LEN = 12;
+
+// Incremental visit tracker for playback
+let _pbVisitsUpTo = -1; // last frame index we've counted visits for
+
+// Reconstruct _demoVisits from movie frames [0..idx] for sidebar display
+function _reconstructPlaybackVisits(idx) {
+    const frames = _importedMovie.frames;
+    // If scrubbing backwards, reset and rebuild
+    if (idx < _pbVisitsUpTo) {
+        _demoVisits = {};
+        for (let f = 1; f <= 8; f++) _demoVisits[f] = {};
+        _pbVisitsUpTo = -1;
+    }
+    // Ensure _demoVisits initialized
+    if (!_demoVisits || _pbVisitsUpTo < 0) {
+        _demoVisits = {};
+        for (let f = 1; f <= 8; f++) _demoVisits[f] = {};
+        _pbVisitsUpTo = -1;
+    }
+    // Incrementally add frames from _pbVisitsUpTo+1 to idx
+    for (let t = _pbVisitsUpTo + 1; t <= idx && t < frames.length; t++) {
+        const fr = frames[t];
+        if (!fr || !fr.xons) continue;
+        for (const x of fr.xons) {
+            if (x.f && x.f > 0 && x.q && (x.m === 'tet' || x.m === 'idle_tet')) {
+                _demoVisits[x.f][x.q] = (_demoVisits[x.f][x.q] || 0) + 1;
+            }
+        }
+    }
+    _pbVisitsUpTo = idx;
+    _actualizationVisits = _demoVisits;
+}
+
+function _applyMovieFrame(idx) {
+    if (!_importedMovie) return;
+    const frames = _importedMovie.frames;
+    const frame = frames[idx];
+    if (!frame) return;
+
+    // Set tick counter for sidebar
+    _demoTick = idx;
+
+    // 1. Reconstruct positions
+    const rPos = _reconstructPos(idx);
+    for (let i = 0; i < rPos.length && i < pos.length; i++) {
+        pos[i][0] = rPos[i][0];
+        pos[i][1] = rPos[i][1];
+        pos[i][2] = rPos[i][2];
+    }
+
+    // 2. Restore SC sets
+    activeSet.clear(); for (const id of frame.a) activeSet.add(id);
+    xonImpliedSet.clear(); for (const id of frame.xi) xonImpliedSet.add(id);
+    impliedSet.clear(); for (const id of frame.im) impliedSet.add(id);
+    // Fold xonImplied into implied for rendering (mirrors what _detectImplied does)
+    for (const id of frame.xi) impliedSet.add(id);
+
+    // 3. Position xons with trails
+    for (let i = 0; i < _demoXons.length && i < frame.xons.length; i++) {
+        const x = _demoXons[i];
+        const fx = frame.xons[i];
+        // Derive prevNode from previous frame
+        const prevFrame = idx > 0 ? frames[idx - 1] : null;
+        const prevNode = (prevFrame && prevFrame.xons[i]) ? prevFrame.xons[i].n : fx.n;
+
+        x._restoring = true;
+        x.prevNode = prevNode;
+        x.node = fx.n;
+        x._restoring = false;
+        x._mode = fx.m;
+        x._quarkType = fx.q;
+        x.col = _modeColor(fx.m, fx.q);
+        x.alive = true;
+
+        // Update spark color
+        if (x.sparkMat) x.sparkMat.color.setHex(x.col);
+
+        // Build trail from history (last N frames)
+        // Use current reconstructed positions for all trail entries (close enough
+        // since node positions barely shift between adjacent frames)
+        const trailStart = Math.max(0, idx - _PLAYBACK_TRAIL_LEN + 1);
+        x.trail = [];
+        x.trailColHistory = [];
+        x._trailFrozenPos = [];
+        for (let t = trailStart; t <= idx; t++) {
+            const tf = frames[t];
+            if (!tf || !tf.xons[i]) continue;
+            const tn = tf.xons[i].n;
+            x.trail.push(tn);
+            x.trailColHistory.push(_modeColor(tf.xons[i].m, tf.xons[i].q));
+            x._trailFrozenPos.push([rPos[tn][0], rPos[tn][1], rPos[tn][2]]);
+        }
+
+        // Snap sprite to position
+        if (x.group && pos[x.node]) {
+            x.group.position.set(pos[x.node][0], pos[x.node][1], pos[x.node][2]);
+        }
+        x.tweenT = 1;
+    }
+
+    // 4. Rebuild visuals
+    rebuildBaseLines();
+    rebuildShortcutLines();
+    updateVoidSpheres();
+    updateSpheres();
+    // 5. Reconstruct visit data and update sidebar panels
+    try {
+        _reconstructPlaybackVisits(idx);
+        // Reset balance history so sparkline builds up during playback
+        if (idx === 0) _demoTypeBalanceHistory = [];
+        if (typeof updateDemoPanel === 'function') updateDemoPanel();
+    } catch(e) {}
+    try { if (typeof updateXonPanel === 'function') updateXonPanel(); } catch(e) {}
+}
+
+function _stopMoviePlayback() {
+    _playbackMode = false;
+    _importedMovie = null;
+    _playbackFrame = 0;
+    _pbPosCache = null;
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
 }
 
 // ── Fighterjet mode toggle ──

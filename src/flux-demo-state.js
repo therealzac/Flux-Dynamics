@@ -8,6 +8,12 @@ let _demoReversing = false;    // true during reverse playback
 let _reverseInterval = null;   // setInterval ID for reverse playback
 let _tickLog = [];             // lightweight per-tick log for export
 let _tickLogLastGuards = {};   // last full guard state for delta encoding
+// ── Movie export/import ──
+let _movieFrames = [];         // lean per-tick frames for movie export
+let _lastMoviePos = null;      // previous tick's pos[][] for delta compression
+let _playbackMode = false;     // true during imported movie playback
+let _playbackFrame = 0;        // current frame index in playback
+let _importedMovie = null;     // parsed movie JSON during playback
 let _redoStack = [];           // snapshots saved during rewind for instant step-forward
 let _rlActiveModel = null;     // active RL model for oct scoring (null = use heuristic)
 // PPO training state
@@ -427,7 +433,8 @@ let _bfsTestComparison = null;   // comparison result after both runs complete
 let _bfsTestRandomChoreographer = false; // true = totally random decisions (no heuristic scoring)
 let _bfsTestReferenceFingerprints = null; // Map<tick, Set<string>> from Test 1 (choreographer)
 let _bfsTestEarlyAbort = false;           // true if Test 2 found a novel fingerprint
-let _bfsTestNovelDetail = null;           // {tick, fingerprint} of the offending novel solution
+let _bfsTestNovelCount = 0;              // total novel fingerprints found by random
+let _bfsTestNovelDetail = null;           // {tick, fingerprint} of the first novel solution
 let _bfsTestDecisionTrace = [];          // [{tick, faceAssignments, octMatching, btActive}] — per-tick decisions during test
 
 // ── Hybrid Relay State (greedy + random enumeration at each layer) ──
@@ -516,7 +523,7 @@ let _nucleusFaceNodes = null;    // union of _nucleusTetFaceData[1..8].allNodes 
 let _ejectionForbidden = null;   // _octNodeSet ∪ _actualizedTetNodes — DYNAMIC
 let _purelyTetNodes = null;      // _actualizedTetNodes \ _octNodeSet — DYNAMIC
 // ── Gluon mode ──
-const GLUON_COLOR = 0xffffff;   // white — visually merged with oct mode
+const GLUON_COLOR = 0x000000;   // black — pops against grey scene background
 
 // ── SC attribution ──
 const _scAttribution = new Map();
@@ -554,6 +561,13 @@ let _btMatchingCache = null;            // Array of all valid matchings for curr
 let _btMatchingIndex = 0;              // next matching to try from _btMatchingCache
 let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (invalidate on change)
 let _btStaleRetries = 0;               // consecutive retries with no new fingerprint/exclusion
+
+// ── Face assignment enumeration (greedy + ranked alternatives) ──
+// During backtracking, enumerate ALL valid (xon, face, quarkType) assignments.
+// Greedy (best score) is tried first; on retry, alternatives ranked by score.
+let _btFaceAssignCache = null;         // Array of valid assignment combos [{xon, face, quarkType, score}[]]
+let _btFaceAssignIndex = 0;            // next face assignment combo to try
+let _btFaceAssignLedgerSize = 0;       // ledger size when cache was built
 
 // ── Tunable choreography parameters (genome for GA tournament) ──
 // All hardcoded magic numbers extracted here for parameterized optimization.
@@ -633,7 +647,7 @@ const QUARK_TOPOLOGY = {
 
 // Weak force escape color — purple/magenta, distinct from all quark + oct colors.
 // Used when a xon breaks confinement and enters the 'weak' mode.
-const WEAK_FORCE_COLOR = 0x080808; // near-black — renders as black against grey (#333) scene background
+const WEAK_FORCE_COLOR = 0x7f00ff; // violet — distinct from all quark + oct colors
 
 const XON_TRAIL_LENGTH = 250;
 

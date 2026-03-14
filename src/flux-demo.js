@@ -294,7 +294,7 @@
 //
 //   T19  Pauli exclusion     Max 1 xon per node at any tick.
 //   T20  Never stand still   Every xon moves every tick. NO exemptions.
-//   T21  Oct cage permanence Oct SCs never leave activeSet.
+//   T21  Oct cage permanence Oct SCs stay in at least one SC set.
 //   T26  No unactivated SC   SC-only traversals must use activated SCs.
 //   T27  No teleportation    Xons only move via connected edges.
 //   T45  No bouncing         No A→B→A for non-tet modes.
@@ -889,12 +889,13 @@ function _tickDemoXons(dt) {
         const hlBoost = xon._highlightT > 0 ? 2.5 : 1.0;
         const isGluon = xon._mode === 'gluon';
         const isWeak = xon._mode === 'weak';
-        const gluonBoost = isGluon ? 4.0 : 1.0;
-        // Swap spark blending for weak xons (additive can't show black)
-        if (isWeak && xon.sparkMat.blending !== THREE.NormalBlending) {
+        const gluonBoost = isGluon ? 1.5 : 1.0;
+        // Swap spark blending for gluon/weak xons (additive can't show dark colors)
+        const needsNormal = isWeak || isGluon;
+        if (needsNormal && xon.sparkMat.blending !== THREE.NormalBlending) {
             xon.sparkMat.blending = THREE.NormalBlending;
             xon.sparkMat.needsUpdate = true;
-        } else if (!isWeak && xon.sparkMat.blending !== THREE.AdditiveBlending) {
+        } else if (!needsNormal && xon.sparkMat.blending !== THREE.AdditiveBlending) {
             xon.sparkMat.blending = THREE.AdditiveBlending;
             xon.sparkMat.needsUpdate = true;
         }
@@ -902,7 +903,8 @@ function _tickDemoXons(dt) {
         xon.spark.scale.set(pulse, pulse, 1);
         // Weak sparkles: respect both weak and xon opacity sliders
         xon.sparkMat.opacity = isWeak ? weakOp * sparkOp :
-            Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * gluonBoost);
+            isGluon ? Math.min(0.5, (0.3 + xon.flashT * 0.2) * flicker * sparkOp) :
+            Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost);
         // Decay highlight timer
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
@@ -963,9 +965,10 @@ function _tickDemoXons(dt) {
                     xon.trailPos[out * 3 + 1] = py;
                     xon.trailPos[out * 3 + 2] = pz;
                     if (xon._weakTrailPos) {
-                        xon._weakTrailPos[out * 3]     = isWeak ? px : NaN;
-                        xon._weakTrailPos[out * 3 + 1] = isWeak ? py : NaN;
-                        xon._weakTrailPos[out * 3 + 2] = isWeak ? pz : NaN;
+                        const darkSeg = isGluon || isWeak;
+                        xon._weakTrailPos[out * 3]     = darkSeg ? px : NaN;
+                        xon._weakTrailPos[out * 3 + 1] = darkSeg ? py : NaN;
+                        xon._weakTrailPos[out * 3 + 2] = darkSeg ? pz : NaN;
                     }
                     // Progress through entire trail for alpha fade (0=tail, 1=head)
                     const progress = (vi + u) / Math.max(bodyLen - 1, 1);
@@ -974,14 +977,11 @@ function _tickDemoXons(dt) {
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
-                    } else if (isGluon) {
-                        const ga = sparkOp * fadeCurve;
-                        xon.trailCol[out*3] = Math.min(1, scr*4)*ga; xon.trailCol[out*3+1] = Math.min(1, scg*4)*ga; xon.trailCol[out*3+2] = Math.min(1, scb*4)*ga;
-                    } else if (isWeak) {
+                    } else if (isGluon || isWeak) {
+                        // Dark colors (black gluon, violet weak) go on NormalBlending overlay
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) {
-                            const wa = fadeCurve;
-                            xon._weakTrailCol[out*3] = scr*wa; xon._weakTrailCol[out*3+1] = scg*wa; xon._weakTrailCol[out*3+2] = scb*wa;
+                            xon._weakTrailCol[out*3] = scr*fadeCurve; xon._weakTrailCol[out*3+1] = scg*fadeCurve; xon._weakTrailCol[out*3+2] = scb*fadeCurve;
                         }
                     } else {
                         const flashBoost = xon.flashT * 0.4 * progress;
@@ -1017,15 +1017,17 @@ function _tickDemoXons(dt) {
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
                         else { const cr = _catmullRom(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = cr[0]; py = cr[1]; pz = cr[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
+                        const headIsGluon = headCol === GLUON_COLOR;
+                        const headIsDark = headIsWeak || headIsGluon;
                         if (xon._weakTrailPos) {
-                            xon._weakTrailPos[out*3] = headIsWeak ? px : NaN;
-                            xon._weakTrailPos[out*3+1] = headIsWeak ? py : NaN;
-                            xon._weakTrailPos[out*3+2] = headIsWeak ? pz : NaN;
+                            xon._weakTrailPos[out*3] = headIsDark ? px : NaN;
+                            xon._weakTrailPos[out*3+1] = headIsDark ? py : NaN;
+                            xon._weakTrailPos[out*3+2] = headIsDark ? pz : NaN;
                         }
-                        xon.trailCol[out*3] = headIsWeak ? 0 : hcr*sparkOp;
-                        xon.trailCol[out*3+1] = headIsWeak ? 0 : hcg*sparkOp;
-                        xon.trailCol[out*3+2] = headIsWeak ? 0 : hcb*sparkOp;
-                        if (headIsWeak && xon._weakTrailCol) {
+                        xon.trailCol[out*3] = headIsDark ? 0 : hcr*sparkOp;
+                        xon.trailCol[out*3+1] = headIsDark ? 0 : hcg*sparkOp;
+                        xon.trailCol[out*3+2] = headIsDark ? 0 : hcb*sparkOp;
+                        if (headIsDark && xon._weakTrailCol) {
                             xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
                         }
                         out++;
@@ -1080,36 +1082,22 @@ function _tickDemoXons(dt) {
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
-            // Mirror position to weak overlay trail
-            if (xon._weakTrailPos) {
-                xon._weakTrailPos[vi * 3] = np[0];
-                xon._weakTrailPos[vi * 3 + 1] = np[1];
-                xon._weakTrailPos[vi * 3 + 2] = np[2];
-            }
             const segCol = (xon.trailColHistory && xon.trailColHistory[i]) || xon.col;
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Gluon segments: 4x brightness, no alpha fade (stand out from everything)
-            if (segCol === GLUON_COLOR) {
-                xon.trailCol[vi * 3] = Math.min(1, cr * 4);
-                xon.trailCol[vi * 3 + 1] = Math.min(1, cg * 4);
-                xon.trailCol[vi * 3 + 2] = Math.min(1, cb * 4);
-                // Break overlay at gluon segments
-                if (xon._weakTrailPos) {
-                    xon._weakTrailPos[vi * 3] = NaN;
-                    xon._weakTrailPos[vi * 3 + 1] = NaN;
-                    xon._weakTrailPos[vi * 3 + 2] = NaN;
-                }
-                continue;
-            }
-            // Weak segments: render on overlay line (NormalBlending), hide on main (Additive)
-            if (segCol === WEAK_FORCE_COLOR) {
+            // Gluon + weak segments: render on overlay line (NormalBlending), hide on main (Additive)
+            if (segCol === GLUON_COLOR || segCol === WEAK_FORCE_COLOR) {
                 // Main trail: zero out (invisible under additive = fine)
                 xon.trailCol[vi * 3] = 0;
                 xon.trailCol[vi * 3 + 1] = 0;
                 xon.trailCol[vi * 3 + 2] = 0;
-                // Overlay: full color (opacity driven by material uniform, not vertex)
+                // Overlay: position + color; full brightness, opacity via material
+                if (xon._weakTrailPos) {
+                    xon._weakTrailPos[vi * 3]     = np[0];
+                    xon._weakTrailPos[vi * 3 + 1] = np[1];
+                    xon._weakTrailPos[vi * 3 + 2] = np[2];
+                }
                 if (xon._weakTrailCol) {
                     xon._weakTrailCol[vi * 3] = cr;
                     xon._weakTrailCol[vi * 3 + 1] = cg;
@@ -1117,8 +1105,7 @@ function _tickDemoXons(dt) {
                 }
                 continue;
             }
-            // Non-weak segment: break overlay line with NaN positions
-            // (zeroed color still draws black under NormalBlending; NaN skips the segment)
+            // Non-dark segment: break overlay line with NaN positions
             if (xon._weakTrailPos) {
                 xon._weakTrailPos[vi * 3] = NaN;
                 xon._weakTrailPos[vi * 3 + 1] = NaN;
@@ -1154,11 +1141,13 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
                     const headIsWeak = headCol === WEAK_FORCE_COLOR;
+                    const headIsGluon = headCol === GLUON_COLOR;
+                    const headIsDark = headIsWeak || headIsGluon;
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    if (headIsWeak) {
-                        // Weak head: hide on main, show on overlay
+                    if (headIsDark) {
+                        // Dark head (gluon/weak): hide on main, show on overlay
                         xon.trailCol[last * 3] = 0;
                         xon.trailCol[last * 3 + 1] = 0;
                         xon.trailCol[last * 3 + 2] = 0;
@@ -1169,7 +1158,8 @@ function _tickDemoXons(dt) {
                     }
                     // Mirror head to overlay
                     if (xon._weakTrailPos) {
-                        if (headIsWeak) {
+                        const showHeadOverlay = headIsDark && (!headIsWeak || weakOp > 0.01);
+                        if (headIsDark) {
                             xon._weakTrailPos[last * 3] = xon.group.position.x;
                             xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
                             xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;
@@ -1251,9 +1241,10 @@ function _advanceGluons() {
             const toNode = g.path[g.step];
             // Negotiate with vacuum before materializing oct SC
             const scId = g.scIds[g.step - 1];
-            if (scId !== undefined && !activeSet.has(scId)) {
+            if (scId !== undefined && !activeSet.has(scId) && !xonImpliedSet.has(scId)) {
                 if (canMaterialiseQuick(scId)) {
-                    activeSet.add(scId);
+                    xonImpliedSet.add(scId);
+                    _scAttribution.set(scId, { reason: 'gluonAdvance', tick: _demoTick });
                     stateVersion++; // invalidate cache
                     changed = true;
                 }
@@ -1401,6 +1392,8 @@ function startDemoLoop() {
     _btSnapshots.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
+    _movieFrames.length = 0;
+    _lastMoviePos = null;
     _redoStack.length = 0;
     _demoReversing = false;
     if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
@@ -1507,6 +1500,7 @@ function startDemoLoop() {
             // Re-apply init fields so state is clean across demo restarts
             if (entry.init) Object.assign(g, entry.init);
         }
+        if (typeof _liveGuardActivated !== 'undefined') _liveGuardActivated = false;
         _liveGuardsActive = true;
         _liveGuardRender();
     }
@@ -1941,11 +1935,13 @@ async function demoTick() {
                 if (!faceActualized) {
                     // Trail segments keep their original recorded color.
                     // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
-                    // Relinquish face SCs
+                    // Relinquish face SCs (protect oct cage)
                     const locked60 = _traversalLockedSCs();
+                    const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
                     if (fd60) {
                         for (const scId of fd60.scIds) {
                             if (locked60.has(scId)) continue;
+                            if (cage60.has(scId)) continue;
                             if (xonImpliedSet.delete(scId)) {
                                 _scAttribution.delete(scId);
                                 _solverNeeded = true;
@@ -1997,12 +1993,14 @@ async function demoTick() {
                 const blocker = _demoXons.find(x => x.alive && x.node === nextNode &&
                     x !== xon && (x._mode === 'tet' || x._mode === 'idle_tet'));
                 if (blocker && blocker._mode === 'idle_tet') {
-                    // Evict the BLOCKER (idle_tet is expendable)
+                    // Evict the BLOCKER (idle_tet is expendable, but protect cage SCs)
                     const blockerFd = blocker._assignedFace != null ? _nucleusTetFaceData[blocker._assignedFace] : null;
                     if (blockerFd) {
                         const locked0 = _traversalLockedSCs();
+                        const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                         for (const scId of blockerFd.scIds) {
                             if (locked0.has(scId)) continue;
+                            if (cage0.has(scId)) continue;
                             if (xonImpliedSet.delete(scId)) {
                                 _scAttribution.delete(scId);
                                 _solverNeeded = true;
@@ -2041,8 +2039,10 @@ async function demoTick() {
                 const evictFd = xon._assignedFace != null ? _nucleusTetFaceData[xon._assignedFace] : null;
                 if (evictFd) {
                     const locked0 = _traversalLockedSCs();
+                    const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
                     for (const scId of evictFd.scIds) {
                         if (locked0.has(scId)) continue;
+                        if (cage0.has(scId)) continue;
                         if (xonImpliedSet.delete(scId)) {
                             _scAttribution.delete(scId);
                             _solverNeeded = true;
@@ -2357,13 +2357,15 @@ async function demoTick() {
             }
             if (!_t60actualized) {
                 // Trail segments keep their original recorded color.
-                // Relinquish face SCs (before mode change)
+                // Relinquish face SCs (before mode change, protect cage)
                 if (xon._assignedFace != null) {
                     const fd = _nucleusTetFaceData[xon._assignedFace];
                     if (fd) {
                         const locked60 = _traversalLockedSCs();
+                        const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
                         for (const scId of fd.scIds) {
                             if (locked60.has(scId)) continue;
+                            if (cage60.has(scId)) continue;
                             if (xonImpliedSet.delete(scId)) {
                                 _scAttribution.delete(scId);
                                 _solverNeeded = true;
@@ -2388,12 +2390,14 @@ async function demoTick() {
 
             // Loop complete + actualized — return to oct
             _returnXonToOct(xon, occupied);
-            // Relinquish face SCs that are no longer needed (respects traversal lock)
+            // Relinquish face SCs that are no longer needed (protect cage, respect lock)
             if (xon._assignedFace != null) {
                 const fd = _nucleusTetFaceData[xon._assignedFace];
+                const cage15 = _octSCIds ? new Set(_octSCIds) : new Set();
                 if (fd) {
                     for (const scId of fd.scIds) {
                         if (locked15.has(scId)) continue;
+                        if (cage15.has(scId)) continue;
                         if (xonImpliedSet.delete(scId)) {
                             _scAttribution.delete(scId);
                             _solverNeeded = true;
@@ -2409,100 +2413,169 @@ async function demoTick() {
     // ── PHASE 2a: Demand-driven face selection (decentralized, no order precedence) ──
     // Each oct xon scores ALL reachable faces independently. Conflicts resolved by
     // random shuffling — no xon gets order-precedence over another.
+    let _cageCriticalXons = new Set(); // hoisted for PHASE 3 gluon activation
     {
         _ratioTracker.sync();
         let octIdle = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
 
-        // ── GLUON CHECK: cage integrity takes priority over face assignment ──
-        // Bidirectional: promote oct→gluon when cage needs help, demote gluon→oct
-        // when cage is stable. Gluon mode is sticky between ticks (not reverted at
-        // tick start) so gluons can't immediately enter tet loops.
-        // Also check existing gluon xons for demotion.
+        // ── GLUON / CAGE CHECK: cage integrity takes priority over face assignment ──
+        // Gluon mode = xon that moved OFF the oct cage to preserve cage integrity.
+        // Oct→oct moves for cage maintenance stay in oct mode.
+        // Gluon mode activates ONLY when the xon actually moves to a non-oct node.
+        //
+        // Here we: (1) demote gluons back to oct if they've returned to the cage,
+        //          (2) exclude cage-critical oct xons from face assignment.
         const gluonXons = _demoXons.filter(x => x.alive && x._mode === 'gluon' && !x._movedThisTick && !x._evictedThisTick);
         for (const xon of gluonXons) {
-            if (!_cageWouldBreak(xon)) {
+            // Gluon that returned to oct cage → demote to oct
+            if (_octNodeSet && _octNodeSet.has(xon.node)) {
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 octIdle.push(xon);
-                _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} demoted to oct (cage stable)`);
+                _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} returned to oct cage → oct mode`);
             }
+            // Gluon still off-cage → stays gluon, excluded from face assignment
         }
+        // Mark cage-critical oct xons — exclude from face assignment but keep oct mode
+        // (they'll become gluon only if their move takes them off the oct cage)
+        _cageCriticalXons = new Set();
         for (const xon of octIdle) {
             if (_cageWouldBreak(xon)) {
-                _clearModeProps(xon);
-                xon._mode = 'gluon';
-                xon.col = GLUON_COLOR;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(GLUON_COLOR);
-                _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} designated as gluon (cage integrity)`);
+                _cageCriticalXons.add(xon);
+                _logChoreo(`CAGE: X${_demoXons.indexOf(xon)} cage-critical (excluded from face assignment)`);
             }
         }
-        // Remove gluon xons from face assignment candidates
-        octIdle = octIdle.filter(x => x._mode !== 'gluon');
+        // Remove cage-critical xons from face assignment candidates (but NOT from oct movement)
+        octIdle = octIdle.filter(x => !_cageCriticalXons.has(x));
 
         if (octIdle.length > 0 && _nucleusTetFaceData) {
-            // Each xon independently scores all faces
-            const proposals = []; // {xon, face, quarkType, score, onFace}
-            for (const xon of octIdle) {
-                let bestOpp = null;
-                for (let f = 1; f <= 8; f++) {
-                    const opp = _scoreFaceOpportunity(xon, f, occupied);
-                    if (opp && opp.score >= _choreoParams.assignmentThreshold) {
-                        if (!bestOpp || opp.score > bestOpp.score) bestOpp = { xon, ...opp };
+            // ── FACE ASSIGNMENT: greedy + ranked enumeration ──
+            // During backtracking, enumerate ALL valid (xon, face, quarkType) combos
+            // and cycle through them ranked by aggregate score. Greedy = first combo.
+            let assignedCombo = null; // the combo that actually gets assigned
+
+            if (_btActive && typeof _enumerateAllFaceAssignments === 'function') {
+                // Build/refresh face assignment cache when ledger changes
+                const ledgerSize = (_btBadMoveLedger.get(_demoTick) || {size:0}).size || 0;
+                if (_btFaceAssignCache === null || _btFaceAssignLedgerSize !== ledgerSize) {
+                    // Collect ALL valid proposals across all xons, faces, quark types
+                    const allProposals = [];
+                    for (const xon of octIdle) {
+                        const opps = _allFaceOpportunities(xon, occupied);
+                        for (const opp of opps) allProposals.push(opp);
                     }
+                    _btFaceAssignCache = _enumerateAllFaceAssignments(allProposals);
+                    _btFaceAssignIndex = 0;
+                    _btFaceAssignLedgerSize = ledgerSize;
+                    _logChoreo(`FACE ENUM: ${_btFaceAssignCache.length} valid combos for tick ${_demoTick}`);
                 }
-                if (bestOpp) proposals.push(bestOpp);
-            }
 
-            // Shuffle proposals — no xon gets priority by index order
-            for (let i = proposals.length - 1; i > 0; i--) {
-                const j = Math.floor(_sRng() * (i + 1));
-                [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
-            }
-
-            // Resolve conflicts: one xon per face, first-after-shuffle wins
-            const assignedXons = new Set();
-            const assignedFaces = new Set();
-            for (const prop of proposals) {
-                if (assignedXons.has(prop.xon)) continue;
-                if (assignedFaces.has(prop.face)) continue;
-
-                // Skip low-scoring proposals (vacancy penalty already handles crowding)
-                if (prop.score < _choreoParams.assignmentThreshold) continue;
-
-                // Vacuum feasibility: can we materialize the face SCs?
-                const fd = _nucleusTetFaceData[prop.face];
-                let canMaterialize = true;
-                for (const scId of fd.scIds) {
-                    if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
-                    if (!canMaterialiseQuick(scId)) {
-                        if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
-                            canMaterialize = false;
-                            break;
+                // Try the next combo from the cache
+                if (_btFaceAssignCache.length > 0) {
+                    const idx = _btFaceAssignIndex % _btFaceAssignCache.length;
+                    _btFaceAssignIndex++;
+                    const combo = _btFaceAssignCache[idx];
+                    // Validate each proposal in the combo (vacuum + lookahead)
+                    const validatedCombo = [];
+                    const usedXons = new Set();
+                    const usedFaces = new Set();
+                    for (const prop of combo) {
+                        if (usedXons.has(prop.xon) || usedFaces.has(prop.face)) continue;
+                        // Vacuum feasibility
+                        const fd = _nucleusTetFaceData[prop.face];
+                        let canMaterialize = true;
+                        for (const scId of fd.scIds) {
+                            if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
+                            if (!canMaterialiseQuick(scId)) {
+                                if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
+                                    canMaterialize = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (!canMaterialize) continue;
+                        // Lookahead viability
+                        const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
+                        const tmpOcc = new Map(occupied);
+                        if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
+                        validatedCombo.push(prop);
+                        usedXons.add(prop.xon);
+                        usedFaces.add(prop.face);
+                    }
+                    assignedCombo = validatedCombo;
+                }
+            } else {
+                // ── GREEDY PATH (normal, non-backtrack) ──
+                // Each xon picks its single best face
+                const proposals = [];
+                for (const xon of octIdle) {
+                    let bestOpp = null;
+                    for (let f = 1; f <= 8; f++) {
+                        const opp = _scoreFaceOpportunity(xon, f, occupied);
+                        if (opp && opp.score >= _choreoParams.assignmentThreshold) {
+                            if (!bestOpp || opp.score > bestOpp.score) bestOpp = { xon, ...opp };
                         }
                     }
+                    if (bestOpp) proposals.push(bestOpp);
                 }
-                if (!canMaterialize) continue;
 
-                // Lookahead viability: can the loop complete?
-                const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
-                const tmpOcc = new Map(occupied);
-                if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
+                // Shuffle proposals — no xon gets priority by index order
+                for (let i = proposals.length - 1; i > 0; i--) {
+                    const j = Math.floor(_sRng() * (i + 1));
+                    [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
+                }
 
-                // ASSIGN — decentralized decision accepted by the system
-                _assignXonToTet(prop.xon, prop.face, prop.quarkType);
-                _demoTetAssignments++;
-                assignedXons.add(prop.xon);
-                assignedFaces.add(prop.face);
-                _demoVisitedFaces.add(prop.face);
-                _solverNeeded = true;
+                // Resolve conflicts: one xon per face, first-after-shuffle wins
+                const validatedCombo = [];
+                const usedXons = new Set();
+                const usedFaces = new Set();
+                for (const prop of proposals) {
+                    if (usedXons.has(prop.xon) || usedFaces.has(prop.face)) continue;
+                    if (prop.score < _choreoParams.assignmentThreshold) continue;
+                    // Vacuum feasibility
+                    const fd = _nucleusTetFaceData[prop.face];
+                    let canMaterialize = true;
+                    for (const scId of fd.scIds) {
+                        if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
+                        if (!canMaterialiseQuick(scId)) {
+                            if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
+                                canMaterialize = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!canMaterialize) continue;
+                    // Lookahead viability
+                    const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
+                    const tmpOcc = new Map(occupied);
+                    if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
+                    validatedCombo.push(prop);
+                    usedXons.add(prop.xon);
+                    usedFaces.add(prop.face);
+                }
+                assignedCombo = validatedCombo;
+            }
+
+            // ── Execute the chosen face assignment combo ──
+            const assignedXons = new Set();
+            const assignedFaces = new Set();
+            if (assignedCombo) {
+                for (const prop of assignedCombo) {
+                    _assignXonToTet(prop.xon, prop.face, prop.quarkType);
+                    _demoTetAssignments++;
+                    assignedXons.add(prop.xon);
+                    assignedFaces.add(prop.face);
+                    _demoVisitedFaces.add(prop.face);
+                    _solverNeeded = true;
+                }
             }
 
             // ── BFS Test decision trace: capture face assignments ──
             if (_bfsTestActive && assignedXons.size > 0) {
                 const faceAssignments = [];
-                for (const prop of proposals) {
-                    if (assignedXons.has(prop.xon)) {
+                if (assignedCombo) {
+                    for (const prop of assignedCombo) {
                         faceAssignments.push({
                             xonIdx: _demoXons.indexOf(prop.xon),
                             face: prop.face,
@@ -2906,7 +2979,13 @@ async function demoTick() {
                 plan.xon._movedThisTick = true; // prevent double-move in PHASE 3.5/4
                 _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
                 _traceMove(plan.xon, fromNode, plan.xon.node, 'p3oct');
-                // (removed: _mayReturn flip — no longer used)
+                // Gluon activation: cage-critical xon moved to non-oct node → gluon mode
+                if (_cageCriticalXons.has(plan.xon) && _octNodeSet && !_octNodeSet.has(plan.xon.node)) {
+                    plan.xon._mode = 'gluon';
+                    plan.xon.col = GLUON_COLOR;
+                    if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
+                    _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
+                }
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;
                     plan.xon._solverNeeded = false;
@@ -3147,9 +3226,11 @@ async function demoTick() {
             }
         }
         if (violation) {
-            // Soft recovery: try clearing xon-implied SCs
+            // Soft recovery: try clearing xon-implied SCs (protect oct cage)
             if (xonImpliedSet.size && !simHalted) {
+                const _cageSCSet = _octSCIds ? new Set(_octSCIds) : new Set();
                 for (const id of [...xonImpliedSet]) {
+                    if (_cageSCSet.has(id)) continue; // NEVER clear oct cage SCs
                     xonImpliedSet.delete(id); impliedSet.delete(id); impliedBy.delete(id);
                 }
                 bumpState();
@@ -3198,7 +3279,9 @@ async function demoTick() {
                 _scAttribution.set(scId, { reason: 'none', xonIdx: -1, tick: _demoTick });
             }
         }
+        const _cageSCCleanup = _octSCIds ? new Set(_octSCIds) : new Set();
         for (const id of toRemove) {
+            if (_cageSCCleanup.has(id)) continue; // NEVER remove oct cage SCs
             xonImpliedSet.delete(id);
             _scAttribution.delete(id);
             stateVersion++;
@@ -3244,6 +3327,13 @@ async function demoTick() {
     const _gT0 = performance.now();
     if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
     const _gT1 = performance.now();
+
+    // ── Record fingerprint for SUCCESSFUL ticks (guards passed) ──
+    // This is essential for exhaustiveness testing: both successful and failed
+    // fingerprints must be recorded so Test 2 (random) can detect novel solutions.
+    if (!_rewindRequested && typeof _btRecordFingerprint === 'function') {
+        _btRecordFingerprint();
+    }
 
     // ── BACKTRACK CHECK (BFS): did guards request a rewind? ──
     if (_rewindRequested) {
@@ -3632,6 +3722,39 @@ async function demoTick() {
             moves: _moveTrace.map(t => ({ xi: t.xonIdx, from: t.from, to: t.to, path: t.path })),
             guards: guardEntry
         });
+    }
+
+    // ─── Movie frame recording (lean, for export/playback) ───
+    if (!_testRunning) {
+        const frame = {
+            xons: _demoXons.filter(x => x.alive).map(x => ({
+                n: x.node, m: x._mode, q: x._quarkType || null,
+                f: x._assignedFace || 0
+            })),
+            a: [...activeSet],
+            xi: [...xonImpliedSet],
+            im: [...impliedSet]
+        };
+        // Delta-compress positions: full on first frame, deltas after
+        if (_movieFrames.length === 0 || !_lastMoviePos) {
+            frame.pos = Array.from(pos, p => [+p[0].toFixed(4), +p[1].toFixed(4), +p[2].toFixed(4)]);
+            _lastMoviePos = pos.map(p => [p[0], p[1], p[2]]);
+        } else {
+            const deltas = [];
+            for (let i = 0; i < pos.length; i++) {
+                const dx = pos[i][0] - _lastMoviePos[i][0];
+                const dy = pos[i][1] - _lastMoviePos[i][1];
+                const dz = pos[i][2] - _lastMoviePos[i][2];
+                if (Math.abs(dx) > 1e-4 || Math.abs(dy) > 1e-4 || Math.abs(dz) > 1e-4) {
+                    deltas.push([i, +pos[i][0].toFixed(4), +pos[i][1].toFixed(4), +pos[i][2].toFixed(4)]);
+                    _lastMoviePos[i][0] = pos[i][0];
+                    _lastMoviePos[i][1] = pos[i][1];
+                    _lastMoviePos[i][2] = pos[i][2];
+                }
+            }
+            frame.dp = deltas; // dp = delta positions (absent means no change)
+        }
+        _movieFrames.push(frame);
     }
 
     // Tournament hook: check if trial has reached its target tick

@@ -38,6 +38,7 @@ function excitationMaterialiseSC(e, scId, isBridge){
     const posBefore = pos.map(p=>[p[0],p[1],p[2]]);
     e.ownShortcut = scId;
     xonImpliedSet.add(scId);
+    if(typeof _scAttribution !== 'undefined') _scAttribution.set(scId, { reason: 'excitationMaterialise', tick: typeof _demoTick !== 'undefined' ? _demoTick : 0 });
     impliedSet.add(scId);
     impliedBy.set(scId, new Set());
     bumpState();
@@ -277,6 +278,7 @@ function excitationSeverForRoom(targetScId){
             // Undo
             severed.pop();
             xonImpliedSet.add(vid);
+            if(typeof _scAttribution !== 'undefined') _scAttribution.set(vid, { reason: 'severUndo', tick: typeof _demoTick !== 'undefined' ? _demoTick : 0 });
             impliedSet.add(vid);
             stateVersion++;
         }
@@ -1723,8 +1725,9 @@ function excitationClockTick(){
                 // Annihilation flash: activate nearby SCs as "binding energy"
                 for(const sc of ALL_SC){
                     if(sc.a === node || sc.b === node){
-                        if(!activeSet.has(sc.id) && Math.random() < 0.3){
-                            activeSet.add(sc.id);
+                        if(!xonImpliedSet.has(sc.id) && Math.random() < 0.3){
+                            xonImpliedSet.add(sc.id);
+                            if (typeof _scAttribution !== 'undefined') _scAttribution.set(sc.id, { reason: 'annihilation', tick: typeof _demoTick !== 'undefined' ? _demoTick : 0 });
                         }
                         break; // just 1 SC per annihilation
                     }

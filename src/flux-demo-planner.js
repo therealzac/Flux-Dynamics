@@ -422,19 +422,27 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     const isProtonFace = A_SET.has(face);
     const candidates = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
 
-    // Random choreographer mode: pick random quark type, random score
+    // Random choreographer mode: pick random compatible quark type, random score
     if (_bfsTestRandomChoreographer && !_btActive) {
-        const quarkType = candidates[Math.floor(_sRng() * candidates.length)];
+        const compat = candidates.filter(qt => _bipartiteCompatible(face, qt));
+        if (compat.length === 0) return null;
+        const quarkType = compat[Math.floor(_sRng() * compat.length)];
         return { face, quarkType, score: _sRng() * 10, onFace };
     }
 
-    // Pick most in-demand quark type (deterministic — always highest deficit)
-    let quarkType = candidates[0];
-    let bestDeficit = -Infinity;
-    for (const t of candidates) {
-        const d = _ratioTracker.deficit(t);
-        if (d > bestDeficit) { bestDeficit = d; quarkType = t; }
+    // Pick most in-demand quark type that passes bipartite compatibility
+    // Sort by deficit descending, pick first compatible
+    const ranked = candidates.map(t => ({ t, d: _ratioTracker.deficit(t) }));
+    ranked.sort((a, b) => b.d - a.d);
+    let quarkType = null, bestDeficit = -Infinity;
+    for (const { t, d } of ranked) {
+        if (_bipartiteCompatible(face, t)) {
+            quarkType = t;
+            bestDeficit = d;
+            break;
+        }
     }
+    if (!quarkType) return null; // no compatible quark type for this face
 
     // RL STRATEGIC SCORING: if strategic model is active, use it instead of heuristic
     if (typeof _rlStrategicModel !== 'undefined' && _rlStrategicModel &&
@@ -465,6 +473,100 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     }
 
     return { face, quarkType, score, onFace };
+}
+
+// ── Bipartite face compatibility check (T87/T88/T89) ──
+// Pre-computed face pair topology: how many nodes each pair shares.
+// Lazily built on first call, since _nucleusTetFaceData may not be populated at load time.
+let _facePairTopology = null; // Map<'f1:f2' → sharedCount>
+
+function _ensureFacePairTopology() {
+    if (_facePairTopology) return;
+    _facePairTopology = new Map();
+    if (!_nucleusTetFaceData) return;
+    const faces = Object.keys(_nucleusTetFaceData).map(Number);
+    for (let i = 0; i < faces.length; i++) {
+        for (let j = i + 1; j < faces.length; j++) {
+            const c1 = new Set(_nucleusTetFaceData[faces[i]].cycle);
+            const shared = _nucleusTetFaceData[faces[j]].cycle.filter(n => c1.has(n)).length;
+            _facePairTopology.set(`${faces[i]}:${faces[j]}`, shared);
+            _facePairTopology.set(`${faces[j]}:${faces[i]}`, shared);
+        }
+    }
+}
+
+const _PROTON_TYPES_SET = new Set(['pu1', 'pu2', 'pd']);
+
+// Check if assigning quarkType to face would violate T87/T88/T89
+// given currently active tet/idle_tet xons.
+function _bipartiteCompatible(face, quarkType) {
+    _ensureFacePairTopology();
+    if (!_facePairTopology || _facePairTopology.size === 0) return true;
+    const isProton = _PROTON_TYPES_SET.has(quarkType);
+    for (const x of _demoXons) {
+        if (!x.alive) continue;
+        if (x._mode !== 'tet' && x._mode !== 'idle_tet') continue;
+        if (x._assignedFace == null || !x._quarkType) continue;
+        const otherFace = x._assignedFace;
+        if (otherFace === face) continue; // same face — not a bipartite issue
+        const shared = _facePairTopology.get(`${face}:${otherFace}`);
+        if (shared === undefined) continue;
+        const otherIsProton = _PROTON_TYPES_SET.has(x._quarkType);
+        const sameHadron = (isProton === otherIsProton);
+        // T87: shared ≥ 2 → must be opposite hadrons (sameHadron → FAIL)
+        if (shared >= 2 && sameHadron) return false;
+        // T88: shared = 1 → must be same hadron (opposite → FAIL)
+        if (shared === 1 && !sameHadron) return false;
+        // T89: shared = 0 → must be opposite hadrons (sameHadron → FAIL)
+        if (shared === 0 && sameHadron) return false;
+    }
+    return true;
+}
+
+// Return ALL valid (face, quarkType, score) proposals for a xon across all faces and quark types.
+// Used during backtracking to enumerate the full decision space.
+function _allFaceOpportunities(xon, occupied) {
+    const results = [];
+    if (!_nucleusTetFaceData) return results;
+    for (let f = 1; f <= 8; f++) {
+        const fd = _nucleusTetFaceData[f];
+        if (!fd) continue;
+        // REACHABILITY: same check as _scoreFaceOpportunity
+        const faceOctNodes = [];
+        for (const n of fd.cycle) {
+            if (_octNodeSet && _octNodeSet.has(n)) faceOctNodes.push(n);
+        }
+        const onFace = faceOctNodes.includes(xon.node);
+        if (!onFace) {
+            let nearFace = false;
+            for (const nb of (baseNeighbors[xon.node] || [])) {
+                if (faceOctNodes.includes(nb.node)) { nearFace = true; break; }
+            }
+            if (!nearFace) continue;
+        }
+        // All valid quark types for this face
+        const isProtonFace = A_SET.has(f);
+        const qTypes = isProtonFace ? ['pu1', 'pu2', 'pd'] : ['nd1', 'nd2', 'nu'];
+        for (const qt of qTypes) {
+            // Bipartite compatibility: T87/T88/T89 check
+            if (!_bipartiteCompatible(f, qt)) continue;
+            // Score: deficit-weighted
+            const deficit = _ratioTracker.deficit(qt);
+            let score = Math.max(0, deficit) * _choreoParams.ratioDeficitWeight * 10;
+            // Vacancy penalty
+            for (const x of _demoXons) {
+                if (!x.alive || x === xon) continue;
+                if ((x._mode === 'tet' || x._mode === 'idle_tet') && x._assignedFace === f) {
+                    score -= _choreoParams.faceOccupiedPenalty;
+                    break;
+                }
+            }
+            if (score >= _choreoParams.assignmentThreshold) {
+                results.push({ xon, face: f, quarkType: qt, score, onFace });
+            }
+        }
+    }
+    return results;
 }
 
 // Get scored oct-mode candidates for a xon. Returns array sorted by momentum score (desc).
@@ -642,13 +744,16 @@ function _executeOctMove(xon, target) {
     // Vacuum negotiation: if target SC is inactive, try to materialise
     if (target._needsMaterialise && target._scId !== undefined) {
         let materialised = false;
+        const xi = _demoXons.indexOf(xon);
         if (canMaterialiseQuick(target._scId)) {
-            activeSet.add(target._scId);
+            xonImpliedSet.add(target._scId);
+            _scAttribution.set(target._scId, { reason: 'octMove', xonIdx: xi, tick: _demoTick });
             stateVersion++; // invalidate cache
             materialised = true;
         } else if (excitationSeverForRoom(target._scId)) {
             if (canMaterialiseQuick(target._scId)) {
-                activeSet.add(target._scId);
+                xonImpliedSet.add(target._scId);
+                _scAttribution.set(target._scId, { reason: 'octMove', xonIdx: xi, tick: _demoTick });
                 stateVersion++; // invalidate cache
                 materialised = true;
             }
@@ -893,8 +998,10 @@ function _relinquishFaceSCs(xon) {
     const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
     if (!fd) return;
     const locked = _traversalLockedSCs(xon); // exclude self — don't self-lock
+    const cageSCs = _octSCIds ? new Set(_octSCIds) : new Set();
     for (const scId of fd.scIds) {
         if (locked.has(scId)) continue;
+        if (cageSCs.has(scId)) continue; // NEVER relinquish oct cage SCs
         if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
             xonImpliedSet.delete(scId);
             _scAttribution.delete(scId);

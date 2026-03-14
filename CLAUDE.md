@@ -34,7 +34,7 @@ ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND
 ## ABSOLUTE PROHIBITIONS
 
 ### NEVER monkey-patch Set/Map prototype methods
-**NEVER intercept, wrap, or replace `.add()`, `.delete()`, `.set()`, `.get()`, or any other method on `electronImpliedSet`, `activeSet`, `impliedSet`, `impliedBy`, or any other global Set/Map.** This includes debug interceptors, proxies, or any form of method replacement. Doing so corrupts the unified architecture — shapes stop driving spheres, the solver becomes detached from rendering, and the simulation breaks catastrophically. If you need to trace who adds to a Set, use `console.error` with stack traces at the CALL SITE, not by wrapping the Set method.
+**NEVER intercept, wrap, or replace `.add()`, `.delete()`, `.set()`, `.get()`, or any other method on `xonImpliedSet`, `activeSet`, `impliedSet`, `impliedBy`, or any other global Set/Map.** This includes debug interceptors, proxies, or any form of method replacement. Doing so corrupts the unified architecture — shapes stop driving spheres, the solver becomes detached from rendering, and the simulation breaks catastrophically. If you need to trace who adds to a Set, use `console.error` with stack traces at the CALL SITE, not by wrapping the Set method.
 
 ### Speed sanity check
 If a change causes the Planck-second counter to run ~25x faster than normal, **you probably broke the physics solver.** The solver is the bottleneck — if the simulation suddenly flies, it means constraints are no longer being enforced and the results are meaningless. Treat unexpected speedups as a regression, not an improvement.
@@ -45,8 +45,20 @@ If a change causes the Planck-second counter to run ~25x faster than normal, **y
 ### NEVER sacrifice accuracy or completeness
 **This is an actual particle physics simulation. No performance heuristics, no artificial tick limits, no corner-cutting of any kind.** Every possibility must be checked. Every value must be calculated to full precision. Never introduce caps, early exits, sampling, or approximations that reduce the completeness of the search or the accuracy of the physics. If the search takes longer, it takes longer. Correctness is non-negotiable.
 
-### Unit tests are sacred
-**Unit tests may NEVER be altered without the explicit written permission of Zac.** Tests define the physics we are trying to satisfy. If a test fails, the fix is in the choreography/movement logic — never in the test itself. Modifying a test to make it pass is the same as lying about whether the physics works.
+### ⛔⛔⛔ Unit tests are sacred — ABSOLUTE ZERO-TOLERANCE RULE ⛔⛔⛔
+**Unit tests may NEVER be altered without the explicit written permission of Zac IN THE CURRENT MESSAGE.**
+Tests define the physics we are trying to satisfy. If a test fails, the fix is in the choreography/movement logic — never in the test itself. Modifying a test to make it pass is the same as lying about whether the physics works.
+
+**THIS MEANS:**
+- ❌ NEVER add mode filters, skip conditions, or exceptions to test check() or projected() functions
+- ❌ NEVER weaken a guard by excluding xon types, modes, ticks, or states
+- ❌ NEVER "fix" a test failure by making the test accept the broken behavior
+- ❌ NEVER touch flux-tests.js unless Zac says "change test X" in THIS message
+- ✅ The ONLY fix for a test failure is better choreography/movement logic
+- ✅ If tests say the rules are impossible, the CHOREOGRAPHER is wrong, not the tests
+- ✅ Use "Test model exhaustiveness" to verify the choreographer is searching correctly
+
+**Zac has corrected this multiple times. There are NO exceptions. Period.**
 
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
@@ -139,8 +151,8 @@ All files are loaded as global-scope `<script>` tags in `flux-v2.html`. No modul
 ### Three SC Sets (critical global state)
 | Set | What | Who manages |
 |-----|------|-------------|
-| `activeSet` | User/rule-placed SCs | UI clicks, rule engine |
-| `electronImpliedSet` | Excitation-materialized SCs | flux-electrons.js, flux-demo.js |
+| `activeSet` | UI-placed SCs only | UI clicks, rule engine |
+| `xonImpliedSet` | Xon-materialized SCs (oct moves, tet loops, cage) | flux-demo.js, flux-demo-planner.js |
 | `impliedSet` | Geometrically necessary SCs (derived) | `detectImplied()` after solver |
 
 ### Rendering Pipeline
@@ -290,7 +302,7 @@ Each test lives in ONE registry entry in `LIVE_GUARD_REGISTRY` (array at top of 
 | T17 | Full tet coverage | All 8 faces visited within 4 cycles (256 ticks) |
 | **T19** | **Pauli exclusion** | **LIVE GUARD**: max 1 xon per node |
 | T20 | Never stand still | Every xon moves every tick |
-| **T21** | **Oct cage permanence** | **LIVE GUARD**: oct SCs never leave activeSet |
+| **T21** | **Oct cage permanence** | **LIVE GUARD**: oct SCs stay in at least one SC set |
 | T22 | Hadronic composition | pu:pd ≈ 2:1, nd:nu ≈ 2:1 (converges over 1280 ticks) |
 | T23 | Sparkle color | White in oct, quark color in tet |
 | T24 | Trail color stability | Trail segments retain original color |
@@ -311,7 +323,7 @@ Each test lives in ONE registry entry in `LIVE_GUARD_REGISTRY` (array at top of 
 Checks every xon movement `fromNode → toNode`:
 1. Is there an SC on this edge? (`scPairToId.get(pairId(from, to))`)
 2. Is there also a base edge? If yes, exempt (xon used base edge, not SC)
-3. If SC-only: is SC in `activeSet`, `impliedSet`, or `electronImpliedSet`? If not → **FAIL**
+3. If SC-only: is SC in `activeSet`, `impliedSet`, or `xonImpliedSet`? If not → **FAIL**
 
 ---
 
@@ -407,7 +419,7 @@ baseNeighbors[node] → [{node, dirIdx}, ...] base-edge neighbors
 - NO clear-and-rebuild (cascade deforms FCC geometry)
 
 ### Unified Architecture
-- Demo MUST manage tet SCs in `electronImpliedSet`
+- Demo MUST manage tet SCs in `xonImpliedSet`
 - Must re-solve lattice so spheres respond physically
 - Shapes → Spheres (never decouple rendering from physics)
 
@@ -422,7 +434,7 @@ Returns the set of SC IDs that MUST NOT be removed from any set because a xon is
 - Used by `_relinquishFaceSCs`, window transition relinquishment, `_startIdleTetLoop` rollbacks, and `excitationSeverForRoom`
 
 ### SC Promotion (`_promoteFaceSCs(face)`)
-When a xon is assigned to a tet face, any face SCs that are only in `impliedSet` (ephemeral, rebuilt each solver tick) get promoted into `electronImpliedSet` (persistent). This prevents the SC from vanishing on the next solver rebuild while the xon is mid-loop.
+When a xon is assigned to a tet face, any face SCs that are only in `impliedSet` (ephemeral, rebuilt each solver tick) get promoted into `xonImpliedSet` (persistent). This prevents the SC from vanishing on the next solver rebuild while the xon is mid-loop.
 - Called by `_assignXonToTet` and `_startIdleTetLoop` at both assignment paths
 
 ### PHASE 4 Pauli Annihilation

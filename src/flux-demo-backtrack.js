@@ -375,6 +375,84 @@ function _kuhnMaxCardinality(adj, n) {
     return card;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// FACE ASSIGNMENT ENUMERATION (greedy + ranked alternatives)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Enumerate all valid face assignment combos for a set of idle oct xons.
+// Each combo is a one-to-one mapping: at most one xon per face, one face per xon.
+// Returns: array of combos, each combo = array of {xon, face, quarkType, score}.
+//   Sorted: greedy (highest aggregate score) first, then descending.
+//
+// proposals: array of {xon, face, quarkType, score, onFace} — ALL valid proposals
+//   (multiple proposals per xon, multiple quark types per face, etc.)
+function _enumerateAllFaceAssignments(proposals) {
+    if (proposals.length === 0) return [[]];
+
+    // Group proposals by xon (identity) to build the search tree
+    const xonSet = [];
+    const xonMap = new Map(); // xon → index in xonSet
+    for (const p of proposals) {
+        if (!xonMap.has(p.xon)) {
+            xonMap.set(p.xon, xonSet.length);
+            xonSet.push(p.xon);
+        }
+    }
+
+    // Per-xon: list of {face, quarkType, score}
+    const perXon = xonSet.map(() => []);
+    for (const p of proposals) {
+        const idx = xonMap.get(p.xon);
+        perXon[idx].push({ face: p.face, quarkType: p.quarkType, score: p.score, xon: p.xon, onFace: p.onFace });
+    }
+    // Sort each xon's options by score descending (greedy preference)
+    for (const opts of perXon) opts.sort((a, b) => b.score - a.score);
+
+    const n = xonSet.length;
+    const results = [];
+    const usedFaces = new Set();
+    const current = new Array(n).fill(null);
+
+    // Cap enumeration to prevent combinatorial explosion
+    const MAX_COMBOS = 200;
+
+    function enumerate(idx) {
+        if (results.length >= MAX_COMBOS) return;
+        if (idx === n) {
+            // Record this combo (only assigned entries)
+            const combo = current.filter(Boolean).slice();
+            results.push(combo);
+            return;
+        }
+
+        // Option A: assign xon[idx] to each of its valid faces
+        for (const opt of perXon[idx]) {
+            if (usedFaces.has(opt.face)) continue;
+            usedFaces.add(opt.face);
+            current[idx] = opt;
+            enumerate(idx + 1);
+            current[idx] = null;
+            usedFaces.delete(opt.face);
+            if (results.length >= MAX_COMBOS) return;
+        }
+
+        // Option B: skip this xon (it doesn't get a face this tick)
+        current[idx] = null;
+        enumerate(idx + 1);
+    }
+
+    enumerate(0);
+
+    // Sort combos: highest total score first (greedy = first combo tried)
+    results.sort((a, b) => {
+        const sa = a.reduce((s, p) => s + p.score, 0);
+        const sb = b.reduce((s, p) => s + p.score, 0);
+        return sb - sa;
+    });
+
+    return results;
+}
+
 // Parse a fingerprint string into structured moves array.
 // Returns [{xonIdx, move, from, to, stayed}]
 function _parseFingerprintMoves(fp) {
@@ -458,64 +536,49 @@ function _btRecordFingerprint() {
     fpSet.add(fp);
 
     // ── Live comparison during Test 2 (random) ──
-    // If we're in Test 2 and have a reference set from Test 1, check for novel fingerprints
+    // If we're in Test 2 and have a reference set from Test 1, log novel fingerprints
+    // but DO NOT abort — let random run to completion to test rule satisfiability.
     if (_bfsTestActive && _bfsTestRunIdx === 1 && _bfsTestReferenceFingerprints) {
         const refSet = _bfsTestReferenceFingerprints.get(tick);
         if (!refSet || !refSet.has(fp)) {
-            // Novel fingerprint! Test 1 (choreographer) missed this solution
-            _bfsTestEarlyAbort = true;
+            // Novel fingerprint — choreographer missed this solution
+            // Track it but keep going
+            if (!_bfsTestNovelCount) _bfsTestNovelCount = 0;
+            _bfsTestNovelCount++;
+            _bfsTestEarlyAbort = true; // flag that novel solutions exist
 
-            // ── Deep divergence analysis ──
-            const novelMoves = _parseFingerprintMoves(fp);
-            const refFPs = refSet ? [...refSet] : [];
-            const closest = _findClosestFingerprint(fp, novelMoves, refFPs);
+            // Only log first 5 novel fingerprints in detail to avoid spam
+            if (_bfsTestNovelCount <= 5) {
+                const novelMoves = _parseFingerprintMoves(fp);
+                const refFPs = refSet ? [...refSet] : [];
+                const closest = _findClosestFingerprint(fp, novelMoves, refFPs);
 
-            // Capture full xon state at this moment
-            const xonStates = _demoXons.map((x, i) => ({
-                idx: i, node: x.node, prevNode: x.prevNode,
-                mode: x._mode, face: x._assignedFace, quark: x._quarkType,
-                step: x._loopStep, seq: x._loopSeq ? x._loopSeq.join(',') : null,
-            }));
-
-            _bfsTestNovelDetail = {
-                tick, fingerprint: fp, novelMoves, closest, xonStates,
-                refCount: refSet ? refSet.size : 0,
-                // Also capture which ticks the choreographer DID explore
-                choreographerTicks: [..._bfsTestReferenceFingerprints.keys()].sort((a,b) => a-b),
-            };
-
-            console.log(`%c[DFS TEST] ═══ EARLY ABORT: DIVERGENCE ANALYSIS ═══`,
-                'color:red;font-weight:bold;font-size:13px');
-            console.log(`%c  Tick ${tick}: Random found novel fingerprint`, 'color:red;font-weight:bold');
-            console.log(`  Novel:   ${fp}`);
-            console.log(`  Ref set: ${refSet ? refSet.size : 0} choreographer fingerprints at this tick`);
-
-            if (closest) {
-                console.log(`%c  Closest choreographer match (${closest.sharedMoves}/${novelMoves.length} xons same):`,
+                console.log(`%c[DFS TEST] Novel fingerprint #${_bfsTestNovelCount} at tick ${tick}`,
                     'color:orange;font-weight:bold');
-                console.log(`  Closest: ${closest.fp}`);
-                console.log(`%c  DIFFERENCES:`, 'color:yellow;font-weight:bold');
-                for (const diff of closest.diffs) {
-                    console.log(`    X${diff.xonIdx}: ${diff.novelMove} (random) vs ${diff.choreoMove} (choreographer)`);
+                console.log(`  Novel:   ${fp}`);
+                console.log(`  Ref set: ${refSet ? refSet.size : 0} choreographer fingerprints at this tick`);
+                if (closest) {
+                    console.log(`  Closest match (${closest.sharedMoves}/${novelMoves.length} same):`);
+                    for (const diff of closest.diffs) {
+                        console.log(`    X${diff.xonIdx}: ${diff.novelMove} (random) vs ${diff.choreoMove} (choreographer)`);
+                    }
                 }
-            } else {
-                console.log(`  (No choreographer fingerprints at tick ${tick} to compare against)`);
+
+                // Capture first novel detail for the results panel
+                if (_bfsTestNovelCount === 1) {
+                    const xonStates = _demoXons.map((x, i) => ({
+                        idx: i, node: x.node, prevNode: x.prevNode,
+                        mode: x._mode, face: x._assignedFace, quark: x._quarkType,
+                        step: x._loopStep, seq: x._loopSeq ? x._loopSeq.join(',') : null,
+                    }));
+                    _bfsTestNovelDetail = {
+                        tick, fingerprint: fp, novelMoves, closest, xonStates,
+                        refCount: refSet ? refSet.size : 0,
+                        choreographerTicks: [..._bfsTestReferenceFingerprints.keys()].sort((a,b) => a-b),
+                    };
+                }
             }
-
-            console.log(`%c  Xon states at divergence:`, 'color:cyan');
-            for (const xs of xonStates) {
-                const info = `X${xs.idx} node=${xs.node} mode=${xs.mode}` +
-                    (xs.face ? ` face=F${xs.face}` : '') +
-                    (xs.quark ? ` quark=${xs.quark}` : '') +
-                    (xs.seq ? ` seq=[${xs.seq}] step=${xs.step}` : '');
-                console.log(`    ${info}`);
-            }
-
-            console.log(`  Choreographer explored ticks: [${_bfsTestNovelDetail.choreographerTicks.join(',')}]`);
-            console.log(`%c[DFS TEST] ═══════════════════════════════════════════`, 'color:red;font-weight:bold');
-
-            // Stop the demo — the poll loop in _executeBfsTestRun will detect !_demoActive
-            if (typeof stopDemo === 'function') stopDemo();
+            // DO NOT stop — let random continue to test satisfiability
         }
     }
 
@@ -544,6 +607,9 @@ function _btResetMatchingCache() {
     _btMatchingCache = null;
     _btMatchingIndex = 0;
     _btMatchingCacheLedgerSize = 0;
+    _btFaceAssignCache = null;
+    _btFaceAssignIndex = 0;
+    _btFaceAssignLedgerSize = 0;
 }
 
 // Reset per-tick backtracking state (called after a clean tick).

@@ -433,6 +433,7 @@ function updateVoidSpheres(){
                         for(const id of cycle.scIds){
                             if(impliedSet.has(id) && !xonImpliedSet.has(id) && !activeSet.has(id)){
                                 xonImpliedSet.add(id);
+                                if(typeof _scAttribution !== 'undefined') _scAttribution.set(id, { reason: 'voidPromotion', tick: typeof _demoTick !== 'undefined' ? _demoTick : 0 });
                                 if(!impliedBy.has(id)) impliedBy.set(id, new Set());
                             }
                         }
@@ -647,7 +648,12 @@ function applyStateFromJSON(data){
 
 // ─── Wire UI ──────────────────────────────────────────────────────────────────
 document.getElementById('sh-clear').addEventListener('click',clearAll);
-document.getElementById('btn-export').addEventListener('click',exportState);
+document.getElementById('btn-export').addEventListener('click', function() {
+    if (_movieFrames.length > 0) exportMovie();
+    else exportState();
+});
+document.getElementById('btn-import')?.addEventListener('click', importMovie);
+document.getElementById('movie-file-input')?.addEventListener('change', _handleMovieFileSelect);
 document.getElementById('btn-copy-violation').addEventListener('click',function(){
     try{ const json=JSON.stringify(buildExportData(),null,2); copyText(json); toast('violation state copied'); }
     catch(e){ toast('export error: '+e.message); console.error('buildExportData failed:',e); }

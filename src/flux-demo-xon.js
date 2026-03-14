@@ -122,12 +122,12 @@ function _spawnXon(face, quarkType, sign) {
     return xon;
 }
 
-// Create a lightweight gluon sprite (white spark on oct edges)
+// Create a lightweight gluon sprite (black spark on oct edges)
 function _createGluonSprite() {
-    const col = 0xffffff; // white for gluon
+    const col = GLUON_COLOR;
     const sparkMat = new THREE.SpriteMaterial({
         color: col, map: _sparkTex, transparent: true, opacity: 0.8,
-        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+        blending: THREE.NormalBlending, depthWrite: false, depthTest: false,
     });
     const sprite = new THREE.Sprite(sparkMat);
     sprite.scale.set(0.18, 0.18, 1);

@@ -1388,7 +1388,7 @@ function startRenderLoop(){
         const dt = (now - _renderLastTime) * 0.001;
         _renderLastTime = now;
         tickExcitations(dt);
-        if(_demoActive) _tickDemoXons(dt);
+        if(_demoActive || _playbackMode) _tickDemoXons(dt);
         if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
         if (typeof updateBraneHighlights === 'function') updateBraneHighlights();

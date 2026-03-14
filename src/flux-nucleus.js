@@ -360,8 +360,9 @@ const NucleusSimulator = (function(){
             { label: 'nd\u2081',  color: 0xffbf00, pattern: 'ham CW' },
             { label: 'nd\u2082',  color: 0xff00bf, pattern: 'ham CCW' },
             { label: 'nu',        color: 0xff0000, pattern: 'fork' },
-            { label: 'oct/glu',   color: 0xffffff, textColor: '#888' },
-            { label: 'weak',      color: 0x080808, textColor: '#333' },
+            { label: 'oct',       color: 0xffffff, textColor: '#888' },
+            { label: 'gluon',     color: 0x000000, textColor: '#666' },
+            { label: 'weak',      color: 0x7f00ff },
         ];
         let html = `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 8px;">`;
         for(const e of entries){
