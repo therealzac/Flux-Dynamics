@@ -725,6 +725,40 @@ function _traceMove(xon, from, to, path) {
 }
 
 
+// ── Fighterjet mode: Catmull-Rom spline + curvature easing ──────────
+// Uniform Catmull-Rom evaluation on segment p1→p2, parameter t∈[0,1].
+// p0,p1,p2,p3 are [x,y,z] arrays. Returns [x,y,z].
+const _crOut = [0, 0, 0]; // reusable return to avoid allocation
+const _fjP3  = [0, 0, 0]; // reusable extrapolated future point
+function _catmullRom(p0, p1, p2, p3, t) {
+    const t2 = t * t, t3 = t2 * t;
+    _crOut[0] = 0.5 * ((2*p1[0]) + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+    _crOut[1] = 0.5 * ((2*p1[1]) + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+    _crOut[2] = 0.5 * ((2*p1[2]) + (-p0[2]+p2[2])*t + (2*p0[2]-5*p1[2]+4*p2[2]-p3[2])*t2 + (-p0[2]+3*p1[2]-3*p2[2]+p3[2])*t3);
+    return _crOut;
+}
+
+// Curvature-dependent easing: blends linear (straight) with cubic
+// ease-in-out (sharp turns). angle = turn angle in radians [0,PI].
+function _fjEase(t, angle) {
+    const sharpness = Math.min(1, angle / (Math.PI * 0.7)); // normalize; 126° = full ease
+    const linear = t;
+    const eio = t < 0.5 ? 4*t*t*t : 1 - (-2*t+2)**3 / 2; // cubic ease-in-out
+    return linear * (1 - sharpness) + eio * sharpness;
+}
+
+// Compute turn angle between two consecutive segments (v1→v2 and v2→v3).
+// Returns angle in radians. 0 = straight, PI = reversal.
+function _fjTurnAngle(p0, p1, p2) {
+    const ax = p1[0]-p0[0], ay = p1[1]-p0[1], az = p1[2]-p0[2];
+    const bx = p2[0]-p1[0], by = p2[1]-p1[1], bz = p2[2]-p1[2];
+    const dot = ax*bx + ay*by + az*bz;
+    const la = Math.sqrt(ax*ax+ay*ay+az*az);
+    const lb = Math.sqrt(bx*bx+by*by+bz*bz);
+    if (la < 1e-8 || lb < 1e-8) return 0;
+    return Math.acos(Math.max(-1, Math.min(1, dot / (la * lb))));
+}
+
 // Animate all demo xons — called every frame from the render loop.
 // Handles tween interpolation, spark flash, trail rendering, and trail decay.
 function _tickDemoXons(dt) {
@@ -807,18 +841,52 @@ function _tickDemoXons(dt) {
         }
 
         // ── Live xons: tween + spark + trail ──
-        // Tween interpolation (cubic ease-out)
-        xon.tweenT = Math.min(1, xon.tweenT + dt / demoStepSec);
-        const s = 1 - (1 - xon.tweenT) ** 3;
+        // Fighterjet mode: enforce minimum tween duration so curves are visible
+        const stepSec = (_fighterjetMode && demoStepSec < 0.06) ? 0.06 : demoStepSec;
+        // Reverse animation: decrement _fjRevT from 1→0 (independent timer)
+        if (xon._fjReverseFrom) {
+            const revDt = Math.min(dt, 0.033); // cap to prevent instant completion
+            xon._fjRevT = Math.max(0, (xon._fjRevT || 1) - revDt / stepSec);
+            if (xon._fjRevT <= 0) {
+                xon._fjReverseFrom = null; // done reversing
+                xon._fjRevT = 0;
+            }
+            // Freeze tweenT at 1 during reverse so forward path never runs
+            xon.tweenT = 1;
+        } else {
+            xon.tweenT = Math.min(1, xon.tweenT + dt / stepSec);
+        }
         const pf = pos[xon.prevNode], pt = pos[xon.node];
         if (pf && pt) {
-            // Distance check: if prevNode→node exceeds valid hop distance,
-            // hold at source (don't flash sprite at non-adjacent target)
             const _tdx = pt[0] - pf[0], _tdy = pt[1] - pf[1], _tdz = pt[2] - pf[2];
             const _hopDist = Math.sqrt(_tdx*_tdx + _tdy*_tdy + _tdz*_tdz);
-            if (_hopDist > 1.2) {
+            // Reverse animation takes priority — check BEFORE teleport guard
+            if (xon._fjReverseFrom && _fighterjetMode) {
+                // ── Fighterjet REVERSE: lerp from saved position → restored node ──
+                const from = xon._fjReverseFrom;
+                const to = pos[xon.node]; // restored tick's node position
+                const t = xon._fjRevT; // 1=old pos, 0=restored pos
+                xon.group.position.set(
+                    to[0] + (from[0] - to[0]) * t,
+                    to[1] + (from[1] - to[1]) * t,
+                    to[2] + (from[2] - to[2]) * t
+                );
+            } else if (_hopDist > 1.2) {
                 xon.group.position.set(pf[0], pf[1], pf[2]);
+            } else if (_fighterjetMode) {
+                // ── Fighterjet FORWARD: Catmull-Rom spline through recent positions ──
+                const fp = xon._trailFrozenPos;
+                const tl = fp ? fp.length : 0;
+                const p1 = pf, p2 = pt;
+                const p0 = (tl >= 3) ? fp[tl - 3] : p1;
+                _fjP3[0] = 2*p2[0] - p1[0];
+                _fjP3[1] = 2*p2[1] - p1[1];
+                _fjP3[2] = 2*p2[2] - p1[2];
+                const cr = _catmullRom(p0, p1, p2, _fjP3, xon.tweenT);
+                xon.group.position.set(cr[0], cr[1], cr[2]);
             } else {
+                // ── Normal: cubic ease-out lerp ──
+                const s = 1 - (1 - xon.tweenT) ** 3;
                 const px = pf[0] + (pt[0] - pf[0]) * s;
                 const py = pf[1] + (pt[1] - pf[1]) * s;
                 const pz = pf[2] + (pt[2] - pf[2]) * s;
@@ -854,6 +922,8 @@ function _tickDemoXons(dt) {
         // Trails knob controls how many trail points are visible (0-250).
         // Always store full history; render only the last `visLen` points.
         const lifespan = +document.getElementById('tracer-lifespan-slider').value;
+        const _trailFP = xon._trailFrozenPos;
+        const _trailCH = xon.trailColHistory;
         const fullLen = xon.trail.length;
         const visLen = Math.min(fullLen, lifespan);
         const startIdx = fullLen - visLen; // skip older points beyond lifespan
@@ -862,7 +932,128 @@ function _tickDemoXons(dt) {
         // which the sprite hasn't reached yet. Rendering it in the body creates
         // a backward line from destination back to sprite. Fix: exclude the
         // latest entry during tween and let the trail head animate the hop.
-        const bodyLen = (xon.tweenT < 1 && visLen > 1) ? visLen - 1 : visLen;
+        // During reverse: trails show restored snapshot data instantly (no exclusion needed)
+        const bodyLen = (xon.tweenT < 1 && visLen > 1 && !xon._fjReverseFrom) ? visLen - 1 : visLen;
+
+        // ── Fighterjet curved trails: subdivide each segment with CR spline ──
+        if (_fighterjetMode && bodyLen >= 2) {
+            const FJ_SUBS = 4; // subdivisions per trail segment
+            const fp = _trailFP;
+            xon._lastTrailFlashBoost = 0;
+            let out = 0; // output vertex index
+            for (let vi = 0; vi < bodyLen - 1 && out < XON_TRAIL_LENGTH - FJ_SUBS - 2; vi++) {
+                const i = startIdx + vi;
+                // 4 control points for this segment: p0, p1(=fp[i]), p2(=fp[i+1]), p3
+                const cp1 = fp[i]     || pos[xon.trail[i]];
+                const cp2 = fp[i + 1] || pos[xon.trail[i + 1]];
+                if (!cp1 || !cp2) continue;
+                const cp0 = (i > 0 ? (fp[i - 1] || pos[xon.trail[i - 1]]) : null) || cp1;
+                const cp3 = (i + 2 < fullLen ? (fp[i + 2] || pos[xon.trail[i + 2]]) : null)
+                    || [2*cp2[0]-cp1[0], 2*cp2[1]-cp1[1], 2*cp2[2]-cp1[2]];
+                // Teleport check between cp1 and cp2
+                const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
+                const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
+                // Segment color
+                const segCol = (_trailCH && _trailCH[i]) || xon.col;
+                const scr = ((segCol >> 16) & 0xff) / 255;
+                const scg = ((segCol >> 8) & 0xff) / 255;
+                const scb = (segCol & 0xff) / 255;
+                const isGluon = segCol === GLUON_COLOR;
+                const isWeak = segCol === WEAK_FORCE_COLOR;
+                // Emit FJ_SUBS vertices along CR curve (skip last to avoid duplicates)
+                for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_LENGTH; s++) {
+                    const u = s / FJ_SUBS;
+                    let px, py, pz;
+                    if (teleport) {
+                        px = cp1[0]; py = cp1[1]; pz = cp1[2];
+                    } else {
+                        const cr = _catmullRom(cp0, cp1, cp2, cp3, u);
+                        px = cr[0]; py = cr[1]; pz = cr[2];
+                    }
+                    xon.trailPos[out * 3]     = px;
+                    xon.trailPos[out * 3 + 1] = py;
+                    xon.trailPos[out * 3 + 2] = pz;
+                    if (xon._weakTrailPos) {
+                        xon._weakTrailPos[out * 3]     = isWeak ? px : NaN;
+                        xon._weakTrailPos[out * 3 + 1] = isWeak ? py : NaN;
+                        xon._weakTrailPos[out * 3 + 2] = isWeak ? pz : NaN;
+                    }
+                    // Progress through entire trail for alpha fade (0=tail, 1=head)
+                    const progress = (vi + u) / Math.max(bodyLen - 1, 1);
+                    // Smooth fade: ramp from 0 at tail to full brightness at head
+                    const fadeCurve = progress * progress; // quadratic fade-in from tail
+                    if (teleport) {
+                        xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
+                        if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
+                    } else if (isGluon) {
+                        const ga = sparkOp * fadeCurve;
+                        xon.trailCol[out*3] = Math.min(1, scr*4)*ga; xon.trailCol[out*3+1] = Math.min(1, scg*4)*ga; xon.trailCol[out*3+2] = Math.min(1, scb*4)*ga;
+                    } else if (isWeak) {
+                        xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
+                        if (xon._weakTrailCol) {
+                            const wa = fadeCurve;
+                            xon._weakTrailCol[out*3] = scr*wa; xon._weakTrailCol[out*3+1] = scg*wa; xon._weakTrailCol[out*3+2] = scb*wa;
+                        }
+                    } else {
+                        const flashBoost = xon.flashT * 0.4 * progress;
+                        xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
+                        const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);
+                        xon.trailCol[out*3] = scr * alpha; xon.trailCol[out*3+1] = scg * alpha; xon.trailCol[out*3+2] = scb * alpha;
+                    }
+                    out++;
+                }
+            }
+            // Trail head: CR-subdivide current hop up to tweenT (matches sprite path)
+            // During reverse animation: skip head (trails show restored state instantly)
+            if (!xon._fjReverseFrom && out < XON_TRAIL_LENGTH - FJ_SUBS - 2 && xon.tweenT < 1 && bodyLen >= 1) {
+                const _hfp = _trailFP;
+                const hi = startIdx + bodyLen - 1; // last body index
+                const hp1 = _hfp[hi] || pos[xon.trail[hi]]; // prevNode pos
+                const hp2 = pos[xon.node]; // destination
+                if (hp1 && hp2) {
+                    const hp0 = (hi > 0 ? (_hfp[hi - 1] || pos[xon.trail[hi - 1]]) : null) || hp1;
+                    _fjP3[0] = 2*hp2[0]-hp1[0]; _fjP3[1] = 2*hp2[1]-hp1[1]; _fjP3[2] = 2*hp2[2]-hp1[2];
+                    const _tdx = hp2[0]-hp1[0], _tdy = hp2[1]-hp1[1], _tdz = hp2[2]-hp1[2];
+                    const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
+                    const headCol = xon.col;
+                    const headIsWeak = headCol === WEAK_FORCE_COLOR;
+                    const hcr = ((headCol >> 16) & 0xff) / 255;
+                    const hcg = ((headCol >> 8) & 0xff) / 255;
+                    const hcb = (headCol & 0xff) / 255;
+                    const headSubs = Math.max(1, Math.round(FJ_SUBS * xon.tweenT));
+                    for (let s = 1; s <= headSubs && out < XON_TRAIL_LENGTH; s++) {
+                        const u = (s / FJ_SUBS) * (xon.tweenT > 0 ? 1 : 0);
+                        const t = u * xon.tweenT / (headSubs / FJ_SUBS);
+                        let px, py, pz;
+                        if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
+                        else { const cr = _catmullRom(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = cr[0]; py = cr[1]; pz = cr[2]; }
+                        xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
+                        if (xon._weakTrailPos) {
+                            xon._weakTrailPos[out*3] = headIsWeak ? px : NaN;
+                            xon._weakTrailPos[out*3+1] = headIsWeak ? py : NaN;
+                            xon._weakTrailPos[out*3+2] = headIsWeak ? pz : NaN;
+                        }
+                        xon.trailCol[out*3] = headIsWeak ? 0 : hcr*sparkOp;
+                        xon.trailCol[out*3+1] = headIsWeak ? 0 : hcg*sparkOp;
+                        xon.trailCol[out*3+2] = headIsWeak ? 0 : hcb*sparkOp;
+                        if (headIsWeak && xon._weakTrailCol) {
+                            xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
+                        }
+                        out++;
+                    }
+                }
+            }
+            xon.trailGeo.setDrawRange(0, Math.min(out, XON_TRAIL_LENGTH));
+            xon.trailGeo.attributes.position.needsUpdate = true;
+            xon.trailGeo.attributes.color.needsUpdate = true;
+            if (xon._weakTrailLine) {
+                xon._weakTrailLine.material.opacity = weakOp * sparkOp;
+                xon._weakTrailLine.geometry.setDrawRange(0, Math.min(out, XON_TRAIL_LENGTH));
+                xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
+                xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
+            }
+        } else {
+        // ── Normal straight-line trails ──
 
         // Per-segment color from trailColHistory — segments retain their original color
         // flashT boosts trail brightness near the head (mode transition / birth flash)
@@ -944,18 +1135,19 @@ function _tickDemoXons(dt) {
                 xon._weakTrailPos[vi * 3 + 1] = NaN;
                 xon._weakTrailPos[vi * 3 + 2] = NaN;
             }
-            const baseAlpha = 0.5 + 0.5 * (vi / Math.max(bodyLen, 1)) ** 0.8;
-            // Flash boost: head segments get up to 40% brighter during flash
-            const headProximity = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
-            const flashBoost = xon.flashT * 0.4 * headProximity;
+            // Smooth fade: quadratic ramp from 0 at tail to full at head
+            const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
+            const fadeCurve = progress * progress;
+            const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-            const alpha = sparkOp * Math.min(1, baseAlpha + flashBoost);
+            const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);
             xon.trailCol[vi * 3] = cr * alpha;
             xon.trailCol[vi * 3 + 1] = cg * alpha;
             xon.trailCol[vi * 3 + 2] = cb * alpha;
         }
         // Current interpolated position as trail head — extends from last BODY
         // entry toward sprite. During tween this smoothly animates the hop.
+        // Skip trail head during reverse animation — no new trail should be traced.
         const last = bodyLen;
         let _drawHead = false;
         if (last < XON_TRAIL_LENGTH && bodyLen > 0) {
@@ -1015,6 +1207,7 @@ function _tickDemoXons(dt) {
             xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
             xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
         }
+        } // end normal trail else-block
     }
 }
 

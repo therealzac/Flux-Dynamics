@@ -71,8 +71,13 @@ function _btSaveSnapshot() {
 }
 
 // Restore choreography state from a snapshot.
-function _btRestoreSnapshot(snap) {
+function _btRestoreSnapshot(snap, reverse) {
     _demoTick = snap.tick;
+    // Fighterjet reverse: capture current sprite positions BEFORE any state changes
+    const fjReverse = _fighterjetMode && reverse;
+    const savedPositions = fjReverse ? _demoXons.map(x =>
+        x.group ? [x.group.position.x, x.group.position.y, x.group.position.z] : null
+    ) : null;
     // Restore per-xon state
     for (let i = 0; i < _demoXons.length && i < snap.xons.length; i++) {
         const x = _demoXons[i], s = snap.xons[i];
@@ -96,16 +101,39 @@ function _btRestoreSnapshot(snap) {
         x._weakLeftOct = !!s._weakLeftOct;
         x._pendingWeakEjection = !!s._pendingWeakEjection;
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
-        x._modeStats = s._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0 };
+        x._modeStats = x._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0 };
         x.trail = s.trail.slice();
         x.trailColHistory = s.trailColHistory.slice();
         x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
+        // Pop most recent trail entry on reverse — visually removes the last hop
+        if (fjReverse && x.trail.length > 0) {
+            x.trail.pop();
+            if (x.trailColHistory.length > 0) x.trailColHistory.pop();
+            if (x._trailFrozenPos && x._trailFrozenPos.length > 0) x._trailFrozenPos.pop();
+        }
         // Update visuals
         if (x.sparkMat) x.sparkMat.color.setHex(x.col);
-        if (x.group && pos[x.node]) {
-            x.group.position.set(pos[x.node][0], pos[x.node][1], pos[x.node][2]);
+        if (fjReverse && savedPositions[i] && x.group) {
+            // Reverse animation: sprite starts at old position, animates to restored pos
+            // Trails are destroyed instantly (restored from snapshot)
+            x._fjReverseFrom = savedPositions[i];
+            x._fjRevT = 1; // independent reverse timer (1→0)
+            x.group.position.set(savedPositions[i][0], savedPositions[i][1], savedPositions[i][2]);
+            x.tweenT = 1;
+        } else if (_fighterjetMode && x.group && pos[x.prevNode]) {
+            // Forward fighterjet: start at prevNode, animate to node
+            x._fjReverseFrom = null;
+            x._fjRevT = 0;
+            x.group.position.set(pos[x.prevNode][0], pos[x.prevNode][1], pos[x.prevNode][2]);
+            x.tweenT = 0;
+        } else {
+            x._fjReverseFrom = null;
+            x._fjRevT = 0;
+            if (x.group && pos[x.node]) {
+                x.group.position.set(pos[x.node][0], pos[x.node][1], pos[x.node][2]);
+            }
+            x.tweenT = 1; // snap to position
         }
-        x.tweenT = 1; // snap to position (no interpolation)
     }
     // Restore SC sets
     activeSet.clear(); for (const id of snap.activeSet) activeSet.add(id);
@@ -118,7 +146,7 @@ function _btRestoreSnapshot(snap) {
         pos[i][1] = snap.pos[i][1];
         pos[i][2] = snap.pos[i][2];
     }
-    // Frozen trail positions are already restored from snapshot (line 71) —
+    // Frozen trail positions are already restored from snapshot —
     // do NOT re-derive from pos[] as that defeats the purpose of static trails.
     // Restore opening phase flag
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;

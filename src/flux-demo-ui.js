@@ -793,7 +793,7 @@ function _playbackStepBack() {
         _btSnapshots.push(redoSnap);
         return false;
     }
-    _btRestoreSnapshot(snap);
+    _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
     // Clear halt flag — rewind should always allow forward replay
     simHalted = false;
     // Clear backtracker BFS state so forward replay starts clean
@@ -851,7 +851,7 @@ function startReverse() {
         // Restore previous state
         const snap = _btSnapshots.pop();
         if (!snap) { stopReverse(); return; }
-        _btRestoreSnapshot(snap);
+        _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
         simHalted = false;
         _bfsReset();
         _btReset();
@@ -1014,3 +1014,8 @@ function exportTickLog() {
     URL.revokeObjectURL(url);
     console.log(`[export] Downloaded ${_tickLog.length} tick log entries`);
 }
+
+// ── Fighterjet mode toggle ──
+document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
+    _fighterjetMode = e.target.checked;
+});

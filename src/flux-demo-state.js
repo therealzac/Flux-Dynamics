@@ -401,6 +401,9 @@ let _flashEnabled = false;
 // collision bug is fixed.
 let _kuhnEnabled = false;
 
+// ── Fighterjet mode: smooth Catmull-Rom spline flight paths ──────────
+let _fighterjetMode = false;
+
 // ── Seeded PRNG for deterministic backtracker replay ─────────────────
 // Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).
 // The backtracker requires deterministic forward replay from the same

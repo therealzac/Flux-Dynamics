@@ -449,6 +449,9 @@
                     <span id="timeline-val" class="ctrl-val" style="min-width:28px;">0</span>
                 </div>
             </div>
+            <label id="fighterjet-label" style="display:none; align-items:center; gap:5px; font-size:10px; color:#8aa; margin-top:6px; cursor:pointer; user-select:none;">
+                <input type="checkbox" id="fighterjet-toggle" style="accent-color:#66bbff;"> ✈ Fighterjet
+            </label>
             <div id="nucleus-status" style="display:none;">ready</div>
             <div id="demo-status" style="display:none;"></div>
 
@@ -517,19 +520,19 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=45"></script>
+    <script src="src/flux-demo-state.js?v=46"></script>
     <script src="src/flux-demo-xon.js?v=6"></script>
-    <script src="src/flux-demo-backtrack.js?v=18"></script>
-    <script src="src/flux-demo-planner.js?v=22"></script>
-    <script src="src/flux-demo-ui.js?v=54"></script>
-    <script src="src/flux-demo.js?v=386"></script>
+    <script src="src/flux-demo-backtrack.js?v=26"></script>
+    <script src="src/flux-demo-planner.js?v=23"></script>
+    <script src="src/flux-demo-ui.js?v=57"></script>
+    <script src="src/flux-demo.js?v=402"></script>
     <script src="src/flux-solver-render.js?v=38"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=16"></script>
     <script src="src/flux-xons.js?v=17"></script>
     <script src="src/flux-voids.js?v=30"></script>
-    <script src="src/flux-nucleus.js?v=41"></script>
+    <script src="src/flux-nucleus.js?v=42"></script>
     <script src="src/flux-tests.js?v=238"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══

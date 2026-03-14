@@ -211,6 +211,8 @@ const NucleusSimulator = (function(){
         document.getElementById('btn-nucleus-pause').style.display = '';
         const _pbCtrl = document.getElementById('playback-controls');
         if (_pbCtrl) _pbCtrl.style.display = '';
+        const _fjLabel = document.getElementById('fighterjet-label');
+        if (_fjLabel) _fjLabel.style.display = 'flex';
         // Show the new deuteron panel (left side)
         const dp = document.getElementById('deuteron-panel');
         if(dp) dp.style.display = 'block';
@@ -234,6 +236,8 @@ const NucleusSimulator = (function(){
         document.getElementById('btn-nucleus-pause').style.display = 'none';
         const _pbCtrl2 = document.getElementById('playback-controls');
         if (_pbCtrl2) _pbCtrl2.style.display = 'none';
+        const _fjLabel2 = document.getElementById('fighterjet-label');
+        if (_fjLabel2) _fjLabel2.style.display = 'none';
         document.getElementById('nucleus-status').textContent = 'ready';
         const ts = document.getElementById('tournament-status');
         if(ts) ts.style.display = 'none';

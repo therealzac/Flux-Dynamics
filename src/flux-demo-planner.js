@@ -877,7 +877,7 @@ function _walkToFace(xon, targetNodes) {
     _moveRecord.set(step, fromWF);
     _traceMove(xon, fromWF, step, 'walkToFace');
 
-    _trailPush(xon, step, 0xffffff);
+    _trailPush(xon, step, xon.col);
     xon.tweenT = 0;
 
     // Return the target if we reached it in one hop, otherwise null (still walking)
