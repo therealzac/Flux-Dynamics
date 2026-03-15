@@ -347,7 +347,7 @@
                 <div id="rule-t20-strict-row" style="margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
                         <input type="checkbox" id="rule-t20-strict-toggle" autocomplete="off" style="accent-color:#ff9944;">
-                        Strict T20 (no mode-transition exemption)
+                        1. Strict T20 (no mode-transition exemption)
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         When ON, every xon must move every tick — no exceptions.
@@ -356,7 +356,7 @@
                 </div>
                 <div id="rule-oct-full-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
-                        <span style="white-space:nowrap;">Max full-oct ticks</span>
+                        <span style="white-space:nowrap;">2. Max full-oct ticks</span>
                         <input type="range" id="rule-oct-full-slider" min="1" max="8" value="1" autocomplete="off" style="flex:1; accent-color:#ff9944;">
                         <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
                     </label>
@@ -366,7 +366,7 @@
                 </div>
                 <div id="rule-oct-capacity-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
-                        <span style="white-space:nowrap;">Max oct occupancy</span>
+                        <span style="white-space:nowrap;">3. Max oct occupancy</span>
                         <input type="range" id="rule-oct-capacity-slider" min="1" max="6" value="6" autocomplete="off" style="flex:1; accent-color:#66bbff;">
                         <span id="rule-oct-capacity-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">6</span>
                     </label>
@@ -377,7 +377,7 @@
                 <div id="rule-gluon-mediated-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
                         <input type="checkbox" id="rule-gluon-mediated-toggle" checked autocomplete="off" style="accent-color:#80ff00;">
-                        Gluon-mediated SC lifecycle
+                        4. Gluon-mediated SC lifecycle
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         When ON, gluon xons physically hold tet face shortcuts open during quark loops,
@@ -387,7 +387,7 @@
                 <div id="rule-bare-tet-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
                         <input type="checkbox" id="rule-bare-tet-toggle" autocomplete="off" style="accent-color:#ff6644;">
-                        Bare tetrahedra guard
+                        5. Bare tetrahedra guard
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         When ON, actualized tets with no edge contributors are violations (T86).
@@ -397,7 +397,7 @@
                 <div id="rule-projected-guards-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
                         <input type="checkbox" id="rule-projected-guards-toggle" autocomplete="off" style="accent-color:#66bbff;">
-                        Projected guard pre-validation
+                        6. Projected guard pre-validation
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         When ON, candidate moves are pre-checked against all guards with projected() before execution.
@@ -588,20 +588,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=79"></script>
+    <script src="src/flux-demo-state.js?v=80"></script>
     <script src="src/flux-demo-xon.js?v=13"></script>
     <script src="src/flux-demo-backtrack.js?v=36"></script>
-    <script src="src/flux-demo-planner.js?v=37"></script>
-    <script src="src/flux-demo-ui.js?v=99"></script>
-    <script src="src/flux-demo.js?v=452"></script>
-    <script src="src/flux-solver-render.js?v=40"></script>
+    <script src="src/flux-demo-planner.js?v=38"></script>
+    <script src="src/flux-demo-ui.js?v=100"></script>
+    <script src="src/flux-demo.js?v=454"></script>
+    <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=16"></script>
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=38"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
-    <script src="src/flux-tests.js?v=290"></script>
+    <script src="src/flux-tests.js?v=299"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

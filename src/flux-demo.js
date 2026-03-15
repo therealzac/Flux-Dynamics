@@ -1493,6 +1493,7 @@ function startDemoLoop() {
     _bfsReset(); // fresh demo = clean BFS + ledger
     _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 10
     _btSnapshots.length = 0;
+    _councilSnapArchive.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
     _movieFrames.length = 0;
@@ -3619,6 +3620,13 @@ async function demoTick() {
     _demoTick++;
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
+        // Archive snapshot for council save (forward-only, never popped)
+        if (_btSnapshots.length > 0) {
+            const latest = _btSnapshots[_btSnapshots.length - 1];
+            if (latest && !latest._pruned) {
+                _councilSnapArchive.push(_serializeSnapshot(latest));
+            }
+        }
         // Capture fingerprint of the tick that achieved the new high-water mark
         if (typeof _computeTickFingerprint === 'function') {
             _bestPathFingerprint = _computeTickFingerprint();
@@ -3683,14 +3691,14 @@ async function demoTick() {
     // GC always runs; autosave saves to council if eligible.
     {
         const nextMilestone = _lastAutosavePeak + 10;
-        if (!_testRunning && _maxTickReached >= nextMilestone) {
+        if (_maxTickReached >= nextMilestone) {
             _lastAutosavePeak = Math.floor(_maxTickReached / 10) * 10;
             _gc10();
             if (typeof _isCouncilEligible === 'function' && _isCouncilEligible()
                 && typeof _saveCurrentRunToCouncil === 'function') {
                 _saveCurrentRunToCouncil();
             }
-            if (typeof _updateSweepPanel === 'function' && _sweepActive) {
+            if (!_testRunning && typeof _updateSweepPanel === 'function' && _sweepActive) {
                 _updateSweepPanel(null, _searchStartTime);
             }
         }

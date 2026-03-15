@@ -1387,13 +1387,18 @@ function startRenderLoop(){
         const now = performance.now();
         const dt = (now - _renderLastTime) * 0.001;
         _renderLastTime = now;
-        tickExcitations(dt);
+        // When paused, skip excitations (which mutate SC state) but keep
+        // xon visual updates (needed for snapshot restore rendering)
+        const paused = typeof _demoPaused !== 'undefined' && _demoPaused;
+        if (!paused) tickExcitations(dt);
         if(_demoActive || _playbackMode) _tickDemoXons(dt);
-        if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         _updateVoidVisibility();
-        if (typeof updateBraneHighlights === 'function') updateBraneHighlights();
-        if (typeof updateWavefunction === 'function') updateWavefunction();
-        tickOctVoids();
+        if (!paused) {
+            if (typeof updateBraneHighlights === 'function') updateBraneHighlights();
+            if (typeof updateWavefunction === 'function') updateWavefunction();
+            tickOctVoids();
+        }
+        if(typeof _tickAutoOrbit==='function') _tickAutoOrbit(dt);
         // Background grayness slider: 0 = black, 100 = white
         const _bgEl = document.getElementById('bg-gray-slider');
         if (_bgEl) {

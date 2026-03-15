@@ -786,6 +786,7 @@ function _getOctCandidates(xon, occupied, blocked) {
         // Count votes per candidate node from council members
         const votes = new Map();  // node → vote count
         for (const member of _sweepGoldenCouncil) {
+            if (!member.moves) continue; // cold member, moves not loaded
             const tickMoves = member.moves.get(tick);
             if (tickMoves) {
                 const target = tickMoves.get(xi);

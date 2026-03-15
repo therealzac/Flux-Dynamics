@@ -2814,9 +2814,10 @@ function _updateBfsTestPanel(message) {
 
 // ── IndexedDB persistence for cross-session blacklist ──
 const _BL_IDB_NAME = 'FluxBlacklist';
-const _BL_IDB_VERSION = 2;
+const _BL_IDB_VERSION = 3;
 const _BL_IDB_STORE = 'blacklists';
 const _AS_IDB_STORE = 'autosave';
+const _CS_IDB_STORE = 'council';
 let _blIDB = null;
 let _blIDBReady = false;
 
@@ -2828,6 +2829,7 @@ function _blIDBOpen() {
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains(_BL_IDB_STORE)) db.createObjectStore(_BL_IDB_STORE);
                 if (!db.objectStoreNames.contains(_AS_IDB_STORE)) db.createObjectStore(_AS_IDB_STORE);
+                if (!db.objectStoreNames.contains(_CS_IDB_STORE)) db.createObjectStore(_CS_IDB_STORE);
             };
             req.onsuccess = (e) => { _blIDB = e.target.result; _blIDBReady = true; resolve(); };
             req.onerror = () => { console.warn('[Blacklist] IndexedDB unavailable'); resolve(); };
@@ -2845,24 +2847,24 @@ function _isCouncilEligible() {
 }
 
 async function _autosaveToIDB() {
-    if (_btSnapshots.length === 0) return;
+    if (_councilSnapArchive.length === 0) return;
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
-    const snap = _btSnapshots[_btSnapshots.length - 1];
-    if (!snap || snap._pruned) return;
+    // Use forward-only archive (pre-serialized at each max-tick advance)
+    const allSnaps = _councilSnapArchive.slice();
     const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
     const key = _blacklistRuleKey(lvl);
     try {
         const tx = _blIDB.transaction(_AS_IDB_STORE, 'readwrite');
         tx.objectStore(_AS_IDB_STORE).put({
-            snapshot: _serializeSnapshot(snap),
+            snapshots: allSnaps,
             tick: _demoTick,
             seed: _runSeed,
             maxTickReached: _maxTickReached,
             sweepSeedIdx: _sweepSeedIdx,
             timestamp: new Date().toISOString(),
         }, key);
-        console.log(`%c[Autosave] tick ${_demoTick} saved (peak ${_maxTickReached})`, 'color:#80ff80');
+        console.log(`%c[Autosave] tick ${_demoTick} saved (peak ${_maxTickReached}, ${allSnaps.length} snapshots)`, 'color:#80ff80');
     } catch (e) { console.warn('[Autosave] Save failed:', e); }
 }
 
@@ -2911,30 +2913,50 @@ async function _blIDBLoad(lvl) {
         try {
             const tx = _blIDB.transaction(_BL_IDB_STORE, 'readonly');
             const req = tx.objectStore(_BL_IDB_STORE).get(key);
-            req.onsuccess = () => {
+            req.onsuccess = async () => {
                 const data = req.result;
                 if (data && data.entries) {
-                    // Reconstruct Map<tick, Set<fingerprint>> from stored array
                     const map = new Map();
                     let total = 0;
                     for (const [tick, fps] of data.entries) {
                         map.set(tick, new Set(fps));
                         total += fps.length;
                     }
-                    // Reconstruct golden council if present
                     let goldenCouncil = [];
-                    if (data.goldenCouncil && Array.isArray(data.goldenCouncil)) {
-                        for (const member of data.goldenCouncil) {
-                            const moves = new Map();
-                            for (const [tick, pairs] of member.moves) {
-                                moves.set(tick, new Map(pairs));
-                            }
-                            // Deserialize snapshots if present
-                            const snapshots = member.snapshots
-                                ? member.snapshots.map(_deserializeSnapshot)
-                                : null;
-                            goldenCouncil.push({ peak: member.peak, seed: member.seed, moves, snapshots });
+                    if (data.councilIndex && Array.isArray(data.councilIndex)) {
+                        // New format (v3): cold stubs only
+                        for (const stub of data.councilIndex) {
+                            goldenCouncil.push({ peak: stub.peak, seed: stub.seed, _cold: true });
                         }
+                    } else if (data.goldenCouncil && Array.isArray(data.goldenCouncil)) {
+                        // Old format (v2): migrate to cold storage
+                        console.log(`[Blacklist] Migrating ${data.goldenCouncil.length} council members to cold storage...`);
+                        for (const member of data.goldenCouncil) {
+                            // Write full member data to council store
+                            try {
+                                const cKey = key + '|' + member.seed;
+                                const migTx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+                                migTx.objectStore(_CS_IDB_STORE).put({
+                                    seed: member.seed, snapshots: member.snapshots, moves: member.moves,
+                                    snapshotVersion: (member.snapshots && member.snapshots[0] && member.snapshots[0]._v) || 0,
+                                    timestamp: new Date().toISOString(),
+                                }, cKey);
+                            } catch (e) { console.warn('[Migration] Failed to write member:', e); }
+                            goldenCouncil.push({ peak: member.peak, seed: member.seed, _cold: true });
+                        }
+                        // Re-save blacklists store with councilIndex format (no goldenCouncil)
+                        try {
+                            const councilIndex = goldenCouncil.map(m => ({ peak: m.peak, seed: m.seed, snapshotVersion: _SNAPSHOT_VERSION }));
+                            const saveTx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
+                            saveTx.objectStore(_BL_IDB_STORE).put({
+                                key, entries: data.entries,
+                                total: data.total || total,
+                                seedIdx: data.seedIdx || 0,
+                                councilIndex,
+                                timestamp: new Date().toISOString(),
+                            }, key);
+                            console.log(`[Blacklist] Migration complete — council data moved to cold storage`);
+                        } catch (e) { console.warn('[Migration] Failed to re-save blacklist:', e); }
                     }
                     const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
                     console.log(`[Blacklist] Loaded ${total} fingerprints + council [${peaks}] from IndexedDB`);
@@ -2948,13 +2970,13 @@ async function _blIDBLoad(lvl) {
     });
 }
 
-// Save blacklist to IndexedDB (debounced)
+// Save blacklist + council index to IndexedDB (debounced). Council snapshots saved separately.
 let _blIDBSaveTimer = null;
 function _blIDBSave(lvl) {
     if (_blIDBSaveTimer) clearTimeout(_blIDBSaveTimer);
     _blIDBSaveTimer = setTimeout(() => {
         _blIDBSaveTimer = null;
-        _blIDBSaveNow(lvl);
+        _blIDBSaveBlacklist(lvl);
     }, 2000);
 }
 
@@ -3039,38 +3061,123 @@ function _deserializeSnapshot(s) {
     };
 }
 
-function _blIDBSaveNow(lvl) {
+// ── Hot/Cold storage: blacklist + council index saved together, council snapshots saved separately ──
+
+function _blIDBSaveBlacklist(lvl) {
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl);
-    // Serialize Map<tick, Set<fp>> → Array<[tick, Array<fp>]>
     const entries = [];
     for (const [tick, fpSet] of _sweepBlacklist) {
         entries.push([tick, [...fpSet]]);
     }
-    // Serialize golden council: Array of {peak, seed, moves, snapshots}
-    const councilSerialized = _sweepGoldenCouncil.map(member => {
-        const movesArr = [];
-        for (const [tick, moveMap] of member.moves) {
-            movesArr.push([tick, [...moveMap.entries()]]);
-        }
-        // Serialize snapshots if present
-        const snapsArr = member.snapshots
-            ? member.snapshots.map(_serializeSnapshot)
-            : null;
-        return { peak: member.peak, seed: member.seed, moves: movesArr, snapshots: snapsArr };
-    });
+    // Council index: lightweight stubs only (no snapshots, no moves)
+    const councilIndex = _sweepGoldenCouncil.map(m => ({
+        peak: m.peak, seed: m.seed, snapshotVersion: _SNAPSHOT_VERSION,
+    }));
     try {
         const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
         tx.objectStore(_BL_IDB_STORE).put({
             key, entries,
             total: _sweepTotalBlacklisted,
             seedIdx: _sweepSeedIdx,
-            goldenCouncil: councilSerialized,
+            councilIndex,
             timestamp: new Date().toISOString(),
         }, key);
         const peaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
-        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints + council [${peaks}] to IndexedDB`);
+        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints + council index [${peaks}] to IndexedDB`);
     } catch (e) { console.warn('[Blacklist] Save failed:', e); }
+}
+
+async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl) + '|' + seed;
+    const snapsArr = snapshots.map(_serializeSnapshot);
+    const movesArr = [];
+    for (const [tick, moveMap] of moves) {
+        movesArr.push([tick, [...moveMap.entries()]]);
+    }
+    try {
+        const tx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+        tx.objectStore(_CS_IDB_STORE).put({
+            seed, snapshots: snapsArr, moves: movesArr,
+            snapshotVersion: _SNAPSHOT_VERSION,
+            timestamp: new Date().toISOString(),
+        }, key);
+        console.log(`%c[Council IDB] Saved member seed 0x${seed.toString(16).padStart(8,'0')} (${snapsArr.length} snapshots) to cold storage`, 'color:#66ccff');
+    } catch (e) { console.warn('[Council IDB] Save failed:', e); }
+}
+
+async function _blIDBDeleteCouncilMember(lvl, seed) {
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl) + '|' + seed;
+    try {
+        const tx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+        tx.objectStore(_CS_IDB_STORE).delete(key);
+        console.log(`[Council IDB] Deleted evicted member seed 0x${seed.toString(16).padStart(8,'0')} from cold storage`);
+    } catch (e) { /* ignore */ }
+}
+
+async function _hydrateCouncilMember(lvl, member) {
+    if (!member._cold) return; // already hydrated
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl) + '|' + member.seed;
+    return new Promise((resolve) => {
+        try {
+            const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
+            const req = tx.objectStore(_CS_IDB_STORE).get(key);
+            req.onsuccess = () => {
+                const data = req.result;
+                if (data) {
+                    if (data.snapshots) {
+                        member.snapshots = data.snapshots.map(_deserializeSnapshot);
+                    }
+                    if (data.moves) {
+                        member.moves = new Map();
+                        for (const [tick, pairs] of data.moves) {
+                            member.moves.set(tick, new Map(pairs));
+                        }
+                    }
+                    member._cold = false;
+                    console.log(`%c[Council IDB] Hydrated member seed 0x${member.seed.toString(16).padStart(8,'0')} (${member.snapshots ? member.snapshots.length : 0} snapshots)`, 'color:#66ccff');
+                }
+                resolve();
+            };
+            req.onerror = () => resolve();
+        } catch (e) { resolve(); }
+    });
+}
+
+async function _hydrateCouncilMoves(lvl, member) {
+    if (member.moves) return; // already has moves
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl) + '|' + member.seed;
+    return new Promise((resolve) => {
+        try {
+            const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
+            const req = tx.objectStore(_CS_IDB_STORE).get(key);
+            req.onsuccess = () => {
+                const data = req.result;
+                if (data && data.moves) {
+                    member.moves = new Map();
+                    for (const [tick, pairs] of data.moves) {
+                        member.moves.set(tick, new Map(pairs));
+                    }
+                }
+                resolve();
+            };
+            req.onerror = () => resolve();
+        } catch (e) { resolve(); }
+    });
+}
+
+function _dehydrateCouncilMember(member) {
+    member.snapshots = null;
+    if (!_sweepActive) member.moves = null;
+    member._cold = true;
 }
 
 async function startSweepTest(latticeLevel, replayMemberIdx) {
@@ -3126,7 +3233,13 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     // Lock rules during sweep
     if (typeof _lockRules === 'function') _lockRules(true);
 
-    const sweepStartTime = performance.now();
+    let sweepStartTime = performance.now();
+    let _sweepPausedAt = 0;
+
+    // Hydrate council member moves for golden boost scoring
+    for (const member of _sweepGoldenCouncil) {
+        if (!member.moves) await _hydrateCouncilMoves(lvl, member);
+    }
 
     // If replaying a council member, set up for the first seed
     let _replayOnFirstSeed = (typeof replayMemberIdx === 'number' && replayMemberIdx >= 0
@@ -3168,23 +3281,46 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _bfsTestRandomChoreographer = false; // GC mode
         startDemoLoop();
 
-        // Council replay: load snapshots into redo stack for buttery playback.
+        // Council replay: hydrate from cold storage, load snapshots into redo stack.
         // When redo exhausts, resumeDemo transitions to live demoTick (save game).
-        if (_replayOnFirstSeed && _replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
-            _redoStack.length = 0;
-            for (let i = _replayOnFirstSeed.snapshots.length - 1; i >= 0; i--) {
-                _redoStack.push(_replayOnFirstSeed.snapshots[i]);
+        if (_replayOnFirstSeed) {
+            if (_replayOnFirstSeed._cold) {
+                await _hydrateCouncilMember(lvl, _replayOnFirstSeed);
             }
-            console.log(`%c[REPLAY] Loaded ${_replayOnFirstSeed.snapshots.length} snapshots — save game mode`, 'color:#66ccff;font-weight:bold');
-            pauseDemo();
-            _testRunning = false; // enable rendering for entire replay seed
-            resumeDemo();
+            if (_replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
+                _redoStack.length = 0;
+                for (let i = _replayOnFirstSeed.snapshots.length - 1; i >= 0; i--) {
+                    _redoStack.push(_replayOnFirstSeed.snapshots[i]);
+                }
+                console.log(`%c[REPLAY] Loaded ${_replayOnFirstSeed.snapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
+                pauseDemo();
+                _testRunning = false; // enable rendering for entire replay seed
+                // Ensure opacity defaults are applied for replay visuals
+                const _replayOpDefaults = [
+                    ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
+                    ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
+                    ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
+                ];
+                for (const [id, val] of _replayOpDefaults) {
+                    const el = document.getElementById(id);
+                    if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
+                }
+                resumeDemo();
+            }
         }
 
         // Poll for completion
         await new Promise(resolve => {
             const pollId = setInterval(() => {
-                _updateSweepPanel(null, sweepStartTime);
+                if (_demoPaused) {
+                    if (!_sweepPausedAt) _sweepPausedAt = performance.now();
+                } else {
+                    if (_sweepPausedAt) {
+                        sweepStartTime += performance.now() - _sweepPausedAt;
+                        _sweepPausedAt = 0;
+                    }
+                    _updateSweepPanel(null, sweepStartTime);
+                }
                 if (simHalted || !_demoActive || !_sweepActive) {
                     clearInterval(pollId);
                     resolve();
@@ -3225,6 +3361,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
         // Clear replay mode after first seed — subsequent seeds run normally
         if (_replayOnFirstSeed) {
+            // Dehydrate: release snapshots from RAM, keep moves for golden boost
+            if (!_replayOnFirstSeed._cold) {
+                _replayOnFirstSeed.snapshots = null;
+                _replayOnFirstSeed._cold = true;
+            }
             _replayOnFirstSeed = null;
             _sweepReplayActive = false;
             _sweepReplayMember = null;
@@ -3237,42 +3378,26 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             const lowestPeak = _sweepGoldenCouncil.length >= maxSize
                 ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
             if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-                // Deep-clone snapshots for replay (these are the full state at each tick)
-                const snapsCopy = _btSnapshots.map(s => ({
-                    ...s,
-                    xons: s.xons.map(x => ({ ...x, _loopSeq: x._loopSeq ? x._loopSeq.slice() : null, trail: x.trail.slice(), trailColHistory: x.trailColHistory.slice(), _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [], _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [], _dirBalance: x._dirBalance ? x._dirBalance.slice() : null, _modeStats: x._modeStats ? { ...x._modeStats } : null, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null })),
-                    activeSet: new Set(s.activeSet),
-                    xonImpliedSet: new Set(s.xonImpliedSet),
-                    impliedSet: new Set(s.impliedSet),
-                    scAttribution: new Map(s.scAttribution),
-                    pos: s.pos.map(p => [p[0], p[1], p[2]]),
-                    edgeBalance: s.edgeBalance ? new Map([...s.edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
-                    ejectionBalance: s.ejectionBalance ? new Map(s.ejectionBalance) : null,
-                    demoVisits: s.demoVisits ? JSON.parse(JSON.stringify(s.demoVisits)) : null,
-                    actualizationVisits: s.actualizationVisits ? JSON.parse(JSON.stringify(s.actualizationVisits)) : null,
-                    faceEdgeEpoch: s.faceEdgeEpoch ? JSON.parse(JSON.stringify(s.faceEdgeEpoch)) : null,
-                    faceWasActualized: s.faceWasActualized ? { ...s.faceWasActualized } : null,
-                    globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
-                    // Nucleus topology (deep copy Sets/Maps)
-                    octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
-                    octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
-                    octEdgeSet: s.octEdgeSet ? new Set(s.octEdgeSet) : null,
-                    nucleusTetFaceData: s.nucleusTetFaceData ? JSON.parse(JSON.stringify(s.nucleusTetFaceData)) : null,
-                    octEquatorCycle: s.octEquatorCycle ? s.octEquatorCycle.slice() : null,
-                    octCageSCCycle: s.octCageSCCycle ? s.octCageSCCycle.slice() : null,
-                    octSeedCenter: s.octSeedCenter != null ? s.octSeedCenter : null,
-                    octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
-                    octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
-                }));
-                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, snapshots: snapsCopy });
+                // Collect evicted seeds before trimming
+                const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
+                // Push cold stub with moves (hot for golden boost) but no snapshots in RAM
+                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
                 _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-                // Trim to max size
                 if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${snapsCopy.length} snapshots)`, 'color:#ffcc00;font-weight:bold');
+                // Save full snapshot data to cold IDB storage
+                const snapsCopy = _btSnapshots.map(s => _deserializeSnapshot(_serializeSnapshot(s)));
+                _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
+                // Delete evicted members from cold storage
+                for (const ps of prevSeeds) {
+                    if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
+                        _blIDBDeleteCouncilMember(lvl, ps);
+                    }
+                }
+                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${_btSnapshots.length} snapshots → cold)`, 'color:#ffcc00;font-weight:bold');
             }
         }
 
-        // Persist blacklist + golden path to IndexedDB after each seed
+        // Persist blacklist + council index to IndexedDB after each seed
         _blIDBSave(lvl);
 
         // If NOT canary (rules satisfiable!), stop sweep
@@ -3291,7 +3416,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     if (typeof _lockRules === 'function') _lockRules(false);
     // Flush blacklist to IndexedDB immediately on sweep end
     if (_blIDBSaveTimer) { clearTimeout(_blIDBSaveTimer); _blIDBSaveTimer = null; }
-    _blIDBSaveNow(lvl);
+    _blIDBSaveBlacklist(lvl);
     _updateSweepPanel('Sweep complete', sweepStartTime);
     _populateCouncilDropdown();  // refresh dropdown with any new council members
 }
@@ -3314,57 +3439,32 @@ function _saveCurrentRunToCouncil() {
         movesCopy.set(tick, new Map(tickMap));
     }
     if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-        // Deep-clone snapshots for replay
-        const snapsCopy = _btSnapshots.map(s => ({
-            ...s,
-            xons: s.xons.map(x => ({ ...x, _loopSeq: x._loopSeq ? x._loopSeq.slice() : null, trail: x.trail.slice(), trailColHistory: x.trailColHistory.slice(), _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [], _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [], _dirBalance: x._dirBalance ? x._dirBalance.slice() : null, _modeStats: x._modeStats ? { ...x._modeStats } : null, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null })),
-            activeSet: new Set(s.activeSet),
-            xonImpliedSet: new Set(s.xonImpliedSet),
-            impliedSet: new Set(s.impliedSet),
-            scAttribution: new Map(s.scAttribution),
-            pos: s.pos.map(p => [p[0], p[1], p[2]]),
-            edgeBalance: s.edgeBalance ? new Map([...s.edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
-            ejectionBalance: s.ejectionBalance ? new Map(s.ejectionBalance) : null,
-            demoVisits: s.demoVisits ? JSON.parse(JSON.stringify(s.demoVisits)) : null,
-            actualizationVisits: s.actualizationVisits ? JSON.parse(JSON.stringify(s.actualizationVisits)) : null,
-            faceEdgeEpoch: s.faceEdgeEpoch ? JSON.parse(JSON.stringify(s.faceEdgeEpoch)) : null,
-            faceWasActualized: s.faceWasActualized ? { ...s.faceWasActualized } : null,
-            globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
-            // Nucleus topology (deep copy Sets/Maps)
-            octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
-            octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
-            octEdgeSet: s.octEdgeSet ? new Set(s.octEdgeSet) : null,
-            nucleusTetFaceData: s.nucleusTetFaceData ? JSON.parse(JSON.stringify(s.nucleusTetFaceData)) : null,
-            octEquatorCycle: s.octEquatorCycle ? s.octEquatorCycle.slice() : null,
-            octCageSCCycle: s.octCageSCCycle ? s.octCageSCCycle.slice() : null,
-            octSeedCenter: s.octSeedCenter != null ? s.octSeedCenter : null,
-            octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
-            octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
-        }));
-        // If same seed already in council, update in place (accumulate snapshots)
-        const existing = _sweepGoldenCouncil.find(m => m.seed === seed);
-        if (existing) {
-            // Merge new snapshots: keep existing ones, add any with ticks not yet seen
-            const existingTicks = new Set(existing.snapshots.map(s => s.tick));
-            for (const s of snapsCopy) {
-                if (!existingTicks.has(s.tick)) existing.snapshots.push(s);
-            }
-            existing.snapshots.sort((a, b) => a.tick - b.tick);
-            existing.peak = Math.max(existing.peak, peak);
-            // Merge moves
-            for (const [tick, tickMap] of movesCopy) {
-                if (!existing.moves.has(tick)) existing.moves.set(tick, tickMap);
-            }
-        } else {
-            _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, snapshots: snapsCopy });
-        }
-        _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-        if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
+        // Use forward-only archive (pre-serialized, never popped by backtracking)
+        const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
+        // Check for existing seed in council
+        const existing = _sweepGoldenCouncil.find(m => m.seed === seed);
+        if (existing) {
+            existing.peak = Math.max(existing.peak, peak);
+            if (!existing.moves) existing.moves = movesCopy;
+            else { for (const [tick, tickMap] of movesCopy) { if (!existing.moves.has(tick)) existing.moves.set(tick, tickMap); } }
+            // Overwrite cold storage with merged data
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existing.moves);
+        } else {
+            const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
+            _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
+            _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+            if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, movesCopy);
+            for (const ps of prevSeeds) {
+                if (!_sweepGoldenCouncil.find(m => m.seed === ps)) _blIDBDeleteCouncilMember(lvl, ps);
+            }
+        }
+        _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
         _blIDBSave(lvl);
         _populateCouncilDropdown();
-        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots, ${existing ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
+        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots → cold, ${existing ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
     } else {
         console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
     }
@@ -3379,6 +3479,7 @@ function startCouncilReplay(memberIdx) {
     const lvl = slider ? +slider.value : 2;
     startSweepTest(lvl, memberIdx);
 }
+
 
 function _updateReplayPanel(member, startTime, message) {
     const el = document.getElementById('bfs-test-results');
@@ -3411,7 +3512,7 @@ function _updateReplayPanel(member, startTime, message) {
     el.innerHTML = html;
 }
 
-// Populate council dropdown from IndexedDB for current lattice+rules config
+// Populate council dropdown — works with cold stubs (no snapshots in RAM)
 async function _populateCouncilDropdown() {
     const sel = document.getElementById('council-replay-select');
     if (!sel) return;
@@ -3419,18 +3520,26 @@ async function _populateCouncilDropdown() {
     const slider = document.getElementById('lattice-slider');
     const lvl = slider ? +slider.value : 2;
 
+    // Always load from IDB when no sweep is active (rules may have changed)
     let council = [];
-    try {
-        const cached = await _blIDBLoad(lvl);
-        if (cached && cached.goldenCouncil) council = cached.goldenCouncil;
-    } catch (e) {
-        console.warn('[Council dropdown] Failed to load:', e);
+    if (_sweepActive) {
+        council = _sweepGoldenCouncil;
+    } else {
+        try {
+            const cached = await _blIDBLoad(lvl);
+            if (cached && cached.goldenCouncil) {
+                council = cached.goldenCouncil;
+            }
+        } catch (e) {
+            console.warn('[Council dropdown] Failed to load:', e);
+        }
+        // Persist loaded stubs so replay can find them by index
+        _sweepGoldenCouncil = council;
     }
 
-    // Sort council by peak descending for display
+    // Sort by peak descending
     council.sort((a, b) => (b.peak || 0) - (a.peak || 0));
 
-    // Always show dropdown — blank first option = new run
     sel.innerHTML = '';
     const blankOpt = document.createElement('option');
     blankOpt.value = '';
@@ -3439,8 +3548,6 @@ async function _populateCouncilDropdown() {
 
     for (let i = 0; i < council.length; i++) {
         const m = council[i];
-        if (!m.snapshots || m.snapshots.length === 0) continue;
-        if (!m.snapshots[0]._v || m.snapshots[0]._v < 2) continue;
         const seedHex = '0x' + m.seed.toString(16).padStart(8, '0');
         const opt = document.createElement('option');
         opt.value = i;
@@ -3474,11 +3581,27 @@ function _updateSweepPanel(message, sweepStartTime) {
         `Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
-    if (_sweepGoldenCouncil.length > 0) {
-        const peaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
+    if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {
+        // Build sorted entries: council members, marking the live run's seed with green *
+        const hasRecentAutosave = _demoActive && _maxTickReached > 0
+            && _lastAutosavePeak > 0 && (_maxTickReached - _lastAutosavePeak) < 10
+            && typeof _isCouncilEligible === 'function' && _isCouncilEligible();
+        const liveSeed = hasRecentAutosave ? (_forceSeed || _runSeed || 0) : null;
+        const entries = _sweepGoldenCouncil.map(m => ({ peak: m.peak, live: liveSeed !== null && m.seed === liveSeed }));
+        // If live run isn't in council yet, add it as a separate green entry
+        if (hasRecentAutosave && !entries.some(e => e.live)) {
+            entries.push({ peak: _lastAutosavePeak, live: true });
+        }
+        entries.sort((a, b) => b.peak - a.peak);
+        const peakStrs = entries.map(e => e.live
+            ? `<span style="color:#80ff80;">t${e.peak}*</span>`
+            : 't' + e.peak);
         html += `<div style="font-size:10px; color:#ffcc66; margin-top:2px;">` +
-            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${peaks} &middot; ` +
+            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${peakStrs.join(', ')} &middot; ` +
             `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this seed)</div>`;
+        if (hasRecentAutosave) {
+            html += `<div style="font-size:9px; color:#80ff80; margin-top:1px;">* autosaved</div>`;
+        }
     }
     html += `</div>`;
 
