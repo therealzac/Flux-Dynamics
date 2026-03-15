@@ -415,7 +415,7 @@ let _flashEnabled = false;
 let _kuhnEnabled = false;
 
 // ── Fighterjet mode: smooth Catmull-Rom spline flight paths ──────────
-let _fighterjetMode = false;
+let _fighterjetMode = true;
 
 // ── Seeded PRNG for deterministic backtracker replay ─────────────────
 // Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).

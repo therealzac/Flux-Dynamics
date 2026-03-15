@@ -3105,6 +3105,33 @@ function _stopSweep() {
     _sweepActive = false;
 }
 
+// Save the current in-progress run as a council member (even if it hasn't terminated)
+function _saveCurrentRunToCouncil() {
+    if (!_sweepSeedMoves || _sweepSeedMoves.size === 0) return;
+    const seed = _forceSeed || 0;
+    const peak = _demoTick || 0;
+    const maxSize = _goldenCouncilSize();
+    const lowestPeak = _sweepGoldenCouncil.length >= maxSize
+        ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
+    // Clone moves so the live map can keep growing
+    const movesCopy = new Map();
+    for (const [tick, tickMap] of _sweepSeedMoves) {
+        movesCopy.set(tick, new Map(tickMap));
+    }
+    if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
+        _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy });
+        _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+        if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
+        const slider = document.getElementById('lattice-slider');
+        const lvl = slider ? +slider.value : 2;
+        _blIDBSave(lvl);
+        _populateCouncilDropdown();
+        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council`, 'color:#66cc88;font-weight:bold');
+    } else {
+        console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
+    }
+}
+
 // ── Council member replay — just starts a sweep with the member's seed first ──
 function startCouncilReplay(memberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
@@ -3273,6 +3300,23 @@ function _updateSweepPanel(message, sweepStartTime) {
     const dlBtn = document.getElementById('btn-sweep-download');
     if (dlBtn) dlBtn.addEventListener('click', _downloadSweepLog);
 
+    // Save Current Run button — saves mid-run moves as a council member
+    let saveBtn = document.getElementById('btn-sweep-save-run');
+    if (_sweepActive && _sweepSeedMoves && _sweepSeedMoves.size > 0) {
+        if (!saveBtn) {
+            saveBtn = document.createElement('button');
+            saveBtn.id = 'btn-sweep-save-run';
+            saveBtn.textContent = 'Save Current Run';
+            saveBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
+                'background:#1a3a2a;color:#66cc88;border:1px solid #3a7a4a;border-radius:3px;display:block;width:100%;';
+            saveBtn.addEventListener('click', _saveCurrentRunToCouncil);
+            el.parentElement.appendChild(saveBtn);
+        }
+        saveBtn.style.display = 'block';
+    } else if (saveBtn) {
+        saveBtn.style.display = 'none';
+    }
+
     // Stop button
     let stopBtn = document.getElementById('btn-sweep-stop');
     if (_sweepActive) {
@@ -3280,7 +3324,7 @@ function _updateSweepPanel(message, sweepStartTime) {
             stopBtn = document.createElement('button');
             stopBtn.id = 'btn-sweep-stop';
             stopBtn.textContent = 'Stop Sweep';
-            stopBtn.style.cssText = 'margin-top:6px;padding:4px 10px;font-size:10px;cursor:pointer;' +
+            stopBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
                 'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
             stopBtn.addEventListener('click', _stopSweep);
             el.parentElement.appendChild(stopBtn);

@@ -309,10 +309,26 @@ function updateVoidSpheres(){
     //      hundreds of phantom voids appear in the undeformed lattice.
     //
     // DO NOT simplify to either check alone. Both are necessary. ──────────────
+    // Check if a tetrahedron (4 vertices) is geometrically regular in pos[].
+    // A regular tet has all 6 edge lengths equal. Tolerance: 15% of mean length.
+    function _isRegularTet(nbrs){
+        const lens = [];
+        for(let i=0;i<4;i++) for(let j=i+1;j<4;j++){
+            const a=nbrs[i], b=nbrs[j];
+            const dx=pos[a][0]-pos[b][0], dy=pos[a][1]-pos[b][1], dz=pos[a][2]-pos[b][2];
+            lens.push(Math.sqrt(dx*dx+dy*dy+dz*dz));
+        }
+        const mean = lens.reduce((s,v)=>s+v,0)/6;
+        if(mean < 1e-9) return false;
+        for(const l of lens) if(Math.abs(l-mean)/mean > 0.15) return false;
+        return true;
+    }
     // Check if a single 4-cycle is geometrically a square in pos[].
     // cycleScIds stored at build time — no scLookup needed here.
     function _isCycleSquare(verts, cycleScIds){
         if(!cycleScIds.every(id => allActive.has(id))) return false;
+        // Check all 4 inner angles ≈ 90° AND all 4 edge lengths approximately equal
+        const edgeLens = [];
         for(let k=0;k<4;k++){
             const prev=verts[(k+3)%4],mid=verts[k],nxt=verts[(k+1)%4];
             const u=[pos[prev][0]-pos[mid][0],pos[prev][1]-pos[mid][1],pos[prev][2]-pos[mid][2]];
@@ -320,7 +336,13 @@ function updateVoidSpheres(){
             const m=Math.sqrt(_dot3(u,u)*_dot3(w,w));
             if(m<1e-9) return false;
             if(Math.abs(_dot3(u,w)/m)>0.259) return false;
+            // Collect edge length (mid→nxt)
+            edgeLens.push(Math.sqrt(_dot3(w,w)));
         }
+        // All 4 edges of the square must be approximately equal (15% tolerance)
+        const mean = edgeLens.reduce((s,v)=>s+v,0)/4;
+        if(mean < 1e-9) return false;
+        for(const l of edgeLens) if(Math.abs(l-mean)/mean > 0.15) return false;
         return true;
     }
     // An O_h void is actualized when ALL of its square cycles are geometric
@@ -415,7 +437,7 @@ function updateVoidSpheres(){
         let actualized = entry.wasActualized; // default: keep previous state
         if(scSetChanged){
             actualized = type==='tet'
-                    ? scIds.every(id => allActive.has(id))
+                    ? (scIds.every(id => allActive.has(id)) && _isRegularTet(nbrs))
                     : _isSquare(cycles||[]);
             voidNeighborData[vi].actualized = actualized;
             // Store per-cycle actualization for oct voids — excitations can
