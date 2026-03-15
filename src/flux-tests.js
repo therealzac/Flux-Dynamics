@@ -3433,6 +3433,73 @@ function _stopSweep() {
     _sweepActive = false;
 }
 
+// ── Clear Cache: wipe blacklist + council for current rule config ──
+
+function _clearCacheConfirm() {
+    const btn = document.getElementById('btn-clear-cache');
+    if (!btn) return;
+    // Create confirm/cancel row below the button
+    let row = document.getElementById('clear-cache-confirm');
+    if (!row) {
+        row = document.createElement('div');
+        row.id = 'clear-cache-confirm';
+        row.style.cssText = 'margin-top:4px;display:flex;gap:4px;';
+        btn.parentElement.insertBefore(row, btn.nextSibling);
+    }
+    row.dataset.active = '1';
+    row.style.display = 'flex';
+    row.innerHTML =
+        `<button id="btn-clear-cache-yes" style="flex:1;padding:6px;font-size:12px;cursor:pointer;` +
+        `background:#7a2a2a;color:#ffaaaa;border:1px solid #aa4444;border-radius:3px;">Yes, clear</button>` +
+        `<button id="btn-clear-cache-no" style="flex:1;padding:6px;font-size:12px;cursor:pointer;` +
+        `background:#2a2a3a;color:#aaaacc;border:1px solid #4a4a6a;border-radius:3px;">Cancel</button>`;
+    document.getElementById('btn-clear-cache-yes').addEventListener('click', _clearCacheExecute);
+    document.getElementById('btn-clear-cache-no').addEventListener('click', () => {
+        row.style.display = 'none';
+        delete row.dataset.active;
+    });
+}
+
+async function _clearCacheExecute() {
+    const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
+    const key = _blacklistRuleKey(lvl);
+
+    // Stop any active sweep and demo
+    _sweepActive = false;
+    if (_demoActive && typeof stopDemo === 'function') stopDemo();
+
+    // Clear in-memory state
+    _sweepBlacklist = new Map();
+    _sweepTotalBlacklisted = 0;
+    _sweepBlacklistHits = 0;
+    _sweepBlacklistHitsSeed = 0;
+    _sweepResults = [];
+
+    // Delete each council member's cold storage
+    for (const m of _sweepGoldenCouncil) {
+        await _blIDBDeleteCouncilMember(lvl, m.seed);
+    }
+    _sweepGoldenCouncil = [];
+
+    // Delete blacklist + council index from IDB
+    if (_blIDB) {
+        try {
+            const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
+            tx.objectStore(_BL_IDB_STORE).delete(key);
+        } catch (e) { console.warn('[Clear Cache] blacklist delete failed:', e); }
+        // Delete autosave too
+        try {
+            const tx = _blIDB.transaction(_AS_IDB_STORE, 'readwrite');
+            tx.objectStore(_AS_IDB_STORE).delete(key);
+        } catch (e) { /* ignore */ }
+    }
+
+    console.log(`%c[Clear Cache] Cleared blacklist + council for key: ${key}`, 'color:#ff8866;font-weight:bold');
+
+    // Reload page for a clean slate
+    window.location.reload();
+}
+
 // Save the current in-progress run as a council member (even if it hasn't terminated)
 function _saveCurrentRunToCouncil() {
     if (!_sweepSeedMoves || _sweepSeedMoves.size === 0) return;
@@ -3673,22 +3740,20 @@ function _updateSweepPanel(message, sweepStartTime) {
     const dlBtn = document.getElementById('btn-sweep-download');
     if (dlBtn) dlBtn.addEventListener('click', _downloadSweepLog);
 
-    // Stop button
-    let stopBtn = document.getElementById('btn-sweep-stop');
-    if (_sweepActive) {
-        if (!stopBtn) {
-            stopBtn = document.createElement('button');
-            stopBtn.id = 'btn-sweep-stop';
-            stopBtn.textContent = 'Stop Sweep';
-            stopBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
-                'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
-            stopBtn.addEventListener('click', _stopSweep);
-            el.parentElement.appendChild(stopBtn);
-        }
-        stopBtn.style.display = 'block';
-    } else if (stopBtn) {
-        stopBtn.style.display = 'none';
+    // Clear Cache button (replaces Stop Sweep)
+    let clearBtn = document.getElementById('btn-clear-cache');
+    if (!clearBtn) {
+        clearBtn = document.createElement('button');
+        clearBtn.id = 'btn-clear-cache';
+        clearBtn.textContent = 'Clear Cache';
+        clearBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
+            'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
+        clearBtn.addEventListener('click', _clearCacheConfirm);
+        el.parentElement.appendChild(clearBtn);
     }
+    // Hide confirm row if it exists and we're not in confirm state
+    const confirmRow = document.getElementById('clear-cache-confirm');
+    if (confirmRow && !confirmRow.dataset.active) confirmRow.style.display = 'none';
 
     // Hide old traversal log button during sweep
     const oldDlBtn = document.getElementById('btn-traversal-log');
