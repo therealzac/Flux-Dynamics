@@ -3620,12 +3620,20 @@ async function demoTick() {
     _demoTick++;
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
-        // Archive snapshot for council save (forward-only, never popped)
-        if (_btSnapshots.length > 0) {
-            const latest = _btSnapshots[_btSnapshots.length - 1];
-            if (latest && !latest._pruned) {
-                _councilSnapArchive.push(_serializeSnapshot(latest));
+        // Refresh archive tail: backtracker may have rewritten recent history on
+        // an alternate path, making older archive entries stale.  Re-serialize the
+        // last min(101, 51% of run) snapshots from _btSnapshots (always the current
+        // happy path) plus a fresh post-tick snapshot for the new high-water mark.
+        {
+            const total = _btSnapshots.length;
+            const refreshWindow = Math.min(101, Math.ceil(total * 0.51));
+            const safeIdx = Math.max(0, total - refreshWindow);
+            _councilSnapArchive.length = safeIdx;          // trim stale tail
+            for (let i = safeIdx; i < total; i++) {
+                _councilSnapArchive.push(_serializeSnapshot(_btSnapshots[i]));
             }
+            // Append current live post-tick state (includes this tick's effects)
+            _councilSnapArchive.push(_serializeSnapshot(_btCreateSnapshot()));
         }
         // Capture fingerprint of the tick that achieved the new high-water mark
         if (typeof _computeTickFingerprint === 'function') {

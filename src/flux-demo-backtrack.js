@@ -22,9 +22,9 @@ function _btPruneSnapshot(snap) {
     snap.ejectionBalance = null;
 }
 
-// Save a full snapshot of choreography state before a tick executes.
-function _btSaveSnapshot() {
-    const snap = {
+// Create a deep-copy snapshot of current choreography state (does NOT push to stack).
+function _btCreateSnapshot() {
+    return {
         _v: _SNAPSHOT_VERSION, // snapshot version — separates IDB keyspaces
         tick: _demoTick,
         openingPhase: _openingPhase,
@@ -82,7 +82,11 @@ function _btSaveSnapshot() {
         octVoidIdx: typeof _octVoidIdx !== 'undefined' ? _octVoidIdx : -1,
         octAntipodal: typeof _octAntipodal !== 'undefined' && _octAntipodal ? new Map(_octAntipodal) : null,
     };
-    _btSnapshots.push(snap);
+}
+
+// Save a full snapshot of choreography state before a tick executes.
+function _btSaveSnapshot() {
+    _btSnapshots.push(_btCreateSnapshot());
 }
 
 // Restore choreography state from a snapshot.
