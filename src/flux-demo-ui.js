@@ -1516,6 +1516,7 @@ window.addEventListener('DOMContentLoaded', () => {
     // Fire after load, pageshow, AND with escalating delays to catch late browser restoration
     window.addEventListener('load', () => { setTimeout(_syncJSFromDOM, 0); setTimeout(_syncJSFromDOM, 100); });
     window.addEventListener('pageshow', () => { setTimeout(_syncJSFromDOM, 0); setTimeout(_syncJSFromDOM, 100); });
+
 }); // end DOMContentLoaded
 
 // ── Simulation UI state: button swap + rule locking ──

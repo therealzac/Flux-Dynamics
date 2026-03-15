@@ -585,6 +585,7 @@ function _fnv1aHash(str) {
     }
     return (h >>> 0).toString(16).padStart(8, '0');
 }
+let _lastAutosavePeak = 0;          // last _maxTickReached at which autosave fired
 const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
 let _btSnapshots = [];               // stack of state snapshots (one per tick)

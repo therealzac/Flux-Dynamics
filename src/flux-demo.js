@@ -1491,6 +1491,7 @@ function startDemoLoop() {
     console.log(`%c[DEMO] seed=0x${_runSeed.toString(16).padStart(8,'0')}`, 'color:cyan;font-weight:bold');
     _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
+    _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 10
     _btSnapshots.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
@@ -1887,6 +1888,41 @@ function _executeOpeningTick(occupied) {
             }
         }
     }
+}
+
+// ── Periodic garbage collection (every 10 advancement ticks) ──
+// Trims auxiliary in-memory structures that are NOT needed for replay or backtracking.
+// NEVER touches:
+//   _btSnapshots  — needed for backtracker rewind + council replay capture
+//   _sweepSeedMoves — needed for golden council move recording
+function _gc10() {
+    let trimmed = 0;
+    // 1. Cap balance history (display-only, not needed for replay)
+    if (_balanceHistory.length > 256) {
+        trimmed += _balanceHistory.length - 256;
+        _balanceHistory.splice(0, _balanceHistory.length - 256);
+    }
+    // 2. Cap tick log (export-only)
+    if (_tickLog.length > 500) {
+        trimmed += _tickLog.length - 500;
+        _tickLog.splice(0, _tickLog.length - 500);
+    }
+    // 3. Cap movie frames (export-only)
+    if (_movieFrames.length > 500) {
+        trimmed += _movieFrames.length - 500;
+        _movieFrames.splice(0, _movieFrames.length - 500);
+    }
+    // 4. Cap search traversal log (debug/analysis-only)
+    if (_searchTraversalLog && _searchTraversalLog.length > 1000) {
+        trimmed += _searchTraversalLog.length - 1000;
+        _searchTraversalLog.splice(0, _searchTraversalLog.length - 1000);
+    }
+    // 5. Cap type balance history (display-only)
+    if (_demoTypeBalanceHistory.length > 64) {
+        trimmed += _demoTypeBalanceHistory.length - 64;
+        _demoTypeBalanceHistory.splice(0, _demoTypeBalanceHistory.length - 64);
+    }
+    if (trimmed > 0) console.log(`[GC] tick ${_demoTick}: trimmed ${trimmed} stale entries`);
 }
 
 async function demoTick() {
@@ -3639,6 +3675,24 @@ async function demoTick() {
             _searchPathStack[successTick] = fp;
             _searchPathStack.length = successTick + 1;
             _searchParentNodeId = nodeId;
+        }
+    }
+
+    // ── GC + Autosave on advancement milestones (every 10 NEW high-water ticks) ──
+    // Fires when _maxTickReached crosses a new 10-tick boundary since last milestone.
+    // GC always runs; autosave saves to council if eligible.
+    {
+        const nextMilestone = _lastAutosavePeak + 10;
+        if (!_testRunning && _maxTickReached >= nextMilestone) {
+            _lastAutosavePeak = Math.floor(_maxTickReached / 10) * 10;
+            _gc10();
+            if (typeof _isCouncilEligible === 'function' && _isCouncilEligible()
+                && typeof _saveCurrentRunToCouncil === 'function') {
+                _saveCurrentRunToCouncil();
+            }
+            if (typeof _updateSweepPanel === 'function' && _sweepActive) {
+                _updateSweepPanel(null, _searchStartTime);
+            }
         }
     }
 

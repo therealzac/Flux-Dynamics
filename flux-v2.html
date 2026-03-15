@@ -43,7 +43,7 @@
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
         /* ── Right panel ── */
-        #side-panel { position: fixed; top: 48px; right: 16px; width: 375px;
+        #side-panel { position: fixed; top: 48px; right: 16px; width: 375px; z-index: 50;
             display: flex; flex-direction: column; gap: 0;
             font-size: 15px; letter-spacing: 0.02em; color: var(--text-2);
             user-select: none;
@@ -408,18 +408,13 @@
 
             <!-- Action buttons: start row (shown when no sim active) -->
             <div id="sim-start-buttons" style="display:flex; gap:6px; margin-top:4px; align-items:center;">
-                <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
-                <select id="council-replay-select" style="display:none; font-size:10px; max-width:170px; padding:4px 6px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#ccc; border-radius:4px;"></select>
-                <button id="btn-council-replay" class="btn-primary" style="display:none; padding:6px 10px; font-size:11px;">&#9654;</button>
+                <select id="council-replay-select" style="flex:1; font-size:11px; padding:6px 8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#ccc; border-radius:4px;"></select>
+                <button class="btn-primary" id="btn-simulate-nucleus" style="flex:1;">&#9654;</button>
             </div>
             <!-- Action buttons: active row (shown when sim is running) -->
             <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px;">
-                <button id="btn-clear-simulation"
-                    style="flex:1; padding:7px 12px; font-size:11px; font-weight:600; background:rgba(255,60,60,0.15); border:1px solid rgba(255,60,60,0.4); color:#ff4444; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Clear Simulation</button>
-                <button id="btn-clear-cancel"
-                    style="display:none; flex:0 0 auto; padding:7px 10px; font-size:10px; font-weight:600; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#8a9aaa; border-radius:4px; cursor:pointer;">Cancel</button>
                 <button class="btn-secondary" id="btn-nucleus-pause"
-                    style="flex:0 0 auto; padding:7px 12px;"
+                    style="flex:1; padding:7px 12px;"
                     title="Pause/resume simulation">⏸</button>
             </div>
 
@@ -593,12 +588,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=78"></script>
+    <script src="src/flux-demo-state.js?v=79"></script>
     <script src="src/flux-demo-xon.js?v=13"></script>
     <script src="src/flux-demo-backtrack.js?v=36"></script>
     <script src="src/flux-demo-planner.js?v=37"></script>
-    <script src="src/flux-demo-ui.js?v=95"></script>
-    <script src="src/flux-demo.js?v=446"></script>
+    <script src="src/flux-demo-ui.js?v=99"></script>
+    <script src="src/flux-demo.js?v=452"></script>
     <script src="src/flux-solver-render.js?v=40"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -606,7 +601,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=38"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
-    <script src="src/flux-tests.js?v=274"></script>
+    <script src="src/flux-tests.js?v=290"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

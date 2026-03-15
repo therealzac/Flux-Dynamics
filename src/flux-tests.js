@@ -2814,8 +2814,9 @@ function _updateBfsTestPanel(message) {
 
 // ── IndexedDB persistence for cross-session blacklist ──
 const _BL_IDB_NAME = 'FluxBlacklist';
-const _BL_IDB_VERSION = 1;
+const _BL_IDB_VERSION = 2;
 const _BL_IDB_STORE = 'blacklists';
+const _AS_IDB_STORE = 'autosave';
 let _blIDB = null;
 let _blIDBReady = false;
 
@@ -2826,11 +2827,67 @@ function _blIDBOpen() {
             req.onupgradeneeded = (e) => {
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains(_BL_IDB_STORE)) db.createObjectStore(_BL_IDB_STORE);
+                if (!db.objectStoreNames.contains(_AS_IDB_STORE)) db.createObjectStore(_AS_IDB_STORE);
             };
             req.onsuccess = (e) => { _blIDB = e.target.result; _blIDBReady = true; resolve(); };
             req.onerror = () => { console.warn('[Blacklist] IndexedDB unavailable'); resolve(); };
         } catch (e) { resolve(); }
     });
+}
+
+// ── Autosave helpers (council-eligible crash recovery) ──
+
+function _isCouncilEligible() {
+    if (!_sweepActive) return true;  // manual demo = always save
+    const maxSize = _goldenCouncilSize();
+    if (_sweepGoldenCouncil.length < maxSize) return true;
+    return _maxTickReached > _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak;
+}
+
+async function _autosaveToIDB() {
+    if (_btSnapshots.length === 0) return;
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const snap = _btSnapshots[_btSnapshots.length - 1];
+    if (!snap || snap._pruned) return;
+    const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
+    const key = _blacklistRuleKey(lvl);
+    try {
+        const tx = _blIDB.transaction(_AS_IDB_STORE, 'readwrite');
+        tx.objectStore(_AS_IDB_STORE).put({
+            snapshot: _serializeSnapshot(snap),
+            tick: _demoTick,
+            seed: _runSeed,
+            maxTickReached: _maxTickReached,
+            sweepSeedIdx: _sweepSeedIdx,
+            timestamp: new Date().toISOString(),
+        }, key);
+        console.log(`%c[Autosave] tick ${_demoTick} saved (peak ${_maxTickReached})`, 'color:#80ff80');
+    } catch (e) { console.warn('[Autosave] Save failed:', e); }
+}
+
+async function _autosaveIDBLoad(lvl) {
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return null;
+    const key = _blacklistRuleKey(lvl || 2);
+    return new Promise((resolve) => {
+        try {
+            const tx = _blIDB.transaction(_AS_IDB_STORE, 'readonly');
+            const req = tx.objectStore(_AS_IDB_STORE).get(key);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+    });
+}
+
+async function _autosaveIDBClear(lvl) {
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl || 2);
+    try {
+        const tx = _blIDB.transaction(_AS_IDB_STORE, 'readwrite');
+        tx.objectStore(_AS_IDB_STORE).delete(key);
+    } catch (e) { /* ignore */ }
 }
 
 // Canonical rule key: deterministic fingerprint of the ENTIRE rule config + snapshot version.
@@ -3029,6 +3086,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     _sweepBlacklistHitsSeed = 0;
     _sweepGoldenHits = 0;
     _sweepGoldenHitsSeed = 0;
+    // Flush any pending debounced save BEFORE clearing council,
+    // so a queued save doesn't overwrite IDB with empty council later
+    if (_blIDBSaveTimer) { clearTimeout(_blIDBSaveTimer); _blIDBSaveTimer = null; }
     _sweepGoldenCouncil = [];
     _searchTraversalLog = [];
     _searchEventCounter = 0;
@@ -3281,14 +3341,30 @@ function _saveCurrentRunToCouncil() {
             octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
             octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
         }));
-        _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, snapshots: snapsCopy });
+        // If same seed already in council, update in place (accumulate snapshots)
+        const existing = _sweepGoldenCouncil.find(m => m.seed === seed);
+        if (existing) {
+            // Merge new snapshots: keep existing ones, add any with ticks not yet seen
+            const existingTicks = new Set(existing.snapshots.map(s => s.tick));
+            for (const s of snapsCopy) {
+                if (!existingTicks.has(s.tick)) existing.snapshots.push(s);
+            }
+            existing.snapshots.sort((a, b) => a.tick - b.tick);
+            existing.peak = Math.max(existing.peak, peak);
+            // Merge moves
+            for (const [tick, tickMap] of movesCopy) {
+                if (!existing.moves.has(tick)) existing.moves.set(tick, tickMap);
+            }
+        } else {
+            _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, snapshots: snapsCopy });
+        }
         _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
         if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
         _blIDBSave(lvl);
         _populateCouncilDropdown();
-        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots)`, 'color:#66cc88;font-weight:bold');
+        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots, ${existing ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
     } else {
         console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
     }
@@ -3338,8 +3414,7 @@ function _updateReplayPanel(member, startTime, message) {
 // Populate council dropdown from IndexedDB for current lattice+rules config
 async function _populateCouncilDropdown() {
     const sel = document.getElementById('council-replay-select');
-    const btn = document.getElementById('btn-council-replay');
-    if (!sel || !btn) return;
+    if (!sel) return;
 
     const slider = document.getElementById('lattice-slider');
     const lvl = slider ? +slider.value : 2;
@@ -3352,33 +3427,26 @@ async function _populateCouncilDropdown() {
         console.warn('[Council dropdown] Failed to load:', e);
     }
 
-    if (council.length === 0) {
-        sel.style.display = 'none';
-        btn.style.display = 'none';
-        return;
-    }
+    // Sort council by peak descending for display
+    council.sort((a, b) => (b.peak || 0) - (a.peak || 0));
 
+    // Always show dropdown — blank first option = new run
     sel.innerHTML = '';
-    let hasAny = false;
+    const blankOpt = document.createElement('option');
+    blankOpt.value = '';
+    blankOpt.textContent = 'New run';
+    sel.appendChild(blankOpt);
+
     for (let i = 0; i < council.length; i++) {
         const m = council[i];
         if (!m.snapshots || m.snapshots.length === 0) continue;
-        // Require v2+ snapshots (includes nucleus topology for save-game restore)
         if (!m.snapshots[0]._v || m.snapshots[0]._v < 2) continue;
         const seedHex = '0x' + m.seed.toString(16).padStart(8, '0');
         const opt = document.createElement('option');
         opt.value = i;
         opt.textContent = `${seedHex} (t${m.peak})`;
         sel.appendChild(opt);
-        hasAny = true;
     }
-    if (!hasAny) {
-        sel.style.display = 'none';
-        btn.style.display = 'none';
-        return;
-    }
-    sel.style.display = '';
-    btn.style.display = '';
 }
 
 function _updateSweepPanel(message, sweepStartTime) {
@@ -3407,9 +3475,9 @@ function _updateSweepPanel(message, sweepStartTime) {
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
     if (_sweepGoldenCouncil.length > 0) {
-        const councilPeaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
+        const peaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
         html += `<div style="font-size:10px; color:#ffcc66; margin-top:2px;">` +
-            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${councilPeaks} &middot; ` +
+            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${peaks} &middot; ` +
             `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this seed)</div>`;
     }
     html += `</div>`;
@@ -3473,23 +3541,6 @@ function _updateSweepPanel(message, sweepStartTime) {
     // Attach download listener after innerHTML is set
     const dlBtn = document.getElementById('btn-sweep-download');
     if (dlBtn) dlBtn.addEventListener('click', _downloadSweepLog);
-
-    // Save Current Run button — saves mid-run moves as a council member
-    let saveBtn = document.getElementById('btn-sweep-save-run');
-    if (_sweepActive && _sweepSeedMoves && _sweepSeedMoves.size > 0) {
-        if (!saveBtn) {
-            saveBtn = document.createElement('button');
-            saveBtn.id = 'btn-sweep-save-run';
-            saveBtn.textContent = 'Save Current Run';
-            saveBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
-                'background:#1a3a2a;color:#66cc88;border:1px solid #3a7a4a;border-radius:3px;display:block;width:100%;';
-            saveBtn.addEventListener('click', _saveCurrentRunToCouncil);
-            el.parentElement.appendChild(saveBtn);
-        }
-        saveBtn.style.display = 'block';
-    } else if (saveBtn) {
-        saveBtn.style.display = 'none';
-    }
 
     // Stop button
     let stopBtn = document.getElementById('btn-sweep-stop');
@@ -3839,11 +3890,20 @@ function _exportBfsTestResults() {
 (function(){
     NucleusSimulator.populateModelSelect();
 
-    // Simulate button
+    // Play button — new run or council replay depending on dropdown selection
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
         if (_sweepActive || _bfsTestActive || _demoActive) return;
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
+        const sel = document.getElementById('council-replay-select');
+        const selectedVal = sel ? sel.value : '';
+        if (selectedVal && selectedVal !== '') {
+            const idx = parseInt(selectedVal, 10);
+            if (!isNaN(idx)) {
+                startCouncilReplay(idx);
+                return;
+            }
+        }
         startSweepTest(lvl);
     });
 
@@ -3851,16 +3911,6 @@ function _exportBfsTestResults() {
     document.getElementById('btn-tournament')?.addEventListener('click', function(){
         if(tournamentActive) stopTournament();
         else startTournament();
-    });
-
-    // Council replay button
-    document.getElementById('btn-council-replay')?.addEventListener('click', function(){
-        if (_sweepActive || _bfsTestActive || _demoActive) return;
-        const sel = document.getElementById('council-replay-select');
-        if (!sel || sel.style.display === 'none') return;
-        const idx = parseInt(sel.value, 10);
-        if (isNaN(idx)) return;
-        startCouncilReplay(idx);
     });
 
     // Populate council dropdown on page load
