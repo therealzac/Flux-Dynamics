@@ -1048,7 +1048,7 @@ function _tickDemoXons(dt) {
                     // Progress through entire trail for alpha fade (0=tail, 1=head)
                     const progress = (vi + u) / Math.max(bodyLen - 1, 1);
                     // Gentle fade: linear with floor so long trails stay visible
-                    const fadeCurve = 0.15 + 0.85 * progress;
+                    const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
@@ -1210,7 +1210,7 @@ function _tickDemoXons(dt) {
             }
             // Gentle fade: linear with floor so long trails stay visible
             const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
-            const fadeCurve = 0.15 + 0.85 * progress;
+            const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
             const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
             const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);

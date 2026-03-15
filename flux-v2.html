@@ -520,6 +520,11 @@
                 <span id="tracer-lifespan-val" class="ctrl-val">55</span>
             </div>
             <div class="ctrl-row">
+                <span class="ctrl-label">fade</span>
+                <input type="range" id="trail-fade-slider" class="ctrl-slider" min="0" max="100" value="15" step="1">
+                <span id="trail-fade-val" class="ctrl-val">15%</span>
+            </div>
+            <div class="ctrl-row">
                 <span class="ctrl-label">curve</span>
                 <input type="range" id="trail-curve-slider" class="ctrl-slider" min="0" max="200" value="89" step="1">
                 <span id="trail-curve-val" class="ctrl-val">89%</span>
@@ -600,12 +605,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=84"></script>
+    <script src="src/flux-demo-state.js?v=85"></script>
     <script src="src/flux-demo-xon.js?v=13"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=105"></script>
-    <script src="src/flux-demo.js?v=464"></script>
+    <script src="src/flux-demo-ui.js?v=106"></script>
+    <script src="src/flux-demo.js?v=465"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->

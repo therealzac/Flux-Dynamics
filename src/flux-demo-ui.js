@@ -1452,6 +1452,14 @@ function _stopMoviePlayback() {
 
 // ── Trail curve sliders ──
 {
+    const _fadeSlider = document.getElementById('trail-fade-slider');
+    const _fadeVal = document.getElementById('trail-fade-val');
+    if (_fadeSlider) {
+        _fadeSlider.addEventListener('input', e => {
+            _trailFadeFloor = +e.target.value / 100;
+            if (_fadeVal) _fadeVal.textContent = e.target.value + '%';
+        });
+    }
     const _curveSlider = document.getElementById('trail-curve-slider');
     const _curveVal = document.getElementById('trail-curve-val');
     if (_curveSlider) {
