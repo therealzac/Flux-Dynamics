@@ -59,12 +59,6 @@ function _trailPush(xon, node, color) {
     xon._trailRoleHistory.push(_xonRole(xon));
     const p = pos[node];
     xon._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
-    if (xon.trail.length > XON_TRAIL_LENGTH) {
-        xon.trail.shift();
-        xon.trailColHistory.shift();
-        xon._trailRoleHistory.shift();
-        xon._trailFrozenPos.shift();
-    }
 }
 // Retroactively update the last trail segment color when a xon changes mode.
 // Called after setting xon.col so the transition segment shows the new color immediately.

@@ -726,9 +726,16 @@ document.getElementById('trail-opacity-slider').addEventListener('input',()=>{
     const pct=+document.getElementById('trail-opacity-slider').value;
     document.getElementById('trail-opacity-val').textContent=pct+'%';
 });
+// Sync slider max from TRAIL_MAX constant (single source of truth)
+if (typeof TRAIL_MAX !== 'undefined') document.getElementById('tracer-lifespan-slider').max = TRAIL_MAX;
 document.getElementById('tracer-lifespan-slider').addEventListener('input',()=>{
     const val=+document.getElementById('tracer-lifespan-slider').value;
     document.getElementById('tracer-lifespan-val').textContent = val === 0 ? 'off' : val;
+    // When paused, augment trails from snapshot history to match new slider value
+    if (typeof _demoPaused !== 'undefined' && _demoPaused &&
+        typeof _augmentTrailsFromSnapshots === 'function') {
+        _augmentTrailsFromSnapshots();
+    }
 });
 // Spark slider synced from xons (trail) slider
 document.getElementById('trail-opacity-slider').addEventListener('input',()=>{

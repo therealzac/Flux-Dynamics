@@ -453,16 +453,7 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    { id: 'T34', name: 'Trail length bounded',
-      check(tick, g) {
-        for (const xon of _demoXons) {
-          if (!xon.alive || !xon.trail) continue;
-          if (xon.trail.length > XON_TRAIL_LENGTH)
-            return `tick ${tick}: trail len=${xon.trail.length} max=${XON_TRAIL_LENGTH}`;
-        }
-        return null;
-      }
-    },
+    // T34 removed — trails now grow unbounded (slider controls visible length only)
     { id: 'T35', name: 'Sparkle visible when alive',
       check(tick, g) {
         for (const xon of _demoXons) {

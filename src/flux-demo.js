@@ -984,7 +984,7 @@ function _tickDemoXons(dt) {
         };
 
         // Trail: fading vertex-colored path
-        // Trails knob controls how many trail points are visible (0-250).
+        // Trails knob controls how many trail points are visible (0-1000).
         // Always store full history; render only the last `visLen` points.
         const lifespan = +document.getElementById('tracer-lifespan-slider').value;
         const _trailFP = xon._trailFrozenPos;

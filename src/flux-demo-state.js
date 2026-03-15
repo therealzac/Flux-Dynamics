@@ -702,7 +702,8 @@ const QUARK_TOPOLOGY = {
 // Weak force escape color — overwritten by _recomputeColors()
 let WEAK_FORCE_COLOR = 0x7f00ff;
 
-const XON_TRAIL_LENGTH = 250;
+const TRAIL_MAX = 1000; // single constant: max trail length (slider max + vertex buffer size)
+const XON_TRAIL_LENGTH = TRAIL_MAX; // alias for vertex buffer allocation
 const FJ_SUBS = 12; // fighterjet subdivisions per trail segment
 const XON_TRAIL_VERTS = XON_TRAIL_LENGTH * FJ_SUBS + FJ_SUBS; // max vertices in FJ mode
 

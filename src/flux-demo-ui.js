@@ -700,6 +700,7 @@ function resumeDemo() {
                     while (!snap && _redoStack.length > 0) snap = _redoStack.pop();
                     if (!snap) { _demoInterval = null; return; }
                     _btRestoreSnapshot(snap);
+                    _augmentTrailsFromSnapshots();
                     simHalted = false;
                     // Throttle visual updates to ~30fps for buttery speed
                     const now = performance.now();
@@ -888,6 +889,7 @@ async function _playbackStepForward() {
         _btSaveSnapshot(); // save current state so rewind can reach it
         const redoSnap = _redoStack.pop();
         _btRestoreSnapshot(redoSnap);
+        _augmentTrailsFromSnapshots();
         simHalted = false;
         _playbackUpdateDisplay();
         return;
@@ -922,6 +924,7 @@ function startReverse() {
         const snap = _btSnapshots.pop();
         if (!snap) { stopReverse(); return; }
         _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
+        _augmentTrailsFromSnapshots();
         simHalted = false;
         _bfsReset();
         _btReset();
@@ -1042,6 +1045,7 @@ function _timelineScrubTo(targetPos) {
     if (typeof simHalted !== 'undefined') simHalted = false;
     _bfsReset(); _btReset();
     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
+    _augmentTrailsFromSnapshots();
     _playbackUpdateDisplay();
     const pb = document.getElementById('btn-nucleus-pause');
     if (pb) pb.textContent = '\u25B6';
@@ -1320,7 +1324,64 @@ function _modeColor(mode, quark) {
     return 0xffffff; // oct or unassigned
 }
 
-const _PLAYBACK_TRAIL_LEN = 12;
+// Playback trail length: read from trails slider (matches live trail behavior)
+function _playbackTrailLen() {
+    const el = document.getElementById('tracer-lifespan-slider');
+    return el ? +el.value : 55;
+}
+
+// Reconstruct xon trails from _btSnapshots history after a snapshot restore.
+// Snapshot trail data may be shorter than the slider requests (e.g. saved under
+// old 250 cap).  Walk backwards through _btSnapshots to build trails up to the
+// slider length.  Each snapshot stores xon[i].node — one node per tick.
+function _augmentTrailsFromSnapshots() {
+    const desired = _playbackTrailLen();
+    const snaps = _btSnapshots;
+    if (!snaps || snaps.length === 0) return;
+    for (let xi = 0; xi < _demoXons.length; xi++) {
+        const xon = _demoXons[xi];
+        const curLen = xon.trail ? xon.trail.length : 0;
+        if (curLen >= desired) continue; // already long enough
+        // Walk backwards through snapshot history to prepend trail entries
+        const need = desired - curLen;
+        const prependNodes = [];
+        const prependCols = [];
+        const prependRoles = [];
+        const prependPos = [];
+        // Start from most recent snapshot (end of array) and go backwards.
+        // _btSnapshots[last] = the snapshot BEFORE the current tick.
+        for (let si = snaps.length - 1; si >= 0 && prependNodes.length < need; si--) {
+            const sx = snaps[si].xons;
+            if (!sx || !sx[xi]) break;
+            const sxon = sx[xi];
+            // Skip if this node is already the first entry in our existing trail
+            if (prependNodes.length === 0 && curLen > 0 && sxon.node === xon.trail[0]) continue;
+            prependNodes.push(sxon.node);
+            const m = sxon._mode, q = sxon._quarkType;
+            prependCols.push(_modeColor(m, q));
+            const role = (m === 'tet' || m === 'idle_tet') ? (q || 'oct') :
+                         m === 'gluon' ? 'gluon' : m === 'weak' ? 'weak' : 'oct';
+            prependRoles.push(role);
+            // Use snapshot positions for frozen pos
+            const sp = snaps[si].pos;
+            const n = sxon.node;
+            prependPos.push(sp && sp[n] ? [sp[n][0], sp[n][1], sp[n][2]] : [0, 0, 0]);
+        }
+        if (prependNodes.length === 0) continue;
+        // Reverse — we walked backwards but trail is chronological
+        prependNodes.reverse();
+        prependCols.reverse();
+        prependRoles.reverse();
+        prependPos.reverse();
+        // Prepend to existing trail
+        xon.trail = prependNodes.concat(xon.trail || []);
+        xon.trailColHistory = prependCols.concat(xon.trailColHistory || []);
+        if (!xon._trailRoleHistory) xon._trailRoleHistory = [];
+        xon._trailRoleHistory = prependRoles.concat(xon._trailRoleHistory);
+        if (!xon._trailFrozenPos) xon._trailFrozenPos = [];
+        xon._trailFrozenPos = prependPos.concat(xon._trailFrozenPos);
+    }
+}
 
 // Incremental visit tracker for playback
 let _pbVisitsUpTo = -1; // last frame index we've counted visits for
@@ -1401,7 +1462,7 @@ function _applyMovieFrame(idx) {
         // Build trail from history (last N frames)
         // Use current reconstructed positions for all trail entries (close enough
         // since node positions barely shift between adjacent frames)
-        const trailStart = Math.max(0, idx - _PLAYBACK_TRAIL_LEN + 1);
+        const trailStart = Math.max(0, idx - _playbackTrailLen() + 1);
         x.trail = [];
         x.trailColHistory = [];
         x._trailRoleHistory = [];
@@ -1464,7 +1525,7 @@ function _stopMoviePlayback() {
     const _curveVal = document.getElementById('trail-curve-val');
     if (_curveSlider) {
         _curveSlider.addEventListener('input', e => {
-            _fjCurvature = +e.target.value / 100;
+            _fjCurvature = +e.target.value * 0.89 / 100;
             if (_curveVal) _curveVal.textContent = e.target.value + '%';
         });
     }

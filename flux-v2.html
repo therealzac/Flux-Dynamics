@@ -526,15 +526,15 @@
             </div>
             <div class="ctrl-row">
                 <span class="ctrl-label">curve</span>
-                <input type="range" id="trail-curve-slider" class="ctrl-slider" min="0" max="200" value="89" step="1">
-                <span id="trail-curve-val" class="ctrl-val">89%</span>
+                <input type="range" id="trail-curve-slider" class="ctrl-slider" min="0" max="100" value="100" step="1">
+                <span id="trail-curve-val" class="ctrl-val">100%</span>
             </div>
-            <div class="ctrl-row">
+            <div class="ctrl-row" style="display:none;">
                 <span class="ctrl-label">tension</span>
                 <input type="range" id="trail-tension-slider" class="ctrl-slider" min="0" max="200" value="100" step="1">
                 <span id="trail-tension-val" class="ctrl-val">1.00</span>
             </div>
-            <div class="ctrl-row">
+            <div class="ctrl-row" style="display:none;">
                 <span class="ctrl-label">alpha</span>
                 <input type="range" id="trail-alpha-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
                 <span id="trail-alpha-val" class="ctrl-val">0.00</span>
@@ -605,20 +605,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=85"></script>
-    <script src="src/flux-demo-xon.js?v=13"></script>
+    <script src="src/flux-demo-state.js?v=87"></script>
+    <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=106"></script>
+    <script src="src/flux-demo-ui.js?v=109"></script>
     <script src="src/flux-demo.js?v=465"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
-    <script src="src/flux-ui.js?v=18"></script>
+    <script src="src/flux-ui.js?v=19"></script>
     <script src="src/flux-xons.js?v=19"></script>
-    <script src="src/flux-voids.js?v=38"></script>
+    <script src="src/flux-voids.js?v=39"></script>
     <script src="src/flux-nucleus.js?v=47"></script>
-    <script src="src/flux-tests.js?v=314"></script>
+    <script src="src/flux-tests.js?v=315"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
