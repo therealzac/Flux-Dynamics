@@ -1467,10 +1467,13 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
         });
     }
 }
-{
+// OCT_CAPACITY_MAX and _populateCouncilDropdown live in flux-tests.js which loads AFTER this file.
+// All switchboard listeners that reference late-loaded globals must be deferred to DOMContentLoaded
+// (by which time all <script> tags have executed).
+window.addEventListener('DOMContentLoaded', () => {
     const _octCapEl = document.getElementById('rule-oct-capacity-slider');
     if (_octCapEl) {
-        _octCapEl.value = OCT_CAPACITY_MAX; // reset to JS default
+        _octCapEl.value = OCT_CAPACITY_MAX;
         _octCapEl.addEventListener('input', e => {
             OCT_CAPACITY_MAX = parseInt(e.target.value, 10);
             const lbl = document.getElementById('rule-oct-capacity-value');
@@ -1478,18 +1481,14 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
             _populateCouncilDropdown();
         });
     }
-}
-{
     const _gluonEl = document.getElementById('rule-gluon-mediated-toggle');
     if (_gluonEl) {
-        _gluonEl.checked = _ruleGluonMediatedSC; // sync to JS default
+        _gluonEl.checked = _ruleGluonMediatedSC;
         _gluonEl.addEventListener('change', e => { _ruleGluonMediatedSC = e.target.checked; _populateCouncilDropdown(); });
     }
-}
-{
     const _bareEl = document.getElementById('rule-bare-tet-toggle');
     if (_bareEl) {
-        _bareEl.checked = _ruleBareTetrahedra; // sync to JS default
+        _bareEl.checked = _ruleBareTetrahedra;
         _bareEl.addEventListener('change', e => { _ruleBareTetrahedra = e.target.checked; _populateCouncilDropdown(); });
     }
     const _projGuardEl = document.getElementById('rule-projected-guards-toggle');
@@ -1497,24 +1496,27 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
         _projGuardEl.checked = _ruleProjectedGuards;
         _projGuardEl.addEventListener('change', e => { _ruleProjectedGuards = e.target.checked; _populateCouncilDropdown(); });
     }
-    // Prevent browser form restoration from desynccing checkboxes.
-    // Browsers restore checkbox states AFTER DOMContentLoaded and sometimes after pageshow.
-    // Use load + setTimeout(0) to run after all restoration is complete.
-    // Force DOM to match JS defaults (the source of truth).
-    const _forceSyncToggles = () => {
-        for (const [id, getter] of [
-            ['rule-t20-strict-toggle', () => _ruleT20StrictMode],
-            ['rule-gluon-mediated-toggle', () => _ruleGluonMediatedSC],
-            ['rule-bare-tet-toggle', () => _ruleBareTetrahedra],
-            ['rule-projected-guards-toggle', () => _ruleProjectedGuards],
-        ]) {
-            const el = document.getElementById(id);
-            if (el) el.checked = getter();
-        }
+    // Sync JS from DOM after browser form restoration.
+    // Read DOM → JS so JS always matches what the user sees.
+    const _syncJSFromDOM = () => {
+        const t20El = document.getElementById('rule-t20-strict-toggle');
+        const gluEl = document.getElementById('rule-gluon-mediated-toggle');
+        const bareEl = document.getElementById('rule-bare-tet-toggle');
+        const projEl = document.getElementById('rule-projected-guards-toggle');
+        const octFullEl = document.getElementById('rule-oct-full-slider');
+        const octCapEl = document.getElementById('rule-oct-capacity-slider');
+        if (t20El) _ruleT20StrictMode = t20El.checked;
+        if (gluEl) _ruleGluonMediatedSC = gluEl.checked;
+        if (bareEl) _ruleBareTetrahedra = bareEl.checked;
+        if (projEl) _ruleProjectedGuards = projEl.checked;
+        if (octFullEl) T79_MAX_FULL_TICKS = parseInt(octFullEl.value, 10);
+        if (octCapEl) OCT_CAPACITY_MAX = parseInt(octCapEl.value, 10);
+        _populateCouncilDropdown();
     };
-    window.addEventListener('load', () => setTimeout(_forceSyncToggles, 0));
-    window.addEventListener('pageshow', () => setTimeout(_forceSyncToggles, 0));
-}
+    // Fire after load, pageshow, AND with escalating delays to catch late browser restoration
+    window.addEventListener('load', () => { setTimeout(_syncJSFromDOM, 0); setTimeout(_syncJSFromDOM, 100); });
+    window.addEventListener('pageshow', () => { setTimeout(_syncJSFromDOM, 0); setTimeout(_syncJSFromDOM, 100); });
+}); // end DOMContentLoaded
 
 // ── Simulation UI state: button swap + rule locking ──
 function _setSimUIActive(active) {
