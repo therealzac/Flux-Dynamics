@@ -417,8 +417,8 @@ let _ruleProjectedGuards = true; // When true, projected guards gate candidate m
 const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
 
 // ── Trail curve parameters ──
-let _fjCurvature = 1.0;  // 0 = straight, 1 = standard CR, 2 = exaggerated
-let _fjTension   = 0.5;  // CR tension τ: 0 = flat tangents, 0.5 = standard, 1 = aggressive
+let _fjCurvature = 0.89; // 0 = straight, 1 = standard CR, 2 = exaggerated
+let _fjTension   = 2.0;  // CR tension τ: 0 = flat tangents, 0.5 = standard, 1 = aggressive
 let _fjAlpha     = 0.0;  // CR parameterization: 0 = uniform, 0.5 = centripetal, 1 = chordal
 
 // ── Seeded PRNG for deterministic backtracker replay ─────────────────
