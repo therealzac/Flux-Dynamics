@@ -552,6 +552,8 @@ let _sweepSeedIdx = 0;               // current seed index (0, 1, 2, ...)
 let _sweepBlacklist = new Map();     // Map<tick, Set<fingerprint>> — cross-seed dead states
 let _sweepResults = [];              // per-seed summary results
 let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprints
+let _sweepBlacklistHits = 0;         // how many times a blacklisted fingerprint was actually matched
+let _sweepBlacklistHitsSeed = 0;     // hits for current seed only
 
 function _fnv1aHash(str) {
     let h = 0x811c9dc5;

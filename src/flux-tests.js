@@ -2894,6 +2894,8 @@ async function startSweepTest(latticeLevel) {
     _sweepBlacklist = new Map();
     _sweepResults = [];
     _sweepTotalBlacklisted = 0;
+    _sweepBlacklistHits = 0;
+    _sweepBlacklistHitsSeed = 0;
     _searchTraversalLog = [];
     _searchEventCounter = 0;
     _searchPathStack = [];
@@ -2935,6 +2937,7 @@ async function startSweepTest(latticeLevel) {
         simHalted = false;
         _btBadMoveLedger.clear();
         _btTriedFingerprints.clear();
+        _sweepBlacklistHitsSeed = 0;
         _searchEventCounter = 0;
         _searchPathStack = [];
         _searchParentNodeId = null;
@@ -3039,6 +3042,7 @@ function _updateSweepPanel(message, sweepStartTime) {
     html += `<div style="padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px; margin-bottom:6px;">`;
     html += `<div style="font-size:10px; color:#9abccc;">` +
         `Blacklisted: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states &middot; ` +
+        `Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
     html += `</div>`;
