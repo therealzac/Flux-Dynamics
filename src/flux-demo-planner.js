@@ -718,6 +718,48 @@ function _getOctCandidates(xon, occupied, blocked) {
         _occDel(tmpOcc, c.node);
     }
 
+    // Council replay: force exact recorded moves during replay phase (up to peak tick)
+    if (_sweepReplayActive && _sweepReplayMember && _demoTick <= _sweepReplayMember.peak) {
+        const replayTick = _demoTick;
+        const replayXi = _demoXons.indexOf(xon);
+        const replayTickMoves = _sweepReplayMember.moves.get(replayTick);
+        if (replayTickMoves) {
+            const replayTarget = replayTickMoves.get(replayXi);
+            if (replayTarget !== undefined) {
+                const forced = candidates.filter(c => c.node === replayTarget);
+                if (forced.length > 0) {
+                    forced.sort((a, b) => b.score - a.score);
+                    return forced;
+                }
+            }
+        }
+    }
+
+    // Golden council boost: check all council members, boost proportional to agreement
+    if (_sweepActive && _sweepGoldenCouncil.length > 0) {
+        const tick = _demoTick;  // current tick (pre-move)
+        const xi = _demoXons.indexOf(xon);
+        // Count votes per candidate node from council members
+        const votes = new Map();  // node → vote count
+        for (const member of _sweepGoldenCouncil) {
+            const tickMoves = member.moves.get(tick);
+            if (tickMoves) {
+                const target = tickMoves.get(xi);
+                if (target !== undefined) votes.set(target, (votes.get(target) || 0) + 1);
+            }
+        }
+        if (votes.size > 0) {
+            for (const c of candidates) {
+                const v = votes.get(c.node);
+                if (v) {
+                    c.score += 0.15 * v;  // +0.15 per agreeing council member
+                    _sweepGoldenHits += v;
+                    _sweepGoldenHitsSeed += v;
+                }
+            }
+        }
+    }
+
     // Sort by score descending (prefer xonic balance + 2-step awareness)
     candidates.sort((a, b) => b.score - a.score);
     return candidates;

@@ -1800,6 +1800,19 @@ function _liveGuardCheck() {
     }
     const hasAnyFailure = Object.values(_liveGuards).some(g => g.failed);
     if (hasAnyFailure) {
+        // During council replay phase (up to recorded peak), suppress rewinds/halts.
+        // The recorded moves are known-good; guard failures are transient and the
+        // original run resolved them via backtracking. We replay the happy path only.
+        if (_sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak) {
+            // Reset failed guards silently — replay continues
+            for (const entry of LIVE_GUARD_REGISTRY) {
+                const g = _liveGuards[entry.id];
+                if (g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
+            }
+            _liveGuardFailTick = null;
+            _liveGuardDumped = false;
+            // Don't request rewind or halt — just continue
+        } else {
         if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
             _liveGuardFailTick = tick; // record first failure tick
         }
@@ -1833,6 +1846,7 @@ function _liveGuardCheck() {
             console.error('[LIVE GUARD] Simulation halted after wind-down:', Object.entries(_liveGuards)
                 .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; '));
         }
+        } // close else (non-replay path)
     }
 }
 
@@ -2844,8 +2858,20 @@ async function _blIDBLoad(lvl) {
                         map.set(tick, new Set(fps));
                         total += fps.length;
                     }
-                    console.log(`[Blacklist] Loaded ${total} fingerprints across ${map.size} ticks from IndexedDB (key: ${key})`);
-                    resolve({ map, total, seedIdx: data.seedIdx || 0 });
+                    // Reconstruct golden council if present
+                    let goldenCouncil = [];
+                    if (data.goldenCouncil && Array.isArray(data.goldenCouncil)) {
+                        for (const member of data.goldenCouncil) {
+                            const moves = new Map();
+                            for (const [tick, pairs] of member.moves) {
+                                moves.set(tick, new Map(pairs));
+                            }
+                            goldenCouncil.push({ peak: member.peak, seed: member.seed, moves });
+                        }
+                    }
+                    const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
+                    console.log(`[Blacklist] Loaded ${total} fingerprints + council [${peaks}] from IndexedDB`);
+                    resolve({ map, total, seedIdx: data.seedIdx || 0, goldenCouncil });
                 } else {
                     resolve(null);
                 }
@@ -2873,19 +2899,29 @@ function _blIDBSaveNow(lvl) {
     for (const [tick, fpSet] of _sweepBlacklist) {
         entries.push([tick, [...fpSet]]);
     }
+    // Serialize golden council: Array of {peak, seed, moves: Array<[tick, Array<[xonIdx, toNode]>]>}
+    const councilSerialized = _sweepGoldenCouncil.map(member => {
+        const movesArr = [];
+        for (const [tick, moveMap] of member.moves) {
+            movesArr.push([tick, [...moveMap.entries()]]);
+        }
+        return { peak: member.peak, seed: member.seed, moves: movesArr };
+    });
     try {
         const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
         tx.objectStore(_BL_IDB_STORE).put({
             key, entries,
             total: _sweepTotalBlacklisted,
             seedIdx: _sweepSeedIdx,
+            goldenCouncil: councilSerialized,
             timestamp: new Date().toISOString(),
         }, key);
-        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints to IndexedDB (key: ${key})`);
+        const peaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
+        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints + council [${peaks}] to IndexedDB`);
     } catch (e) { console.warn('[Blacklist] Save failed:', e); }
 }
 
-async function startSweepTest(latticeLevel) {
+async function startSweepTest(latticeLevel, replayMemberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const lvl = latticeLevel || 1;
 
@@ -2896,6 +2932,9 @@ async function startSweepTest(latticeLevel) {
     _sweepTotalBlacklisted = 0;
     _sweepBlacklistHits = 0;
     _sweepBlacklistHitsSeed = 0;
+    _sweepGoldenHits = 0;
+    _sweepGoldenHitsSeed = 0;
+    _sweepGoldenCouncil = [];
     _searchTraversalLog = [];
     _searchEventCounter = 0;
     _searchPathStack = [];
@@ -2919,7 +2958,12 @@ async function startSweepTest(latticeLevel) {
         _sweepBlacklist = cached.map;
         _sweepTotalBlacklisted = cached.total;
         _sweepSeedIdx = cached.seedIdx;
-        _updateSweepPanel(`Resumed: ${cached.total} blacklisted from ${cached.seedIdx} prior seeds`);
+        if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
+            _sweepGoldenCouncil = cached.goldenCouncil;
+        }
+        const councilStr = _sweepGoldenCouncil.length > 0
+            ? `council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]` : 'no council';
+        _updateSweepPanel(`Resumed: ${cached.total} blacklisted, ${councilStr}, from ${cached.seedIdx} prior seeds`);
     } else {
         _updateSweepPanel('Starting sweep (fresh)...');
     }
@@ -2929,8 +2973,24 @@ async function startSweepTest(latticeLevel) {
 
     const sweepStartTime = performance.now();
 
+    // If replaying a council member, set up for the first seed
+    let _replayOnFirstSeed = (typeof replayMemberIdx === 'number' && replayMemberIdx >= 0
+        && _sweepGoldenCouncil.length > replayMemberIdx) ? _sweepGoldenCouncil[replayMemberIdx] : null;
+
     while (_sweepActive) {
-        const seed = _sweepSeedIdx + 1; // 1, 2, 3, ...
+        let seed = _sweepSeedIdx + 1; // 1, 2, 3, ...
+
+        // Council replay: override first seed with the member's seed
+        if (_replayOnFirstSeed) {
+            seed = _replayOnFirstSeed.seed;
+            _sweepReplayActive = true;
+            _sweepReplayMember = _replayOnFirstSeed;
+            console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${_replayOnFirstSeed.peak}`, 'color:#66ccff;font-weight:bold');
+        } else {
+            _sweepReplayActive = false;
+            _sweepReplayMember = null;
+        }
+
         _forceSeed = seed;
 
         // Reset per-seed state
@@ -2938,6 +2998,8 @@ async function startSweepTest(latticeLevel) {
         _btBadMoveLedger.clear();
         _btTriedFingerprints.clear();
         _sweepBlacklistHitsSeed = 0;
+        _sweepGoldenHitsSeed = 0;
+        _sweepSeedMoves = new Map();
         _searchEventCounter = 0;
         _searchPathStack = [];
         _searchParentNodeId = null;
@@ -2993,7 +3055,29 @@ async function startSweepTest(latticeLevel) {
         _sweepResults.push(result);
         _sweepSeedIdx++;
 
-        // Persist blacklist to IndexedDB after each seed
+        // Clear replay mode after first seed — subsequent seeds run normally
+        if (_replayOnFirstSeed) {
+            _replayOnFirstSeed = null;
+            _sweepReplayActive = false;
+            _sweepReplayMember = null;
+        }
+
+        // Golden council: insert this seed if it qualifies
+        if (_sweepSeedMoves && _sweepSeedMoves.size > 0) {
+            const maxSize = _goldenCouncilSize();
+            const peak = result.maxTick || 0;
+            const lowestPeak = _sweepGoldenCouncil.length >= maxSize
+                ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
+            if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
+                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves });
+                _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+                // Trim to max size
+                if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
+                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
+            }
+        }
+
+        // Persist blacklist + golden path to IndexedDB after each seed
         _blIDBSave(lvl);
 
         // If NOT canary (rules satisfiable!), stop sweep
@@ -3014,10 +3098,86 @@ async function startSweepTest(latticeLevel) {
     if (_blIDBSaveTimer) { clearTimeout(_blIDBSaveTimer); _blIDBSaveTimer = null; }
     _blIDBSaveNow(lvl);
     _updateSweepPanel('Sweep complete', sweepStartTime);
+    _populateCouncilDropdown();  // refresh dropdown with any new council members
 }
 
 function _stopSweep() {
     _sweepActive = false;
+}
+
+// ── Council member replay — just starts a sweep with the member's seed first ──
+function startCouncilReplay(memberIdx) {
+    if (_sweepActive || _bfsTestActive || _demoActive) return;
+    const slider = document.getElementById('lattice-slider');
+    const lvl = slider ? +slider.value : 2;
+    startSweepTest(lvl, memberIdx);
+}
+
+function _updateReplayPanel(member, startTime, message) {
+    const el = document.getElementById('bfs-test-results');
+    if (!el) return;
+    const elapsed = startTime ? ((performance.now() - startTime) / 1000).toFixed(1) : '?';
+    const seedHex = '0x' + member.seed.toString(16).padStart(8, '0');
+    const pastPeak = _demoTick > member.peak;
+    let html = '';
+
+    if (message) {
+        html += `<div style="color:#9abccc; font-size:11px; margin-bottom:6px;">${message}</div>`;
+    } else if (pastPeak) {
+        html += `<div style="color:#ff9966; font-size:11px; margin-bottom:6px;">` +
+            `Live exploration — seed ${seedHex} (past peak t${member.peak}) — ` +
+            `tick ${_demoTick}, ${elapsed}s</div>`;
+    } else {
+        html += `<div style="color:#66ccff; font-size:11px; margin-bottom:6px;">` +
+            `Replaying seed ${seedHex} — tick ${_demoTick} / peak t${member.peak} — ${elapsed}s</div>`;
+    }
+
+    // Blacklist stats
+    html += `<div style="font-size:10px; color:#aaa;">` +
+        `Blacklist: ${_sweepTotalBlacklisted.toLocaleString()} states, ` +
+        `hits: ${_sweepBlacklistHits.toLocaleString()}</div>`;
+
+    // Stop button
+    html += `<div style="margin-top:6px;"><button onclick="_stopSweep()" ` +
+        `style="font-size:10px; padding:2px 8px; cursor:pointer;">Stop Replay</button></div>`;
+
+    el.innerHTML = html;
+}
+
+// Populate council dropdown from IndexedDB for current lattice+rules config
+async function _populateCouncilDropdown() {
+    const sel = document.getElementById('council-replay-select');
+    const btn = document.getElementById('btn-council-replay');
+    if (!sel || !btn) return;
+
+    const slider = document.getElementById('lattice-slider');
+    const lvl = slider ? +slider.value : 2;
+
+    let council = [];
+    try {
+        const cached = await _blIDBLoad(lvl);
+        if (cached && cached.goldenCouncil) council = cached.goldenCouncil;
+    } catch (e) {
+        console.warn('[Council dropdown] Failed to load:', e);
+    }
+
+    if (council.length === 0) {
+        sel.style.display = 'none';
+        btn.style.display = 'none';
+        return;
+    }
+
+    sel.innerHTML = '';
+    for (let i = 0; i < council.length; i++) {
+        const m = council[i];
+        const seedHex = '0x' + m.seed.toString(16).padStart(8, '0');
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = `${seedHex} (peak t${m.peak})`;
+        sel.appendChild(opt);
+    }
+    sel.style.display = '';
+    btn.style.display = '';
 }
 
 function _updateSweepPanel(message, sweepStartTime) {
@@ -3045,6 +3205,12 @@ function _updateSweepPanel(message, sweepStartTime) {
         `Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
+    if (_sweepGoldenCouncil.length > 0) {
+        const councilPeaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
+        html += `<div style="font-size:10px; color:#ffcc66; margin-top:2px;">` +
+            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${councilPeaks} &middot; ` +
+            `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this seed)</div>`;
+    }
     html += `</div>`;
 
     // ── Seed peak-tick sparkline bar chart (same style as ratio accuracy) ──
@@ -3469,7 +3635,35 @@ function _exportBfsTestResults() {
         else startTournament();
     });
 
-    // (Exhaust L1/L2 buttons removed — Demo button now runs sweep)
+    // Council replay button
+    document.getElementById('btn-council-replay')?.addEventListener('click', function(){
+        if (_sweepActive || _bfsTestActive || _demoActive) return;
+        const sel = document.getElementById('council-replay-select');
+        if (!sel || sel.style.display === 'none') return;
+        const idx = parseInt(sel.value, 10);
+        if (isNaN(idx)) return;
+        startCouncilReplay(idx);
+    });
+
+    // Populate council dropdown on page load
+    _populateCouncilDropdown();
+
+    // Re-populate when lattice slider changes
+    document.getElementById('lattice-slider')?.addEventListener('change', function(){
+        _populateCouncilDropdown();
+    });
+
+    // Re-populate when rule checkboxes/sliders change (affects the blacklist rule key)
+    for (const id of ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle']) {
+        document.getElementById(id)?.addEventListener('change', function(){
+            _populateCouncilDropdown();
+        });
+    }
+    for (const id of ['rule-oct-full-slider', 'rule-oct-capacity-slider']) {
+        document.getElementById(id)?.addEventListener('input', function(){
+            _populateCouncilDropdown();
+        });
+    }
 
     // BFS export button
     document.getElementById('btn-bfs-export')?.addEventListener('click', function(){

@@ -258,24 +258,6 @@
         <div id="dp-title" style="font-size:22px; color:var(--gold); letter-spacing:0.06em;
             font-weight:600; margin-bottom:10px; text-align:center;">DEUTERON</div>
 
-        <!-- Packing density with alarm -->
-        <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:var(--text-3); font-size:11px; font-weight:500;">density</span>
-            <span><span id="dp-density-val" style="color:var(--text-1); font-weight:600; font-family:var(--font-mono);">--</span>
-            <span id="dp-density-alarm" style="color:var(--error); display:none; animation:dp-alarm 0.5s infinite alternate; font-size:10px;"> ALARM</span></span>
-        </div>
-
-        <!-- Sync health indicator -->
-        <div style="margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
-            <span style="color:var(--text-3); font-size:11px; font-weight:500;">sync</span>
-            <span>
-                <span id="dp-sync-dot" style="display:inline-block; width:7px; height:7px;
-                    border-radius:50%; background:var(--success); vertical-align:middle; margin-right:4px;"></span>
-                <span id="dp-sync-label" style="color:var(--success); font-size:11px; font-weight:500;">OK</span>
-                <span id="dp-sync-detail" style="color:var(--text-3); font-size:10px; margin-left:3px;"></span>
-            </span>
-        </div>
-
         <!-- Quark color legend moved to right panel (#color-legend) -->
 
         <!-- Quark balance per void face -->
@@ -415,8 +397,10 @@
             </div>
 
             <!-- Action buttons: start row (shown when no sim active) -->
-            <div id="sim-start-buttons" style="display:flex; gap:6px; margin-top:4px;">
+            <div id="sim-start-buttons" style="display:flex; gap:6px; margin-top:4px; align-items:center;">
                 <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
+                <select id="council-replay-select" style="display:none; font-size:10px; max-width:170px; padding:4px 6px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#ccc; border-radius:4px;"></select>
+                <button id="btn-council-replay" class="btn-primary" style="display:none; padding:6px 10px; font-size:11px;">&#9654;</button>
             </div>
             <!-- Action buttons: active row (shown when sim is running) -->
             <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px;">
@@ -587,7 +571,7 @@
         <div>flux: <span id="st-planck" style="color:var(--text-2)">0</span></div>
         <div>ps: <span id="st-ticks" style="color:var(--text-2)">0</span></div>
         <div>shortcuts: <span id="st-sc" style="color:var(--text-2)">0 / 18</span></div>
-        <div>density: <span id="st-dens" style="color:var(--text-2)">—</span></div>
+        <div style="display:none">density: <span id="st-dens" style="color:var(--text-2)">—</span></div>
         <!-- Hidden but kept for compatibility -->
         <span id="st-state" style="display:none">FCC</span>
         <span id="st-kolm" style="display:none">—</span>
@@ -599,12 +583,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=69"></script>
+    <script src="src/flux-demo-state.js?v=72"></script>
     <script src="src/flux-demo-xon.js?v=11"></script>
-    <script src="src/flux-demo-backtrack.js?v=33"></script>
-    <script src="src/flux-demo-planner.js?v=32"></script>
-    <script src="src/flux-demo-ui.js?v=79"></script>
-    <script src="src/flux-demo.js?v=439"></script>
+    <script src="src/flux-demo-backtrack.js?v=34"></script>
+    <script src="src/flux-demo-planner.js?v=36"></script>
+    <script src="src/flux-demo-ui.js?v=81"></script>
+    <script src="src/flux-demo.js?v=440"></script>
     <script src="src/flux-solver-render.js?v=40"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -612,7 +596,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=37"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
-    <script src="src/flux-tests.js?v=257"></script>
+    <script src="src/flux-tests.js?v=263"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

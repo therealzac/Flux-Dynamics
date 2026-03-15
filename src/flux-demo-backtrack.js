@@ -548,7 +548,9 @@ function _btRecordFingerprint() {
     const tick = _demoTick - 1; // tick was already incremented
     const fp = _computeTickFingerprint();
     // Cross-seed blacklist check: skip states proven dead in previous seeds
-    if (_sweepActive && _sweepBlacklist.has(tick)) {
+    // During council replay, bypass blacklist until past the recorded peak (replay phase)
+    const _blBypass = _sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak;
+    if (_sweepActive && !_blBypass && _sweepBlacklist.has(tick)) {
         if (_sweepBlacklist.get(tick).has(fp)) {
             _sweepBlacklistHits++;
             _sweepBlacklistHitsSeed++;

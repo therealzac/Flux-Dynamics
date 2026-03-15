@@ -3533,6 +3533,14 @@ async function demoTick() {
     // fingerprints must be recorded so Test 2 (random) can detect novel solutions.
     if (!_rewindRequested && typeof _btRecordFingerprint === 'function') {
         _btRecordFingerprint();
+        // Capture moves for golden path candidate (sweep mode)
+        if (_sweepActive && _moveTrace && _moveTrace.length > 0) {
+            const gt = _demoTick - 1;
+            if (!_sweepSeedMoves) _sweepSeedMoves = new Map();
+            const tickMoves = new Map();
+            for (const t of _moveTrace) tickMoves.set(t.xonIdx, t.to);
+            _sweepSeedMoves.set(gt, tickMoves);
+        }
         // Log successful tick advancement with tree structure
         if (_btActive && _searchTraversalLog) {
             const successTick = _demoTick - 1;

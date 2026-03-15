@@ -555,6 +555,21 @@ let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprint
 let _sweepBlacklistHits = 0;         // how many times a blacklisted fingerprint was actually matched
 let _sweepBlacklistHitsSeed = 0;     // hits for current seed only
 
+// ── Golden council: move traces from the top-performing seeds ──
+// Council size scales with experience: min(10, max(1, floor(sqrt(totalSeeds))))
+let _sweepGoldenCouncil = [];        // Array of {peak, seed, moves: Map<tick, Map<xonIdx, toNode>>}, sorted by peak desc
+let _sweepGoldenHits = 0;            // times a candidate matched any council member
+let _sweepGoldenHitsSeed = 0;        // golden hits for current seed
+let _sweepSeedMoves = null;          // Map<tick, Map<xonIdx, toNode>> — current seed's move buffer
+
+// ── Council replay: deterministic frame-by-frame replay of a council member ──
+let _sweepReplayActive = false;      // true during council member replay
+let _sweepReplayMember = null;       // council member being replayed {peak, seed, moves}
+
+function _goldenCouncilSize() {
+    return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));
+}
+
 function _fnv1aHash(str) {
     let h = 0x811c9dc5;
     for (let i = 0; i < str.length; i++) {

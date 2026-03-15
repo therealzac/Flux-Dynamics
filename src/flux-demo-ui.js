@@ -246,12 +246,6 @@ function updateDemoPanel() {
     }
     html += `</div></div>`;
     el.innerHTML = html;
-
-    // Hide density/sync rows during demo (not relevant)
-    const densityRow = document.querySelector('#deuteron-panel > div:nth-child(2)');
-    const syncRow = document.querySelector('#deuteron-panel > div:nth-child(3)');
-    if (densityRow) densityRow.style.display = 'none';
-    if (syncRow) syncRow.style.display = 'none';
 }
 
 // ── Edge Balance Panel ────────────────────────────────────────────────────
@@ -745,6 +739,9 @@ function isDemoPaused() {
 function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
+    // Clear council replay state if active
+    _sweepReplayActive = false;
+    _sweepReplayMember = null;
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     _setSimUIActive(false);
     _demoReversing = false;
@@ -791,11 +788,6 @@ function stopDemo() {
         if (q.spark) q.spark.visible = true;
         if (q.trailLine) q.trailLine.visible = true;
     }
-    // Restore density/sync rows
-    const densityRow = document.querySelector('#deuteron-panel > div:nth-child(2)');
-    const syncRow = document.querySelector('#deuteron-panel > div:nth-child(3)');
-    if (densityRow) densityRow.style.display = '';
-    if (syncRow) syncRow.style.display = '';
     // Restore panel title
     const dpTitle = document.querySelector('#deuteron-panel > div:first-child');
     if (dpTitle) dpTitle.textContent = 'DEUTERON';
