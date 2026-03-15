@@ -1538,8 +1538,8 @@ function startDemoLoop() {
     const _opDefaults = [
         ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
         ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
-        ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
-        ['orbit-speed-slider', 8],
+        ['spark-opacity-slider', 100], ['weak-opacity-slider', 21],
+        ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
     ];
     for (const [id, val] of _opDefaults) {
         const el = document.getElementById(id);

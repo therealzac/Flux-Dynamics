@@ -970,6 +970,11 @@ function _playbackUpdateDisplay() {
     // Re-apply tet coloring from restored edge balance (no counting during replay)
     if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
     if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
+    // Lazily build wavefunction + shells on first replay frame (cold-storage
+    // replay may not have had valid REST positions during init).
+    if (typeof _wfMesh !== 'undefined' && !_wfMesh && typeof buildWavefunction === 'function') buildWavefunction();
+    if (typeof _braneShells !== 'undefined' && _braneShells.length === 0 && typeof buildBranes === 'function') buildBranes();
+    if (typeof updateWavefunction === 'function') updateWavefunction();
     if (typeof updateSpheres === 'function') updateSpheres();
     if (typeof updateStatus === 'function') updateStatus();
     // Force-update bottom-stats even when simHalted (updateStatus bails early)

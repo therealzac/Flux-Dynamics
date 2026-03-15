@@ -3313,18 +3313,24 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             // Kill the live tick loop so resumeDemo() starts redo drain instead
             if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
             if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+            // Council-grade runs have already revealed the oct — force it so
+            // void spheres and shells render from the first replay frame.
+            _demoOctRevealed = true;
+            for (let f = 1; f <= 8; f++) _demoVisitedFaces.add(f);
             pauseDemo();
             _testRunning = false; // enable rendering for entire replay seed
             // Ensure opacity defaults are applied for replay visuals
             const _replayOpDefaults = [
                 ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
                 ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
-                ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
-                ['orbit-speed-slider', 8],
+                ['spark-opacity-slider', 100], ['weak-opacity-slider', 21],
+                ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
             ];
+            // Always force-dispatch (don't skip same-value) — startDemoLoop
+            // may have already set different defaults before we got here.
             for (const [id, val] of _replayOpDefaults) {
                 const el = document.getElementById(id);
-                if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
+                if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
             }
             resumeDemo();
         }
