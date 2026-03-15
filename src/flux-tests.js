@@ -2843,6 +2843,9 @@ function _isCouncilEligible() {
     if (!_sweepActive) return true;  // manual demo = always save
     const maxSize = _goldenCouncilSize();
     if (_sweepGoldenCouncil.length < maxSize) return true;
+    // Current seed already in council → still eligible (keep autosaving updates)
+    const currentSeed = _forceSeed || _runSeed || 0;
+    if (_sweepGoldenCouncil.some(m => m.seed === currentSeed)) return true;
     return _maxTickReached > _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak;
 }
 
@@ -3587,13 +3590,13 @@ function _updateSweepPanel(message, sweepStartTime) {
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
     if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {
-        // Build sorted entries: council members, marking the live run's seed with green *
+        // Build sorted entries: council members, marking the current round's seed with green *
         const hasRecentAutosave = _demoActive && _maxTickReached > 0
             && _lastAutosavePeak > 0 && (_maxTickReached - _lastAutosavePeak) < 10
             && typeof _isCouncilEligible === 'function' && _isCouncilEligible();
         const liveSeed = hasRecentAutosave ? (_forceSeed || _runSeed || 0) : null;
         const entries = _sweepGoldenCouncil.map(m => ({ peak: m.peak, live: liveSeed !== null && m.seed === liveSeed }));
-        // If live run isn't in council yet, add it as a separate green entry
+        // If live run isn't in council yet but is autosave-eligible, add it as a separate green entry
         if (hasRecentAutosave && !entries.some(e => e.live)) {
             entries.push({ peak: _lastAutosavePeak, live: true });
         }

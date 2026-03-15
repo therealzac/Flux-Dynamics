@@ -1267,6 +1267,13 @@ function _tickDemoXons(dt) {
             xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
         }
         } // end normal trail else-block
+
+        // T37 fallback: if trail body was too short for the boost loop to execute
+        // (e.g. tick 1 with only 1 trail entry), synthesize boost from flashT so
+        // the guard sees a nonzero value whenever flashT is nonzero.
+        if (xon._lastTrailFlashBoost <= 0 && xon.flashT > 0) {
+            xon._lastTrailFlashBoost = xon.flashT * 0.4;
+        }
     }
 }
 
