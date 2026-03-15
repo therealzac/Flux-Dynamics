@@ -418,6 +418,10 @@ const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB
 
 // ── Fighterjet mode: smooth Catmull-Rom spline flight paths ──────────
 let _fighterjetMode = true;
+// Cached circumscribed circle geometry for equatorial shortcut square
+let _fjEqCenter = null;   // [x,y,z] centroid of equatorial square
+let _fjEqRadius = 0;      // distance from center to any equatorial node
+let _fjEqEdgeSet = null;  // Set of pairId strings for the 4 equatorial SC edges
 
 // ── Seeded PRNG for deterministic backtracker replay ─────────────────
 // Mulberry32: fast 32-bit seeded PRNG. Returns float in [0, 1).

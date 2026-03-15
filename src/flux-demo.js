@@ -728,6 +728,33 @@ function _catmullRom(p0, p1, p2, p3, t) {
     return _crOut;
 }
 
+// Circular arc interpolation for equatorial SC hops.
+// Slerps radial vectors around the circumscribed circle center.
+// For a square inscribed in a circle, adjacent corners are 90° apart → quarter-circle arc.
+const _fjArcOut = [0, 0, 0]; // reusable return
+function _fjCircularArc(from, to, t) {
+    const cx = _fjEqCenter[0], cy = _fjEqCenter[1], cz = _fjEqCenter[2];
+    const ax = from[0] - cx, ay = from[1] - cy, az = from[2] - cz;
+    const bx = to[0] - cx, by = to[1] - cy, bz = to[2] - cz;
+    const dot = ax * bx + ay * by + az * bz;
+    const r2 = _fjEqRadius * _fjEqRadius;
+    const theta = Math.acos(Math.max(-1, Math.min(1, dot / r2)));
+    const sinT = Math.sin(theta);
+    if (sinT < 1e-6) {
+        // Degenerate: fall back to lerp
+        _fjArcOut[0] = from[0] + (to[0] - from[0]) * t;
+        _fjArcOut[1] = from[1] + (to[1] - from[1]) * t;
+        _fjArcOut[2] = from[2] + (to[2] - from[2]) * t;
+        return _fjArcOut;
+    }
+    const a = Math.sin((1 - t) * theta) / sinT;
+    const b = Math.sin(t * theta) / sinT;
+    _fjArcOut[0] = cx + a * ax + b * bx;
+    _fjArcOut[1] = cy + a * ay + b * by;
+    _fjArcOut[2] = cz + a * az + b * bz;
+    return _fjArcOut;
+}
+
 // Curvature-dependent easing: blends linear (straight) with cubic
 // ease-in-out (sharp turns). angle = turn angle in radians [0,PI].
 function _fjEase(t, angle) {
@@ -864,16 +891,22 @@ function _tickDemoXons(dt) {
             } else if (_hopDist > 1.2) {
                 xon.group.position.set(pf[0], pf[1], pf[2]);
             } else if (_fighterjetMode) {
-                // ── Fighterjet FORWARD: Catmull-Rom spline through recent positions ──
-                const fp = xon._trailFrozenPos;
-                const tl = fp ? fp.length : 0;
-                const p1 = pf, p2 = pt;
-                const p0 = (tl >= 3) ? fp[tl - 3] : p1;
-                _fjP3[0] = 2*p2[0] - p1[0];
-                _fjP3[1] = 2*p2[1] - p1[1];
-                _fjP3[2] = 2*p2[2] - p1[2];
-                const cr = _catmullRom(p0, p1, p2, _fjP3, xon.tweenT);
-                xon.group.position.set(cr[0], cr[1], cr[2]);
+                // ── Fighterjet FORWARD: circular arc for equatorial hops, CR spline otherwise ──
+                const _spriteEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.prevNode, xon.node));
+                if (_spriteEqHop) {
+                    const arc = _fjCircularArc(pf, pt, xon.tweenT);
+                    xon.group.position.set(arc[0], arc[1], arc[2]);
+                } else {
+                    const fp = xon._trailFrozenPos;
+                    const tl = fp ? fp.length : 0;
+                    const p1 = pf, p2 = pt;
+                    const p0 = (tl >= 3) ? fp[tl - 3] : p1;
+                    _fjP3[0] = 2*p2[0] - p1[0];
+                    _fjP3[1] = 2*p2[1] - p1[1];
+                    _fjP3[2] = 2*p2[2] - p1[2];
+                    const cr = _catmullRom(p0, p1, p2, _fjP3, xon.tweenT);
+                    xon.group.position.set(cr[0], cr[1], cr[2]);
+                }
             } else {
                 // ── Normal: cubic ease-out lerp ──
                 const s = 1 - (1 - xon.tweenT) ** 3;
@@ -941,7 +974,7 @@ function _tickDemoXons(dt) {
 
         // ── Fighterjet curved trails: subdivide each segment with CR spline ──
         if (_fighterjetMode && bodyLen >= 2) {
-            const FJ_SUBS = 4; // subdivisions per trail segment
+            const FJ_SUBS = 12; // subdivisions per trail segment
             const fp = _trailFP;
             xon._lastTrailFlashBoost = 0;
             let out = 0; // output vertex index
@@ -966,12 +999,17 @@ function _tickDemoXons(dt) {
                 const scb = (segCol & 0xff) / 255;
                 const isOverlay = _isOverlayRole(i);
                 const isGluon = _isGluonRole(i);
-                // Emit FJ_SUBS vertices along CR curve (skip last to avoid duplicates)
+                // Check if this segment is an equatorial SC hop → use circular arc
+                const isEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.trail[i], xon.trail[i + 1]));
+                // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_LENGTH; s++) {
                     const u = s / FJ_SUBS;
                     let px, py, pz;
                     if (teleport) {
                         px = cp1[0]; py = cp1[1]; pz = cp1[2];
+                    } else if (isEqHop) {
+                        const arc = _fjCircularArc(cp1, cp2, u);
+                        px = arc[0]; py = arc[1]; pz = arc[2];
                     } else {
                         const cr = _catmullRom(cp0, cp1, cp2, cp3, u);
                         px = cr[0]; py = cr[1]; pz = cr[2];
@@ -1029,12 +1067,14 @@ function _tickDemoXons(dt) {
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
+                    const headIsEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.prevNode, xon.node));
                     const headSubs = Math.max(1, Math.round(FJ_SUBS * xon.tweenT));
                     for (let s = 1; s <= headSubs && out < XON_TRAIL_LENGTH; s++) {
                         const u = (s / FJ_SUBS) * (xon.tweenT > 0 ? 1 : 0);
                         const t = u * xon.tweenT / (headSubs / FJ_SUBS);
                         let px, py, pz;
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
+                        else if (headIsEqHop) { const arc = _fjCircularArc(hp1, hp2, s / headSubs * xon.tweenT); px = arc[0]; py = arc[1]; pz = arc[2]; }
                         else { const cr = _catmullRom(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = cr[0]; py = cr[1]; pz = cr[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
                         if (xon._weakTrailPos) {
@@ -1712,6 +1752,23 @@ function _executeOpeningTick(occupied) {
         if (poles.length === 2) {
             _octAntipodal.set(poles[0], poles[1]);
             _octAntipodal.set(poles[1], poles[0]);
+        }
+
+        // Compute circumscribed circle of the equatorial square for fighterjet arcs
+        {
+            let sx = 0, sy = 0, sz = 0;
+            for (const n of ordered) { sx += pos[n][0]; sy += pos[n][1]; sz += pos[n][2]; }
+            _fjEqCenter = [sx / 4, sy / 4, sz / 4];
+            let rSum = 0;
+            for (const n of ordered) {
+                const dx = pos[n][0] - _fjEqCenter[0], dy = pos[n][1] - _fjEqCenter[1], dz = pos[n][2] - _fjEqCenter[2];
+                rSum += Math.sqrt(dx * dx + dy * dy + dz * dz);
+            }
+            _fjEqRadius = rSum / 4;
+            _fjEqEdgeSet = new Set();
+            for (let i = 0; i < 4; i++) {
+                _fjEqEdgeSet.add(pairId(ordered[i], ordered[(i + 1) % 4]));
+            }
         }
 
         // Find oct void
