@@ -473,23 +473,19 @@ function _enumerateAllFaceAssignments(proposals) {
     return results;
 }
 
-// Compute the "oct residual key" for a face assignment combo.
-// This is the set of xon indices NOT assigned to any face — i.e., the xons
-// that remain in oct mode. Two combos with the same oct residual produce
-// identical PHASE 2 (oct movement) behavior, so for oct-related failures
-// (T20 stuck, T19 collision between oct xons), only one combo per residual
-// needs to be tried. This preserves exhaustiveness while eliminating
-// provably redundant retries (e.g. 2.4M combos → ~64 unique residuals).
-function _faceComboOctResidualKey(combo) {
-    // combo = array of {xon, face, quarkType, score}
-    // Build a sorted string of xon indices that ARE assigned (complement = oct residual)
-    const assigned = [];
-    for (const entry of combo) {
-        const xi = _demoXons.indexOf(entry.xon);
-        if (xi >= 0) assigned.push(xi);
-    }
-    assigned.sort((a, b) => a - b);
-    return assigned.join(',');
+// Compute the "destination tuple key" for the current tick's tet assignments.
+// Two combos that send the same xons to the same step-1 destinations produce
+// identical occupied sets for Phase 2 oct matching, and thus identical outcomes.
+// This subsumes oct-residual dedup (same destinations ⊂ same residual) while
+// distinguishing combos where the same xons go to DIFFERENT nodes.
+//
+// assignedDests: array of {xonIdx, destNode} for each tet-assigned xon.
+// Returns a canonical string key like "0:5,2:9,3:14".
+function _destTupleKey(assignedDests) {
+    if (!assignedDests || assignedDests.length === 0) return '';
+    const parts = assignedDests.slice();
+    parts.sort((a, b) => a.xonIdx - b.xonIdx);
+    return parts.map(d => `${d.xonIdx}:${d.destNode}`).join(',');
 }
 
 // Parse a fingerprint string into structured moves array.
@@ -647,7 +643,8 @@ function _btResetMatchingCache() {
     _btMatchingCacheLedgerSize = 0;
     _btFaceAssignCache = null;
     _btFaceAssignIndex = 0;
-    _btTriedOctResiduals = null;
+    _btTriedDestTuples = null;
+    _btVacuumConflictClauses = null;
     _btFaceAssignLedgerSize = 0;
     _btPermutationIndex = 0;
     _btWeakStepIndex = 0;

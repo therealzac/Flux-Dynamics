@@ -574,7 +574,8 @@ let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (inva
 let _btFaceAssignCache = null;         // Array of valid assignment combos [{xon, face, quarkType, score}[]]
 let _btFaceAssignIndex = 0;            // next face assignment combo to try
 let _btFaceAssignLedgerSize = 0;       // ledger size when cache was built
-let _btTriedOctResiduals = null;       // Set<string> of oct residual keys tried for current matching (dedup)
+let _btTriedDestTuples = null;         // Set<string> of destination-tuple keys tried for current matching (dedup)
+let _btVacuumConflictClauses = null;   // Array of {faces: Set<faceId>, key: string} — learned face sets that break Kepler density
 let _btPermutationIndex = 0;           // cycles through loop permutations during BFS exhaustive search
 let _btWeakStepIndex = 0;              // cycles through weak BFS first-step choices during BFS exhaustive search
 

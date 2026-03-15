@@ -2603,6 +2603,23 @@ async function demoTick() {
                     _logChoreo(`FACE ENUM: ${_btFaceAssignCache.length} valid combos for tick ${_demoTick}`);
                 }
 
+                // Skip combos whose face set contains a known vacuum conflict clause.
+                // Face SCs depend only on face ID — if a face set broke Kepler density once,
+                // every quark variant of that face set will break it the same way.
+                while (_btVacuumConflictClauses && _btFaceAssignCache &&
+                       _btFaceAssignIndex < _btFaceAssignCache.length) {
+                    const cc = _btFaceAssignCache[_btFaceAssignIndex];
+                    const ccFaces = new Set(cc.map(p => p.face));
+                    let hit = false;
+                    for (const clause of _btVacuumConflictClauses) {
+                        let all = true;
+                        for (const f of clause.faces) { if (!ccFaces.has(f)) { all = false; break; } }
+                        if (all) { hit = true; break; }
+                    }
+                    if (!hit) break;
+                    _btFaceAssignIndex++;
+                }
+
                 // Apply the face combo at the current index (managed by rewind handler).
                 // No wrap-around — exhaustion detected by rewind handler.
                 if (_btFaceAssignCache.length > 0 && _btFaceAssignIndex < _btFaceAssignCache.length) {
@@ -2625,7 +2642,22 @@ async function demoTick() {
                                 }
                             }
                         }
-                        if (!canMaterialize) continue;
+                        if (!canMaterialize) {
+                            // Record face-level conflict clause: these faces can't coexist
+                            // (Kepler density). Quark types don't matter — face SCs depend
+                            // only on face ID. Any combo containing ALL these faces will fail.
+                            if ((_btActive || _bfsTestActive) && usedFaces.size > 0) {
+                                if (!_btVacuumConflictClauses) _btVacuumConflictClauses = [];
+                                const clauseFaces = new Set(usedFaces);
+                                clauseFaces.add(prop.face);
+                                const clauseKey = Array.from(clauseFaces).sort((a, b) => a - b).join(',');
+                                if (!_btVacuumConflictClauses.some(c => c.key === clauseKey)) {
+                                    _btVacuumConflictClauses.push({ faces: clauseFaces, key: clauseKey });
+                                    _logChoreo(`CONFLICT CLAUSE: faces {${clauseKey}} can't coexist (Kepler density)`);
+                                }
+                            }
+                            continue;
+                        }
                         // Lookahead viability
                         const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
                         const tmpOcc = new Map(occupied);
@@ -2740,6 +2772,26 @@ async function demoTick() {
                 }
             }
 
+            // ── DEST-TUPLE DEDUP: skip if same xons go to same nodes as a prior combo ──
+            // After assignments + first-step planning, each assigned xon has a loopSeq.
+            // Build the dest tuple (xonIdx → step-1 node). If already tried → skip.
+            if ((_btActive || _bfsTestActive) && assignedXons.size > 0 && typeof _destTupleKey === 'function') {
+                const dests = [];
+                for (const xon of assignedXons) {
+                    if (xon._loopSeq && xon._loopSeq.length >= 2) {
+                        dests.push({ xonIdx: _demoXons.indexOf(xon), destNode: xon._loopSeq[1] });
+                    }
+                }
+                const dtKey = _destTupleKey(dests);
+                if (!_btTriedDestTuples) _btTriedDestTuples = new Set();
+                if (dtKey && _btTriedDestTuples.has(dtKey)) {
+                    // This exact destination set was already tried — skip
+                    _rewindRequested = true;
+                    _rewindViolation = 'dest-tuple-dedup';
+                }
+                if (dtKey) _btTriedDestTuples.add(dtKey);
+            }
+
             // ── BFS Test decision trace: capture face assignments ──
             if (_bfsTestActive && assignedXons.size > 0) {
                 const faceAssignments = [];
@@ -2832,7 +2884,9 @@ async function demoTick() {
     // ── PHASE 2: Coordinated oct movement planning ──
     let octXons = [];
     let octPlans = [];
-    {
+    if (_rewindRequested) {
+    // Dest-tuple dedup skip — bypass Phase 2 entirely
+    } else {
     octXons = _demoXons.filter(x => x.alive && (x._mode === 'oct' || x._mode === 'gluon' || x._mode === 'weak') && !x._movedThisTick);
     for (const xon of octXons) _occDel(occupied, xon.node);
 
@@ -3112,6 +3166,8 @@ async function demoTick() {
     // ── PHASE 3: Execute all planned moves ──
     // All moves execute in a single pass — simultaneous, not ordered.
     // If an oct move fails (vacuum rejection), revoke dependent tet approvals.
+    // Skip if dest-tuple dedup flagged a rewind.
+    if (!_rewindRequested) {
 
     // Build reverse map: oct xon → tet plan that depends on it vacating
     const octToTetDep = new Map(); // oct xon → tet plan
@@ -3261,6 +3317,7 @@ async function demoTick() {
         }
     }
 
+    } // end PHASE 3 (skipped during dest-tuple dedup)
     const _pT3 = performance.now(); _profPhases.p3 += _pT3 - _pT2;
     _pT5 = _pT3; // PHASE 3b/4/5 removed — bridge profiling timer to solver
 
@@ -3537,22 +3594,28 @@ async function demoTick() {
     if (_rewindRequested) {
         _rewindRequested = false;
         _btActive = true;
-        _totalBacktrackRetries++;
+        const _isDedupSkip = (_rewindViolation === 'dest-tuple-dedup');
+        if (!_isDedupSkip) _totalBacktrackRetries++;
         // Signal RL reward: penalize moves that trigger backtracks
-        if (typeof _ppoBacktracksThisTick !== 'undefined') _ppoBacktracksThisTick++;
+        if (!_isDedupSkip && typeof _ppoBacktracksThisTick !== 'undefined') _ppoBacktracksThisTick++;
 
         // Record fingerprint of the failed attempt for deduplication
-        const _isNewFingerprint = (typeof _btRecordFingerprint === 'function') ? _btRecordFingerprint() : true;
+        // Skip for dedup — no actual tick happened, no fingerprint to record.
+        const _isNewFingerprint = _isDedupSkip ? false :
+            ((typeof _btRecordFingerprint === 'function') ? _btRecordFingerprint() : true);
 
         // Extract exclusions and accumulate in persistent ledger.
-        const newExclusions = _btExtractExclusions();
+        // Skip for dedup skips — no guard fired, no exclusions to extract.
         const currentTick = _demoTick - 1; // tick was already incremented
         if (!_btBadMoveLedger.has(currentTick)) _btBadMoveLedger.set(currentTick, new Set());
         const ledger = _btBadMoveLedger.get(currentTick);
         let _addedNewExclusions = false;
-        for (const ex of newExclusions) {
-            if (!ledger.has(ex)) _addedNewExclusions = true;
-            ledger.add(ex);
+        if (!_isDedupSkip) {
+            const newExclusions = _btExtractExclusions();
+            for (const ex of newExclusions) {
+                if (!ledger.has(ex)) _addedNewExclusions = true;
+                ledger.add(ex);
+            }
         }
 
         // ── ESCALATION HELPER: attempt to go one layer deeper ──
@@ -3641,41 +3704,12 @@ async function demoTick() {
         // ── COMBO ADVANCEMENT ──
         // Advance face assignment index (inner axis of the combo odometer).
         // Also advance perm/weak indices for variety on future ticks and secondary choices.
+        // Dest-tuple dedup: the actual skip happens at execution time (line ~2758).
+        // Here we just advance the index — no need for oct-residual forward-skip
+        // since dest-tuple dedup at execution catches ALL duplicate outcomes,
+        // not just oct-related ones.
         if (_btFaceAssignCache !== null) {
             _btFaceAssignIndex++;
-
-            // ── OCT RESIDUAL DEDUP ──
-            // For oct-related failures (T20 stuck, T19 collision), the face
-            // assignment only matters insofar as it changes WHICH xons are in
-            // oct mode. Two combos with the same "oct residual" (same xons in
-            // oct) produce identical PHASE 2 behavior. Track tried residual
-            // keys and skip combos whose residual was already tried — preserves
-            // exhaustiveness because every UNIQUE oct configuration is still tried.
-            // (2.4M combos → ~32 unique residuals on a 6-xon deuteron.)
-            if (_btFaceAssignCache.length > 0 && _btFaceAssignIndex < _btFaceAssignCache.length
-                && _rewindViolation && typeof _faceComboOctResidualKey === 'function') {
-                const isOctFailure = /stuck at node|has \d+ xons|oct xons > capacity/.test(_rewindViolation);
-                if (isOctFailure) {
-                    // Record the residual key of the combo that just failed
-                    const failedIdx = _btFaceAssignIndex - 1;
-                    if (failedIdx >= 0 && failedIdx < _btFaceAssignCache.length) {
-                        if (!_btTriedOctResiduals) _btTriedOctResiduals = new Set();
-                        const failedKey = _faceComboOctResidualKey(_btFaceAssignCache[failedIdx]);
-                        _btTriedOctResiduals.add(failedKey);
-                        // Skip forward past ALL combos whose residual is already tried
-                        let skipped = 0;
-                        while (_btFaceAssignIndex < _btFaceAssignCache.length) {
-                            const nextKey = _faceComboOctResidualKey(_btFaceAssignCache[_btFaceAssignIndex]);
-                            if (!_btTriedOctResiduals.has(nextKey)) break; // new oct config — try it
-                            _btFaceAssignIndex++;
-                            skipped++;
-                        }
-                        if (skipped > 0) {
-                            _logChoreo(`OCT RESIDUAL SKIP: ${skipped} combos skipped (${_btTriedOctResiduals.size} residuals tried)`);
-                        }
-                    }
-                }
-            }
         }
         // Perm and weak always advance for variety (independent of caches)
         _btPermutationIndex++;
@@ -3690,12 +3724,13 @@ async function demoTick() {
             _btFaceAssignIndex = 0;
             _btPermutationIndex = 0;
             _btWeakStepIndex = 0;
-            _btTriedOctResiduals = null; // fresh residual tracking for next matching
+            _btTriedDestTuples = null; // fresh dest-tuple tracking for next matching
         }
 
         // ALL combos exhausted → tick provably exhausted → escalate to deeper BFS layer
         if (_btMatchingCache !== null && _btMatchingIndex >= _btMatchingCache.length) {
-            _logChoreo(`EXHAUSTED: tick ${currentTick} — all ${_btMatchingCache.length} matchings × ${_btFaceAssignCache ? _btFaceAssignCache.length : '?'} face combos tried`);
+            const _dtCount = _btTriedDestTuples ? _btTriedDestTuples.size : 0;
+            _logChoreo(`EXHAUSTED: tick ${currentTick} — all ${_btMatchingCache.length} matchings × ${_btFaceAssignCache ? _btFaceAssignCache.length : '?'} face combos tried (${_dtCount} unique dest tuples)`);
             _btResetMatchingCache();
             if (!_escalateLayer()) break;
             continue;
