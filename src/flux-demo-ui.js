@@ -1450,10 +1450,17 @@ function _stopMoviePlayback() {
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
 }
 
-// ── Fighterjet mode toggle ──
-document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
-    _fighterjetMode = e.target.checked;
-});
+// ── Trail curvature slider ──
+{
+    const _curveSlider = document.getElementById('trail-curve-slider');
+    const _curveVal = document.getElementById('trail-curve-val');
+    if (_curveSlider) {
+        _curveSlider.addEventListener('input', e => {
+            _fjCurvature = +e.target.value / 100;
+            if (_curveVal) _curveVal.textContent = e.target.value + '%';
+        });
+    }
+}
 
 // ── Rules switchboard toggles ──
 {

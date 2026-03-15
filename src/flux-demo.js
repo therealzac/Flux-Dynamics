@@ -728,31 +728,27 @@ function _catmullRom(p0, p1, p2, p3, t) {
     return _crOut;
 }
 
-// Circular arc interpolation for equatorial SC hops.
-// Slerps radial vectors around the circumscribed circle center.
-// For a square inscribed in a circle, adjacent corners are 90° apart → quarter-circle arc.
-const _fjArcOut = [0, 0, 0]; // reusable return
-function _fjCircularArc(from, to, t) {
-    const cx = _fjEqCenter[0], cy = _fjEqCenter[1], cz = _fjEqCenter[2];
-    const ax = from[0] - cx, ay = from[1] - cy, az = from[2] - cz;
-    const bx = to[0] - cx, by = to[1] - cy, bz = to[2] - cz;
-    const dot = ax * bx + ay * by + az * bz;
-    const r2 = _fjEqRadius * _fjEqRadius;
-    const theta = Math.acos(Math.max(-1, Math.min(1, dot / r2)));
-    const sinT = Math.sin(theta);
-    if (sinT < 1e-6) {
-        // Degenerate: fall back to lerp
-        _fjArcOut[0] = from[0] + (to[0] - from[0]) * t;
-        _fjArcOut[1] = from[1] + (to[1] - from[1]) * t;
-        _fjArcOut[2] = from[2] + (to[2] - from[2]) * t;
-        return _fjArcOut;
+// Curvature-blended interpolation: blend between linear and Catmull-Rom.
+// _fjCurvature: 0 = straight line, 1 = standard CR, 2 = exaggerated.
+const _fjBlendOut = [0, 0, 0]; // reusable return
+function _fjBlend(p0, p1, p2, p3, t) {
+    if (_fjCurvature <= 0) {
+        // Pure linear
+        _fjBlendOut[0] = p1[0] + (p2[0] - p1[0]) * t;
+        _fjBlendOut[1] = p1[1] + (p2[1] - p1[1]) * t;
+        _fjBlendOut[2] = p1[2] + (p2[2] - p1[2]) * t;
+        return _fjBlendOut;
     }
-    const a = Math.sin((1 - t) * theta) / sinT;
-    const b = Math.sin(t * theta) / sinT;
-    _fjArcOut[0] = cx + a * ax + b * bx;
-    _fjArcOut[1] = cy + a * ay + b * by;
-    _fjArcOut[2] = cz + a * az + b * bz;
-    return _fjArcOut;
+    const cr = _catmullRom(p0, p1, p2, p3, t);
+    if (_fjCurvature === 1.0) return cr;
+    // Blend: linear + curvature * (cr - linear)
+    const lx = p1[0] + (p2[0] - p1[0]) * t;
+    const ly = p1[1] + (p2[1] - p1[1]) * t;
+    const lz = p1[2] + (p2[2] - p1[2]) * t;
+    _fjBlendOut[0] = lx + _fjCurvature * (cr[0] - lx);
+    _fjBlendOut[1] = ly + _fjCurvature * (cr[1] - ly);
+    _fjBlendOut[2] = lz + _fjCurvature * (cr[2] - lz);
+    return _fjBlendOut;
 }
 
 // Curvature-dependent easing: blends linear (straight) with cubic
@@ -858,8 +854,8 @@ function _tickDemoXons(dt) {
         }
 
         // ── Live xons: tween + spark + trail ──
-        // Fighterjet mode: enforce minimum tween duration so curves are visible
-        const stepSec = (_fighterjetMode && demoStepSec < 0.06) ? 0.06 : demoStepSec;
+        // Curved trails: enforce minimum tween duration so curves are visible
+        const stepSec = (_fjCurvature > 0 && demoStepSec < 0.06) ? 0.06 : demoStepSec;
         // Reverse animation: decrement _fjRevT from 1→0 (independent timer)
         if (xon._fjReverseFrom) {
             const revDt = Math.min(dt, 0.033); // cap to prevent instant completion
@@ -878,8 +874,8 @@ function _tickDemoXons(dt) {
             const _tdx = pt[0] - pf[0], _tdy = pt[1] - pf[1], _tdz = pt[2] - pf[2];
             const _hopDist = Math.sqrt(_tdx*_tdx + _tdy*_tdy + _tdz*_tdz);
             // Reverse animation takes priority — check BEFORE teleport guard
-            if (xon._fjReverseFrom && _fighterjetMode) {
-                // ── Fighterjet REVERSE: lerp from saved position → restored node ──
+            if (xon._fjReverseFrom && _fjCurvature > 0) {
+                // ── REVERSE: lerp from saved position → restored node ──
                 const from = xon._fjReverseFrom;
                 const to = pos[xon.node]; // restored tick's node position
                 const t = xon._fjRevT; // 1=old pos, 0=restored pos
@@ -890,25 +886,19 @@ function _tickDemoXons(dt) {
                 );
             } else if (_hopDist > 1.2) {
                 xon.group.position.set(pf[0], pf[1], pf[2]);
-            } else if (_fighterjetMode) {
-                // ── Fighterjet FORWARD: circular arc for equatorial hops, CR spline otherwise ──
-                const _spriteEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.prevNode, xon.node));
-                if (_spriteEqHop) {
-                    const arc = _fjCircularArc(pf, pt, xon.tweenT);
-                    xon.group.position.set(arc[0], arc[1], arc[2]);
-                } else {
-                    const fp = xon._trailFrozenPos;
-                    const tl = fp ? fp.length : 0;
-                    const p1 = pf, p2 = pt;
-                    const p0 = (tl >= 3) ? fp[tl - 3] : p1;
-                    _fjP3[0] = 2*p2[0] - p1[0];
-                    _fjP3[1] = 2*p2[1] - p1[1];
-                    _fjP3[2] = 2*p2[2] - p1[2];
-                    const cr = _catmullRom(p0, p1, p2, _fjP3, xon.tweenT);
-                    xon.group.position.set(cr[0], cr[1], cr[2]);
-                }
+            } else if (_fjCurvature > 0) {
+                // ── FORWARD: curvature-blended spline ──
+                const fp = xon._trailFrozenPos;
+                const tl = fp ? fp.length : 0;
+                const p1 = pf, p2 = pt;
+                const p0 = (tl >= 3) ? fp[tl - 3] : p1;
+                _fjP3[0] = 2*p2[0] - p1[0];
+                _fjP3[1] = 2*p2[1] - p1[1];
+                _fjP3[2] = 2*p2[2] - p1[2];
+                const bl = _fjBlend(p0, p1, p2, _fjP3, xon.tweenT);
+                xon.group.position.set(bl[0], bl[1], bl[2]);
             } else {
-                // ── Normal: cubic ease-out lerp ──
+                // ── Curvature 0: cubic ease-out lerp ──
                 const s = 1 - (1 - xon.tweenT) ** 3;
                 const px = pf[0] + (pt[0] - pf[0]) * s;
                 const py = pf[1] + (pt[1] - pf[1]) * s;
@@ -973,7 +963,7 @@ function _tickDemoXons(dt) {
         const bodyLen = (xon.tweenT < 1 && visLen > 1 && !xon._fjReverseFrom) ? visLen - 1 : visLen;
 
         // ── Fighterjet curved trails: subdivide each segment with CR spline ──
-        if (_fighterjetMode && bodyLen >= 2) {
+        if (_fjCurvature > 0 && bodyLen >= 2) {
             // FJ_SUBS defined in flux-demo-state.js
             const fp = _trailFP;
             xon._lastTrailFlashBoost = 0;
@@ -999,20 +989,15 @@ function _tickDemoXons(dt) {
                 const scb = (segCol & 0xff) / 255;
                 const isOverlay = _isOverlayRole(i);
                 const isGluon = _isGluonRole(i);
-                // Check if this segment is an equatorial SC hop → use circular arc
-                const isEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.trail[i], xon.trail[i + 1]));
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
                     let px, py, pz;
                     if (teleport) {
                         px = cp1[0]; py = cp1[1]; pz = cp1[2];
-                    } else if (isEqHop) {
-                        const arc = _fjCircularArc(cp1, cp2, u);
-                        px = arc[0]; py = arc[1]; pz = arc[2];
                     } else {
-                        const cr = _catmullRom(cp0, cp1, cp2, cp3, u);
-                        px = cr[0]; py = cr[1]; pz = cr[2];
+                        const bl = _fjBlend(cp0, cp1, cp2, cp3, u);
+                        px = bl[0]; py = bl[1]; pz = bl[2];
                     }
                     xon.trailPos[out * 3]     = px;
                     xon.trailPos[out * 3 + 1] = py;
@@ -1067,15 +1052,13 @@ function _tickDemoXons(dt) {
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    const headIsEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.prevNode, xon.node));
                     const headSubs = Math.max(1, Math.round(FJ_SUBS * xon.tweenT));
                     for (let s = 1; s <= headSubs && out < XON_TRAIL_VERTS; s++) {
                         const u = (s / FJ_SUBS) * (xon.tweenT > 0 ? 1 : 0);
                         const t = u * xon.tweenT / (headSubs / FJ_SUBS);
                         let px, py, pz;
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
-                        else if (headIsEqHop) { const arc = _fjCircularArc(hp1, hp2, s / headSubs * xon.tweenT); px = arc[0]; py = arc[1]; pz = arc[2]; }
-                        else { const cr = _catmullRom(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = cr[0]; py = cr[1]; pz = cr[2]; }
+                        else { const bl = _fjBlend(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = bl[0]; py = bl[1]; pz = bl[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
                         if (xon._weakTrailPos) {
                             xon._weakTrailPos[out*3] = headIsOverlay ? px : NaN;
@@ -1777,23 +1760,6 @@ function _executeOpeningTick(occupied) {
         if (poles.length === 2) {
             _octAntipodal.set(poles[0], poles[1]);
             _octAntipodal.set(poles[1], poles[0]);
-        }
-
-        // Compute circumscribed circle of the equatorial square for fighterjet arcs
-        {
-            let sx = 0, sy = 0, sz = 0;
-            for (const n of ordered) { sx += pos[n][0]; sy += pos[n][1]; sz += pos[n][2]; }
-            _fjEqCenter = [sx / 4, sy / 4, sz / 4];
-            let rSum = 0;
-            for (const n of ordered) {
-                const dx = pos[n][0] - _fjEqCenter[0], dy = pos[n][1] - _fjEqCenter[1], dz = pos[n][2] - _fjEqCenter[2];
-                rSum += Math.sqrt(dx * dx + dy * dy + dz * dz);
-            }
-            _fjEqRadius = rSum / 4;
-            _fjEqEdgeSet = new Set();
-            for (let i = 0; i < 4; i++) {
-                _fjEqEdgeSet.add(pairId(ordered[i], ordered[(i + 1) % 4]));
-            }
         }
 
         // Find oct void

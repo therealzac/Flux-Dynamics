@@ -92,8 +92,8 @@ function _btSaveSnapshot() {
 // Restore choreography state from a snapshot.
 function _btRestoreSnapshot(snap, reverse) {
     _demoTick = snap.tick;
-    // Fighterjet reverse: capture current sprite positions BEFORE any state changes
-    const fjReverse = _fighterjetMode && reverse;
+    // Curved reverse: capture current sprite positions BEFORE any state changes
+    const fjReverse = _fjCurvature > 0 && reverse;
     const savedPositions = fjReverse ? _demoXons.map(x =>
         x.group ? [x.group.position.x, x.group.position.y, x.group.position.z] : null
     ) : null;
@@ -151,8 +151,8 @@ function _btRestoreSnapshot(snap, reverse) {
             x._fjRevT = 1; // independent reverse timer (1→0)
             x.group.position.set(savedPositions[i][0], savedPositions[i][1], savedPositions[i][2]);
             x.tweenT = 1;
-        } else if (_fighterjetMode && x.group && pos[x.prevNode]) {
-            // Forward fighterjet: start at prevNode, animate to node
+        } else if (_fjCurvature > 0 && x.group && pos[x.prevNode]) {
+            // Forward curved: start at prevNode, animate to node
             x._fjReverseFrom = null;
             x._fjRevT = 0;
             x.group.position.set(pos[x.prevNode][0], pos[x.prevNode][1], pos[x.prevNode][2]);

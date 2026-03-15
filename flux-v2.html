@@ -505,9 +505,6 @@
                 <span id="color-phase-val" class="ctrl-val">0°</span>
             </div>
             <div id="color-legend" style="margin-top:4px;"><!-- populated by _updateLegend() --></div>
-            <label id="fighterjet-label" style="display:none; align-items:center; gap:5px; font-size:10px; color:#8aa; margin-top:6px; cursor:pointer; user-select:none;">
-                <input type="checkbox" id="fighterjet-toggle" checked style="accent-color:#66bbff;"> ✈ Fighterjet
-            </label>
         </div>
         <!-- ═══ PLAYBACK ═══ -->
         <div class="panel-section">
@@ -521,6 +518,11 @@
                 <span class="ctrl-label">trails</span>
                 <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="250" value="55" step="1">
                 <span id="tracer-lifespan-val" class="ctrl-val">55</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">curve</span>
+                <input type="range" id="trail-curve-slider" class="ctrl-slider" min="0" max="200" value="100" step="1">
+                <span id="trail-curve-val" class="ctrl-val">100%</span>
             </div>
             <div class="ctrl-row" style="margin-bottom:0;">
                 <span class="ctrl-label" id="orbit-toggle" style="cursor:pointer; user-select:none; color:var(--text-3);"
@@ -588,19 +590,19 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=81"></script>
+    <script src="src/flux-demo-state.js?v=82"></script>
     <script src="src/flux-demo-xon.js?v=13"></script>
-    <script src="src/flux-demo-backtrack.js?v=37"></script>
+    <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=104"></script>
-    <script src="src/flux-demo.js?v=461"></script>
+    <script src="src/flux-demo-ui.js?v=105"></script>
+    <script src="src/flux-demo.js?v=462"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=16"></script>
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=38"></script>
-    <script src="src/flux-nucleus.js?v=46"></script>
+    <script src="src/flux-nucleus.js?v=47"></script>
     <script src="src/flux-tests.js?v=311"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
