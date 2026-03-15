@@ -659,8 +659,8 @@ function _bfsReset() {
     _bfsFailTick = -1;
     _bfsLayer = 0;
     _bfsLayerRetries = 0;
-    // During BFS exhaustiveness test, preserve fingerprints and ledger for capture
-    if (!_bfsTestActive) {
+    // During BFS exhaustiveness test or sweep, preserve fingerprints and ledger for capture
+    if (!_bfsTestActive && !_sweepActive) {
         _btBadMoveLedger.clear();
         _btTriedFingerprints.clear();
     }

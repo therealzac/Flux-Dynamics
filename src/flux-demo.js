@@ -3671,15 +3671,18 @@ async function demoTick() {
                 }
             }
 
-            // ── SWEEP EARLY-OUT: If backtracker has dropped 100+ ticks below
-            // the high-water mark, this seed is stuck. Skip to next seed. ──
-            if (_sweepActive && _maxTickReached - targetTick >= 100) {
-                console.error(`%c[SWEEP SKIP] Seed backtracked 100+ ticks below peak (peak=${_maxTickReached}, target=${targetTick}). Skipping to next seed.`, 'color:orange;font-weight:bold');
-                _saveRunResult('sweep-skip', `backtracked to ${targetTick}, peak was ${_maxTickReached}`);
-                simHalted = true;
-                _btReset();
-                _bfsReset();
-                return false;
+            // ── SWEEP EARLY-OUT: Skip seed if backtracker has regressed too far.
+            // Threshold: min(100, 50% of peak). Disabled if peak < 10 ticks. ──
+            if (_sweepActive && _maxTickReached >= 10) {
+                const threshold = Math.min(100, Math.floor(_maxTickReached * 0.5));
+                if (_maxTickReached - targetTick >= threshold) {
+                    console.error(`%c[SWEEP SKIP] Seed regressed ${_maxTickReached - targetTick} ticks below peak (peak=${_maxTickReached}, target=${targetTick}, threshold=${threshold}). Skipping to next seed.`, 'color:orange;font-weight:bold');
+                    _saveRunResult('sweep-skip', `backtracked to ${targetTick}, peak was ${_maxTickReached}`);
+                    simHalted = true;
+                    _btReset();
+                    _bfsReset();
+                    return false;
+                }
             }
 
             // ── t=0 CANARY: If we've backed all the way past tick 0, the rules
@@ -3727,8 +3730,12 @@ async function demoTick() {
             // Collect keys first to avoid deleting during iteration (undefined behavior).
             const _staleKeys = [..._btBadMoveLedger.keys()].filter(t => t > targetTick);
             for (const t of _staleKeys) _btBadMoveLedger.delete(t);
-            const _staleFPKeys = [..._btTriedFingerprints.keys()].filter(t => t > targetTick);
-            for (const t of _staleFPKeys) _btTriedFingerprints.delete(t);
+            // During sweep, preserve fingerprints for cross-seed blacklist harvesting.
+            // They're still valid dead-end states even though local state will diverge.
+            if (!_sweepActive) {
+                const _staleFPKeys = [..._btTriedFingerprints.keys()].filter(t => t > targetTick);
+                for (const t of _staleFPKeys) _btTriedFingerprints.delete(t);
+            }
             // Trim stale snapshots from the failed forward path so rewind
             // playback only shows the happy path, not BFS mistakes.
             while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
