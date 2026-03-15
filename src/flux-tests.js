@@ -3043,17 +3043,51 @@ function _updateSweepPanel(message, sweepStartTime) {
         `Total: ${totalElapsed}s</div>`;
     html += `</div>`;
 
-    // Per-seed history (last 8)
-    const recent = _sweepResults.slice(-8).reverse();
-    for (const r of recent) {
-        const seedHex = '0x' + (r.seed >>> 0).toString(16).padStart(8, '0');
-        html += `<div style="font-size:9px; color:#7a9aaa; margin-bottom:2px; padding:2px 4px; ` +
-            `background:rgba(255,255,255,0.02); border-radius:2px;">` +
-            `Seed ${r.seedIdx + 1} (${seedHex}): ` +
-            `peak t${r.maxTick}, ${r.totalRetries} retries, ` +
-            `+${r.newBlacklisted || 0} blacklisted, ` +
-            `${(r.elapsedMs / 1000).toFixed(1)}s` +
-            `</div>`;
+    // ── Seed peak-tick sparkline bar chart (same style as ratio accuracy) ──
+    if (_sweepResults.length > 0) {
+        const SPARK_SLOTS = 32;
+        const SPARK = ['\u2581', '\u2582', '\u2583', '\u2584', '\u2585', '\u2586', '\u2587', '\u2588'];
+        const peaks = _sweepResults.map(r => r.maxTick || 0);
+        const chartData = peaks.slice(-SPARK_SLOTS);
+        const chartMax = Math.max(...chartData, 1);
+        const chartMin = 0;
+        let sparkline = '';
+        for (const v of chartData) {
+            const norm = Math.max(0, Math.min(1, (v - chartMin) / (chartMax - chartMin)));
+            const idx = Math.min(7, Math.floor(norm * 7.99));
+            // Color: green if high, orange if mid, red if low
+            const pct = chartMax > 0 ? v / chartMax : 0;
+            const c = pct >= 0.7 ? '#66dd66' : pct >= 0.3 ? '#ccaa66' : '#cc5544';
+            sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
+        }
+        html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
+            + `<div style="font-size:8px; color:#667788; margin-bottom:2px;">seed peak tick (last ${chartData.length})</div>`
+            + `<div style="font-size:22px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:7px; color:#445566; margin-top:2px;">`
+            + `<span>t0</span><span>t${chartMax}</span></div>`
+            + `</div>`;
+    }
+
+    // ── Blacklist contribution sparkline bar chart ──
+    if (_sweepResults.length > 0) {
+        const SPARK_SLOTS = 32;
+        const SPARK = ['\u2581', '\u2582', '\u2583', '\u2584', '\u2585', '\u2586', '\u2587', '\u2588'];
+        const bls = _sweepResults.map(r => r.newBlacklisted || 0);
+        const chartData = bls.slice(-SPARK_SLOTS);
+        const chartMax = Math.max(...chartData, 1);
+        let sparkline = '';
+        for (const v of chartData) {
+            const norm = Math.max(0, Math.min(1, v / chartMax));
+            const idx = Math.min(7, Math.floor(norm * 7.99));
+            const c = v === 0 ? '#445566' : norm >= 0.7 ? '#66aaff' : norm >= 0.3 ? '#7799bb' : '#556688';
+            sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
+        }
+        html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
+            + `<div style="font-size:8px; color:#667788; margin-bottom:2px;">blacklist contributions (last ${chartData.length})</div>`
+            + `<div style="font-size:22px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:7px; color:#445566; margin-top:2px;">`
+            + `<span>0</span><span>${chartMax.toLocaleString()}</span></div>`
+            + `</div>`;
     }
 
     // Download button placeholder (listener attached after innerHTML)
