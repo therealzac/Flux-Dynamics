@@ -23,7 +23,7 @@ const SC_BASE_DIRS = {1:[0,3], 2:[0,2], 3:[0,1], 4:[1,2], 5:[1,3], 6:[2,3]};
 //   s1(v1⊕v4)=#0073FF blue    ↔ s4(v2⊕v3)=#FF8C00 orange
 //   s2(v1⊕v3)=#FF00A6 pink    ↔ s5(v2⊕v4)=#00FF59 green
 //   s3(v1⊕v2)=#BF00FF purple  ↔ s6(v3⊕v4)=#40FF00 lime
-let S_COLOR   = {1:0x0073FF,2:0xFF00A6,3:0xBF00FF,4:0xFF8C00,5:0x00FF59,6:0x40FF00};
+const S_COLOR   = {1:0x0073FF,2:0xFF00A6,3:0xBF00FF,4:0xFF8C00,5:0x00FF59,6:0x40FF00};
 const S_COLOR_CSS = {1:'#0073ff',2:'#ff00a6',3:'#bf00ff',4:'#ff8c00',5:'#00ff59',6:'#40ff00'};
 
 // ─── All mutable state — declared early to prevent TDZ errors ─────────────────

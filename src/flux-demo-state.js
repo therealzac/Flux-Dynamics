@@ -388,7 +388,8 @@ let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain te
 let _ruleBareTetrahedra = false; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
-const T79_MAX_FULL_TICKS = 1;     // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+let _ruleT20StrictMode = false;   // When true, T20 has no mode-transition exemption
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
 // Used to prevent adjacent xon swaps (A→B while B→A in the same tick).
@@ -566,7 +567,7 @@ let _btTriedFingerprints = new Map();   // tick → Set of canonical fingerprint
 let _btMatchingCache = null;            // Array of all valid matchings for current tick (or null)
 let _btMatchingIndex = 0;              // next matching to try from _btMatchingCache
 let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (invalidate on change)
-// _btStaleRetries removed — combinatorial exhaustion replaces stale detection
+let _btStaleRetries = 0;               // consecutive retries with no new fingerprint/exclusion
 
 // ── Face assignment enumeration (greedy + ranked alternatives) ──
 // During backtracking, enumerate ALL valid (xon, face, quarkType) assignments.
@@ -574,10 +575,6 @@ let _btMatchingCacheLedgerSize = 0;    // ledger size when cache was built (inva
 let _btFaceAssignCache = null;         // Array of valid assignment combos [{xon, face, quarkType, score}[]]
 let _btFaceAssignIndex = 0;            // next face assignment combo to try
 let _btFaceAssignLedgerSize = 0;       // ledger size when cache was built
-let _btTriedDestTuples = null;         // Set<string> of destination-tuple keys tried for current matching (dedup)
-let _btVacuumConflictClauses = null;   // Array of {faces: Set<faceId>, key: string} — learned face sets that break Kepler density
-let _btPermutationIndex = 0;           // cycles through loop permutations during BFS exhaustive search
-let _btWeakStepIndex = 0;              // cycles through weak BFS first-step choices during BFS exhaustive search
 
 // ── Tunable choreography parameters (genome for GA tournament) ──
 // All hardcoded magic numbers extracted here for parameterized optimization.
@@ -678,8 +675,6 @@ const QUARK_COLORS = { pu1: 0x0040ff, pu2: 0x00ff40, pd: 0x00ffff, nd1: 0xffbf00
 // ── Color Wheel System ──
 // 8 roles at fixed 45° intervals; phase slider rotates all uniformly.
 // Opposite roles (proton↔neutron counterparts) are always 180° apart.
-// Followers equidistant from anchor: pu1(135°) and pu2(45°) both 45° from pd(90°).
-// nd1(315°) and nd2(225°) both 45° from nu(270°).
 let _colorPhaseShift = 0;
 const COLOR_ROLE_OFFSETS = {
     gluon: 0, pu2: 45, pd: 90, pu1: 135,
@@ -774,28 +769,6 @@ function _recomputeColors(phase) {
 
 // Initialize colors from wheel at default phase
 _recomputeColors(0);
-
-// ── Graph color phase system ──
-// 4 base direction angles (approximate wheel positions for default colors)
-let _graphPhaseShift = 0;
-const GRAPH_BASE_ANGLES = [180, 250, 0, 75]; // cyan, blue-violet, red, yellow-green
-const GRAPH_SC_ANGLES = { 1: 215, 2: 330, 3: 285, 4: 25, 5: 145, 6: 100 };
-
-function _recomputeGraphColors(phase) {
-    _graphPhaseShift = phase;
-    // Update base edge direction colors
-    if (typeof BASE_COLORS !== 'undefined') {
-        for (let i = 0; i < 4; i++) BASE_COLORS[i] = _getWheelColor(GRAPH_BASE_ANGLES[i] + phase);
-    }
-    // Update shortcut type colors
-    if (typeof S_COLOR !== 'undefined') {
-        for (const k of Object.keys(GRAPH_SC_ANGLES)) S_COLOR[+k] = _getWheelColor(GRAPH_SC_ANGLES[+k] + phase);
-    }
-    // Refresh graph rendering
-    if (typeof rebuildBaseLines === 'function') rebuildBaseLines();
-    if (typeof rebuildShortcutLines === 'function') rebuildShortcutLines();
-}
-_recomputeGraphColors(0);
 
 const A_SET = new Set([1, 3, 6, 8]);
 

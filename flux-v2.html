@@ -362,14 +362,34 @@
             <!-- ═══ RULES SWITCHBOARD ═══ -->
             <div id="switchboard-panel" style="margin:8px 0; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
                 <div style="font-size:9px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">Rules</div>
-                <div id="rule-relinquish-row" style="margin-bottom:2px;">
+                <div id="rule-t20-strict-row" style="margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
-                        <input type="checkbox" id="rule-relinquish-toggle" style="accent-color:#66bbff;">
-                        Active SC relinquishment
+                        <input type="checkbox" id="rule-t20-strict-toggle" style="accent-color:#ff9944;">
+                        Strict T20 (no mode-transition exemption)
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
-                        When ON, shortcuts are actively removed when xons finish loops.
-                        When OFF, shortcuts persist until the vacuum severs them to make room for new ones (energy-conserving).
+                        When ON, every xon must move every tick — no exceptions.
+                        When OFF, mode transitions (oct↔tet) are exempt from T20.
+                    </div>
+                </div>
+                <div id="rule-oct-full-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">Max full-oct ticks</span>
+                        <input type="range" id="rule-oct-full-slider" min="1" max="8" value="1" style="flex:1; accent-color:#ff9944;">
+                        <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        T79: max consecutive ticks with all 6 xons on oct nodes before forced tet assignment.
+                    </div>
+                </div>
+                <div id="rule-oct-capacity-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">Max oct occupancy</span>
+                        <input type="range" id="rule-oct-capacity-slider" min="1" max="6" value="6" style="flex:1; accent-color:#66bbff;">
+                        <span id="rule-oct-capacity-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">6</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        T55: hard max xons allowed on oct nodes simultaneously.
                     </div>
                 </div>
                 <div id="rule-gluon-mediated-row" style="margin-top:6px; margin-bottom:2px;">
@@ -468,11 +488,6 @@
                 <span id="graph-opacity-val" class="ctrl-val">21%</span>
             </div>
             <div class="ctrl-row">
-                <span class="ctrl-label">color</span>
-                <input type="range" id="graph-phase-slider" class="ctrl-slider" min="0" max="360" value="0" step="1">
-                <span id="graph-phase-val" class="ctrl-val">0°</span>
-            </div>
-            <div class="ctrl-row">
                 <span class="ctrl-label">xons</span>
                 <input type="range" id="trail-opacity-slider" class="ctrl-slider" min="1" max="100" value="100" step="1">
                 <span id="trail-opacity-val" class="ctrl-val">100%</span>
@@ -490,8 +505,8 @@
             </div>
             <div class="ctrl-row" style="margin-top:4px;">
                 <span class="ctrl-label">bg</span>
-                <input type="range" id="bg-gray-slider" class="ctrl-slider" min="0" max="100" value="17" step="1">
-                <span id="bg-gray-val" class="ctrl-val">17%</span>
+                <input type="range" id="bg-gray-slider" class="ctrl-slider" min="0" max="100" value="20" step="1">
+                <span id="bg-gray-val" class="ctrl-val">20%</span>
             </div>
         </div>
         <!-- ═══ COLOR ═══ -->
@@ -584,20 +599,20 @@
     <div id="toast"></div>
     <script crossorigin="anonymous" src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-    <script src="src/flux-constants.js?v=9"></script>
+    <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=68"></script>
+    <script src="src/flux-demo-state.js?v=65"></script>
     <script src="src/flux-demo-xon.js?v=11"></script>
-    <script src="src/flux-demo-backtrack.js?v=38"></script>
-    <script src="src/flux-demo-planner.js?v=35"></script>
-    <script src="src/flux-demo-ui.js?v=75"></script>
-    <script src="src/flux-demo.js?v=444"></script>
+    <script src="src/flux-demo-backtrack.js?v=30"></script>
+    <script src="src/flux-demo-planner.js?v=32"></script>
+    <script src="src/flux-demo-ui.js?v=79"></script>
+    <script src="src/flux-demo.js?v=435"></script>
     <script src="src/flux-solver-render.js?v=40"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=16"></script>
     <script src="src/flux-xons.js?v=19"></script>
-    <script src="src/flux-voids.js?v=35"></script>
+    <script src="src/flux-voids.js?v=34"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
     <script src="src/flux-tests.js?v=246"></script>
     <script>

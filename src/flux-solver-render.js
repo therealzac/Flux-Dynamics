@@ -1051,7 +1051,7 @@ const BASE_DIR_V = [
 ];
 // Base direction colors — chosen so RGB channels sum equally (achromatic balance)
 // v1=#00FFF2 (cyan), v2=#2600FF (blue-violet), v3=#FF000D (red), v4=#D9FF00 (yellow-green)
-let BASE_COLORS = [0x00FFF2, 0x2600FF, 0xFF000D, 0xD9FF00];
+const BASE_COLORS = [0x00FFF2, 0x2600FF, 0xFF000D, 0xD9FF00];
 const VOID_TET_COLOR = 0xaaaaaa;
 const VOID_OCT_COLOR = 0xffffff;
 function edgeDirIdx(i,j){

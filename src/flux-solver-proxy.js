@@ -36,7 +36,7 @@ const SolverProxy = (function() {
         }
 
         try {
-            worker = new Worker('src/flux-solver-worker.js?v=2');
+            worker = new Worker('src/flux-solver-worker.js');
         } catch (e) {
             console.warn('[SolverProxy] Worker creation failed:', e.message);
             return;

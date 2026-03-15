@@ -187,11 +187,6 @@ function _btRestoreSnapshot(snap, reverse) {
     // Clear tick-level state
     _moveRecord.clear();
     _moveTrace.length = 0;
-    // Reset live guards so they re-activate naturally on replay.
-    // Without this, guards persist activation state from the forward pass
-    // and misfire on early replay ticks (e.g. T21 checking cage SCs at tick 1
-    // when the cage hasn't been discovered yet in the replayed timeline).
-    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
 }
 
 // Extract which moves to exclude from a violation.
@@ -435,10 +430,11 @@ function _enumerateAllFaceAssignments(proposals) {
     const usedFaces = new Set();
     const current = new Array(n).fill(null);
 
-    // No cap — the search space is finite (L1/L2 lattice).
-    // Exhaustive enumeration is required for scientific correctness.
+    // Cap enumeration to prevent combinatorial explosion
+    const MAX_COMBOS = 200;
 
     function enumerate(idx) {
+        if (results.length >= MAX_COMBOS) return;
         if (idx === n) {
             // Record this combo (only assigned entries)
             const combo = current.filter(Boolean).slice();
@@ -454,6 +450,7 @@ function _enumerateAllFaceAssignments(proposals) {
             enumerate(idx + 1);
             current[idx] = null;
             usedFaces.delete(opt.face);
+            if (results.length >= MAX_COMBOS) return;
         }
 
         // Option B: skip this xon (it doesn't get a face this tick)
@@ -471,21 +468,6 @@ function _enumerateAllFaceAssignments(proposals) {
     });
 
     return results;
-}
-
-// Compute the "destination tuple key" for the current tick's tet assignments.
-// Two combos that send the same xons to the same step-1 destinations produce
-// identical occupied sets for Phase 2 oct matching, and thus identical outcomes.
-// This subsumes oct-residual dedup (same destinations ⊂ same residual) while
-// distinguishing combos where the same xons go to DIFFERENT nodes.
-//
-// assignedDests: array of {xonIdx, destNode} for each tet-assigned xon.
-// Returns a canonical string key like "0:5,2:9,3:14".
-function _destTupleKey(assignedDests) {
-    if (!assignedDests || assignedDests.length === 0) return '';
-    const parts = assignedDests.slice();
-    parts.sort((a, b) => a.xonIdx - b.xonIdx);
-    return parts.map(d => `${d.xonIdx}:${d.destNode}`).join(',');
 }
 
 // Parse a fingerprint string into structured moves array.
@@ -621,8 +603,9 @@ function _btRecordFingerprint() {
 }
 
 // Check if the current tick is provably exhausted.
-// Returns true if ALL matching × face combos have been tried.
+// Returns true if ALL matchings have been tried (no more options).
 function _btIsTickExhausted() {
+    // If we have a matching cache and we've tried all of them, exhausted
     if (_btMatchingCache !== null && _btMatchingIndex >= _btMatchingCache.length) {
         return true;
     }
@@ -643,24 +626,27 @@ function _btResetMatchingCache() {
     _btMatchingCacheLedgerSize = 0;
     _btFaceAssignCache = null;
     _btFaceAssignIndex = 0;
-    _btTriedDestTuples = null;
-    _btVacuumConflictClauses = null;
     _btFaceAssignLedgerSize = 0;
-    _btPermutationIndex = 0;
-    _btWeakStepIndex = 0;
 }
 
 // Reset per-tick backtracking state (called after a clean tick).
 // BFS state (_bfsFailTick, _bfsLayer, _bfsLayerRetries) is NOT reset here —
 // it persists across demoTick() calls until the failure tick passes.
 function _btReset() {
-    // Note: relay state variables (_relayPhase, _bfsTestRandomChoreographer, etc.)
-    // are no longer used — the combinatorial enumeration approach replaces them.
     _btRetryCount = 0;
     _btActive = false;
     _rewindRequested = false;
     _rewindViolation = null;
     _btResetMatchingCache();
+    _btStaleRetries = 0;
+    // Reset relay state on clean tick
+    _relayPhase = 'normal';
+    _bfsTestRandomChoreographer = false;
+    _relayEnumFingerprints = null;
+    _relayEnumAttempts = 0;
+    _relayEnumStale = 0;
+    _relayScoredQueue = null;
+    _relayScoredIndex = 0;
 }
 
 // Clear all BFS state (called when the failure tick finally passes or on demo restart).
@@ -674,6 +660,15 @@ function _bfsReset() {
         _btTriedFingerprints.clear();
     }
     _btResetMatchingCache();
+    _btStaleRetries = 0;
+    // Reset relay state
+    _relayPhase = 'normal';
+    _bfsTestRandomChoreographer = false;
+    _relayEnumFingerprints = null;
+    _relayEnumAttempts = 0;
+    _relayEnumStale = 0;
+    _relayScoredQueue = null;
+    _relayScoredIndex = 0;
 }
 
 // Score a fingerprint for choreographer preference ordering.

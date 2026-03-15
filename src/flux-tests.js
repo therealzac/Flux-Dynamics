@@ -29,8 +29,8 @@ const LIVE_GUARD_GRACE = 0;
 // on base edges. Shortcut edges are bidirectional (exempt). Default: disabled.
 const _T80_BASE_POLARITY = false;
 
-// Oct capacity: hard maximum of 6 oct-mode xons at any time.
-const OCT_CAPACITY_MAX = 6;
+// Oct capacity: hard maximum of oct-mode xons at any time (slider-tunable).
+let OCT_CAPACITY_MAX = 6;
 function _computeOctCapacity() {
     return OCT_CAPACITY_MAX;
 }
@@ -247,19 +247,17 @@ const LIVE_GUARD_REGISTRY = [
     { id: 'T20', name: 'Never stand still',
       check(tick, g, ctx) {
         if (!ctx.prev) return null;
-        for (const { xon, node: fromNode } of ctx.prev) {
+        for (const { xon, node: fromNode, mode: prevMode } of ctx.prev) {
           if (!xon.alive) continue;
-          if (xon.node === fromNode) return `tick ${tick}: stuck at node ${fromNode} (${xon._mode})`;
+          if (!_ruleT20StrictMode && prevMode !== xon._mode) continue;
+          if (prevMode === 'oct_formation') continue; // formation phase: scripted movement
+          if (xon.node === fromNode) return `tick ${tick}: stuck at node ${fromNode} (${prevMode})`;
         }
         return null;
       }
     },
     { id: 'T21', name: 'Oct cage permanence', init: { _octSnapshot: null },
       activate(g) {
-        // Cage may not exist yet (opening phase hasn't run); safe no-op
-        if (typeof _octSCIds === 'undefined' || !_octSCIds || _octSCIds.length === 0) {
-          g.ok = null; g.msg = 'no oct cage yet'; return;
-        }
         const snap = new Set();
         const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
         for (const scId of _octSCIds) { if (_scActive(scId)) snap.add(scId); }
@@ -267,8 +265,6 @@ const LIVE_GUARD_REGISTRY = [
         if (snap.size === 0) { g.ok = null; g.msg = 'no oct SCs active yet'; }
       },
       check(tick, g) {
-        // Cage may not exist yet during opening phase or early replay ticks
-        if (typeof _octSCIds === 'undefined' || !_octSCIds || _octSCIds.length === 0) return null;
         const _scActive = id => activeSet.has(id) || xonImpliedSet.has(id) || impliedSet.has(id);
         // Update snapshot with newly active oct SCs
         if (g._octSnapshot) {

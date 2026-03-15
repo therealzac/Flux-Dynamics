@@ -35,10 +35,14 @@ function _tickerMetaLines() {
     if (_btActive || _bfsFailTick >= 0) {
         const fpSet = _btTriedFingerprints.get(layerTick);
         optCurrent = fpSet ? fpSet.size : 0;
-        // Total = combo space size from caches if available
-        const mCount = _btMatchingCache ? _btMatchingCache.length : 0;
-        const fCount = _btFaceAssignCache ? _btFaceAssignCache.length : 1;
-        optTotal = mCount * fCount;
+        // Total = enumerated options if available, otherwise just show tried count
+        if (_relayPhase === 'replaying' && _relayScoredQueue) {
+            optTotal = optCurrent + (_relayScoredQueue.length - _relayScoredIndex);
+        } else if (_relayPhase === 'enumerating' && _relayEnumFingerprints) {
+            optTotal = optCurrent + _relayEnumFingerprints.size;
+        } else {
+            optTotal = optCurrent; // still discovering
+        }
     }
     const optColor = _btActive ? '#66bbff' : '#556677';
     const opts = `<span style="${s} color:${optColor};">options: ${optCurrent}${optTotal > optCurrent ? '/' + optTotal : '+'}</span>`;
@@ -628,23 +632,20 @@ function updateXonPanel() {
     // Current mode counts (live)
     const now = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
     for (const x of _demoXons) { if (x.alive && now[x._mode] !== undefined) now[x._mode]++; }
-    const _toH6 = c => '#' + c.toString(16).padStart(6, '0');
-    const gluonHex = _toH6(typeof GLUON_COLOR !== 'undefined' ? GLUON_COLOR : 0x80ff00);
-    const weakHex = _toH6(typeof WEAK_FORCE_COLOR !== 'undefined' ? WEAK_FORCE_COLOR : 0x7f00ff);
     const nowParts = [];
     if (now.oct > 0) nowParts.push(`<span style="color:#fff">oct:${now.oct}</span>`);
     if (now.tet > 0) nowParts.push(`<span style="color:#5bf">tet:${now.tet}</span>`);
     if (now.idle_tet > 0) nowParts.push(`<span style="color:#888">idle:${now.idle_tet}</span>`);
-    if (now.gluon > 0) nowParts.push(`<span style="color:${gluonHex}">gluon:${now.gluon}</span>`);
-    if (now.weak > 0) nowParts.push(`<span style="color:${weakHex}">weak:${now.weak}</span>`);
+    if (now.gluon > 0) nowParts.push(`<span style="color:#80ff00">gluon:${now.gluon}</span>`);
+    if (now.weak > 0) nowParts.push(`<span style="color:#7f00ff">weak:${now.weak}</span>`);
     html += `<div style="width:100%; text-align:center; font-size:9px; margin-top:4px; letter-spacing:0.03em;">${nowParts.join(' &middot; ')}</div>`;
     // Historical running totals
     const histParts = [];
     histParts.push(`<span style="color:#aaa">oct:${g.oct}</span>`);
     histParts.push(`<span style="color:#5bf">tet:${g.tet}</span>`);
     histParts.push(`<span style="color:#888">idle:${g.idle_tet}</span>`);
-    histParts.push(`<span style="color:${gluonHex}">gluon:${g.gluon}</span>`);
-    histParts.push(`<span style="color:${weakHex}">weak:${g.weak}</span>`);
+    histParts.push(`<span style="color:#80ff00">gluon:${g.gluon}</span>`);
+    histParts.push(`<span style="color:#7f00ff">weak:${g.weak}</span>`);
     html += `<div style="width:100%; text-align:center; font-size:8px; margin-top:2px; color:var(--text-3);">totals: ${histParts.join(' &middot; ')}</div>`;
 
     listEl.innerHTML = html;
@@ -1411,15 +1412,49 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
 });
 
 // ── Rules switchboard toggles ──
-document.getElementById('rule-relinquish-toggle')?.addEventListener('change', e => {
-    _ruleRelinquishSCs = e.target.checked;
-});
-document.getElementById('rule-gluon-mediated-toggle')?.addEventListener('change', e => {
-    _ruleGluonMediatedSC = e.target.checked;
-});
-document.getElementById('rule-bare-tet-toggle')?.addEventListener('change', e => {
-    _ruleBareTetrahedra = e.target.checked;
-});
+{
+    const _t20El = document.getElementById('rule-t20-strict-toggle');
+    if (_t20El) {
+        _t20El.checked = false; // prevent browser auto-restore
+        _t20El.addEventListener('change', e => { _ruleT20StrictMode = e.target.checked; });
+    }
+}
+{
+    const _octFullEl = document.getElementById('rule-oct-full-slider');
+    if (_octFullEl) {
+        _octFullEl.value = T79_MAX_FULL_TICKS; // reset to JS default
+        _octFullEl.addEventListener('input', e => {
+            T79_MAX_FULL_TICKS = parseInt(e.target.value, 10);
+            const lbl = document.getElementById('rule-oct-full-value');
+            if (lbl) lbl.textContent = T79_MAX_FULL_TICKS;
+        });
+    }
+}
+{
+    const _octCapEl = document.getElementById('rule-oct-capacity-slider');
+    if (_octCapEl) {
+        _octCapEl.value = OCT_CAPACITY_MAX; // reset to JS default
+        _octCapEl.addEventListener('input', e => {
+            OCT_CAPACITY_MAX = parseInt(e.target.value, 10);
+            const lbl = document.getElementById('rule-oct-capacity-value');
+            if (lbl) lbl.textContent = OCT_CAPACITY_MAX;
+        });
+    }
+}
+{
+    const _gluonEl = document.getElementById('rule-gluon-mediated-toggle');
+    if (_gluonEl) {
+        _gluonEl.checked = _ruleGluonMediatedSC; // sync to JS default
+        _gluonEl.addEventListener('change', e => { _ruleGluonMediatedSC = e.target.checked; });
+    }
+}
+{
+    const _bareEl = document.getElementById('rule-bare-tet-toggle');
+    if (_bareEl) {
+        _bareEl.checked = _ruleBareTetrahedra; // sync to JS default
+        _bareEl.addEventListener('change', e => { _ruleBareTetrahedra = e.target.checked; });
+    }
+}
 
 // ── Simulation UI state: button swap + rule locking ──
 function _setSimUIActive(active) {
@@ -1428,7 +1463,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-relinquish-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }
@@ -1453,8 +1488,6 @@ document.getElementById('btn-clear-simulation')?.addEventListener('click', funct
         if (cancel) cancel.style.display = '';
         return;
     }
-    _clearSimReset();
-    if (typeof stopDemo === 'function') stopDemo();
-    _setSimUIActive(false);
+    window.location.reload();
 });
 document.getElementById('btn-clear-cancel')?.addEventListener('click', _clearSimReset);
