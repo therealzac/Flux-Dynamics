@@ -717,31 +717,69 @@ function _traceMove(xon, from, to, path) {
 
 // ── Fighterjet mode: Catmull-Rom spline + curvature easing ──────────
 // Uniform Catmull-Rom evaluation on segment p1→p2, parameter t∈[0,1].
+// Catmull-Rom spline with variable tension τ (_fjTension).
+// τ=0: flat tangents (smooth ease), τ=0.5: standard CR, τ=1: aggressive.
 // p0,p1,p2,p3 are [x,y,z] arrays. Returns [x,y,z].
 const _crOut = [0, 0, 0]; // reusable return to avoid allocation
 const _fjP3  = [0, 0, 0]; // reusable extrapolated future point
 function _catmullRom(p0, p1, p2, p3, t) {
+    const tau = _fjTension;
     const t2 = t * t, t3 = t2 * t;
-    _crOut[0] = 0.5 * ((2*p1[0]) + (-p0[0]+p2[0])*t + (2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2 + (-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
-    _crOut[1] = 0.5 * ((2*p1[1]) + (-p0[1]+p2[1])*t + (2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2 + (-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
-    _crOut[2] = 0.5 * ((2*p1[2]) + (-p0[2]+p2[2])*t + (2*p0[2]-5*p1[2]+4*p2[2]-p3[2])*t2 + (-p0[2]+3*p1[2]-3*p2[2]+p3[2])*t3);
+    const h00 = 2*t3 - 3*t2 + 1;
+    const h10 = t3 - 2*t2 + t;
+    const h01 = -2*t3 + 3*t2;
+    const h11 = t3 - t2;
+    _crOut[0] = h00*p1[0] + h10*tau*(p2[0]-p0[0]) + h01*p2[0] + h11*tau*(p3[0]-p1[0]);
+    _crOut[1] = h00*p1[1] + h10*tau*(p2[1]-p0[1]) + h01*p2[1] + h11*tau*(p3[1]-p1[1]);
+    _crOut[2] = h00*p1[2] + h10*tau*(p2[2]-p0[2]) + h01*p2[2] + h11*tau*(p3[2]-p1[2]);
     return _crOut;
 }
 
-// Curvature-blended interpolation: blend between linear and Catmull-Rom.
+// Centripetal Catmull-Rom (Barry & Goldman).
+// _fjAlpha: 0 = uniform (standard), 0.5 = centripetal, 1 = chordal.
+// More expensive than uniform CR but prevents cusps and self-intersections.
+const _ccrOut = [0, 0, 0];
+function _centripetalCR(p0, p1, p2, p3, t) {
+    function _dist2(a, b) {
+        const dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
+        return dx*dx + dy*dy + dz*dz;
+    }
+    const a = _fjAlpha * 0.5; // half-alpha for pow(dist², α/2) = pow(dist, α)
+    const d01 = Math.pow(_dist2(p0, p1), a) || 1e-6;
+    const d12 = Math.pow(_dist2(p1, p2), a) || 1e-6;
+    const d23 = Math.pow(_dist2(p2, p3), a) || 1e-6;
+    // Knot values
+    const t1 = d01;
+    const t2 = t1 + d12;
+    const t3 = t2 + d23;
+    // Remap t from [0,1] to [t1, t2]
+    const tt = t1 + t * d12;
+    // Barry-Goldman pyramid
+    for (let c = 0; c < 3; c++) {
+        const A1 = (t1 - tt) / (t1) * p0[c] + tt / t1 * p1[c];
+        const A2 = (t2 - tt) / d12 * p1[c] + (tt - t1) / d12 * p2[c];
+        const A3 = (t3 - tt) / d23 * p2[c] + (tt - t2) / d23 * p3[c];
+        const B1 = (t2 - tt) / t2 * A1 + tt / t2 * A2;
+        const B2 = (t3 - tt) / (t3 - t1) * A2 + (tt - t1) / (t3 - t1) * A3;
+        _ccrOut[c] = (t2 - tt) / d12 * B1 + (tt - t1) / d12 * B2;
+    }
+    return _ccrOut;
+}
+
+// Curvature-blended interpolation: blend between linear and CR.
 // _fjCurvature: 0 = straight line, 1 = standard CR, 2 = exaggerated.
+// Uses centripetal CR when _fjAlpha > 0, uniform CR otherwise.
 const _fjBlendOut = [0, 0, 0]; // reusable return
 function _fjBlend(p0, p1, p2, p3, t) {
     if (_fjCurvature <= 0) {
-        // Pure linear
         _fjBlendOut[0] = p1[0] + (p2[0] - p1[0]) * t;
         _fjBlendOut[1] = p1[1] + (p2[1] - p1[1]) * t;
         _fjBlendOut[2] = p1[2] + (p2[2] - p1[2]) * t;
         return _fjBlendOut;
     }
-    const cr = _catmullRom(p0, p1, p2, p3, t);
+    const cr = _fjAlpha > 0 ? _centripetalCR(p0, p1, p2, p3, t)
+                             : _catmullRom(p0, p1, p2, p3, t);
     if (_fjCurvature === 1.0) return cr;
-    // Blend: linear + curvature * (cr - linear)
     const lx = p1[0] + (p2[0] - p1[0]) * t;
     const ly = p1[1] + (p2[1] - p1[1]) * t;
     const lz = p1[2] + (p2[2] - p1[2]) * t;

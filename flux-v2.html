@@ -524,6 +524,16 @@
                 <input type="range" id="trail-curve-slider" class="ctrl-slider" min="0" max="200" value="100" step="1">
                 <span id="trail-curve-val" class="ctrl-val">100%</span>
             </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">tension</span>
+                <input type="range" id="trail-tension-slider" class="ctrl-slider" min="0" max="100" value="50" step="1">
+                <span id="trail-tension-val" class="ctrl-val">0.50</span>
+            </div>
+            <div class="ctrl-row">
+                <span class="ctrl-label">alpha</span>
+                <input type="range" id="trail-alpha-slider" class="ctrl-slider" min="0" max="100" value="0" step="1">
+                <span id="trail-alpha-val" class="ctrl-val">0.00</span>
+            </div>
             <div class="ctrl-row" style="margin-bottom:0;">
                 <span class="ctrl-label" id="orbit-toggle" style="cursor:pointer; user-select:none; color:var(--text-3);"
                       title="Click to toggle auto-orbit">orbit</span>
@@ -590,12 +600,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=82"></script>
+    <script src="src/flux-demo-state.js?v=83"></script>
     <script src="src/flux-demo-xon.js?v=13"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
     <script src="src/flux-demo-ui.js?v=105"></script>
-    <script src="src/flux-demo.js?v=462"></script>
+    <script src="src/flux-demo.js?v=463"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->

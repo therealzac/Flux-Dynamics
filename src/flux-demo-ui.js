@@ -1450,7 +1450,7 @@ function _stopMoviePlayback() {
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
 }
 
-// ── Trail curvature slider ──
+// ── Trail curve sliders ──
 {
     const _curveSlider = document.getElementById('trail-curve-slider');
     const _curveVal = document.getElementById('trail-curve-val');
@@ -1458,6 +1458,22 @@ function _stopMoviePlayback() {
         _curveSlider.addEventListener('input', e => {
             _fjCurvature = +e.target.value / 100;
             if (_curveVal) _curveVal.textContent = e.target.value + '%';
+        });
+    }
+    const _tensionSlider = document.getElementById('trail-tension-slider');
+    const _tensionVal = document.getElementById('trail-tension-val');
+    if (_tensionSlider) {
+        _tensionSlider.addEventListener('input', e => {
+            _fjTension = +e.target.value / 100;
+            if (_tensionVal) _tensionVal.textContent = _fjTension.toFixed(2);
+        });
+    }
+    const _alphaSlider = document.getElementById('trail-alpha-slider');
+    const _alphaVal = document.getElementById('trail-alpha-val');
+    if (_alphaSlider) {
+        _alphaSlider.addEventListener('input', e => {
+            _fjAlpha = +e.target.value / 100;
+            if (_alphaVal) _alphaVal.textContent = _fjAlpha.toFixed(2);
         });
     }
 }
