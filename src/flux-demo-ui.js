@@ -695,7 +695,10 @@ function resumeDemo() {
                 }
                 if (_redoStack.length > 0) {
                     _btSaveSnapshot(); // save current state so rewind can reach it
-                    const snap = _redoStack.pop();
+                    let snap = _redoStack.pop();
+                    // Safety: skip any undefined/null entries (stale IDB data)
+                    while (!snap && _redoStack.length > 0) snap = _redoStack.pop();
+                    if (!snap) { _demoInterval = null; return; }
                     _btRestoreSnapshot(snap);
                     simHalted = false;
                     // Throttle visual updates to ~30fps for buttery speed

@@ -3636,7 +3636,17 @@ async function demoTick() {
             const total = _btSnapshots.length;
             const refreshWindow = Math.min(101, Math.ceil(total * 0.51));
             const safeIdx = Math.max(0, total - refreshWindow);
-            _councilSnapArchive.length = safeIdx;          // trim stale tail
+            // If the archive is shorter than safeIdx (e.g. after a replay
+            // where no archive entries were created), backfill the gap from
+            // _btSnapshots so we don't leave undefined holes.
+            const archiveLen = _councilSnapArchive.length;
+            if (archiveLen < safeIdx) {
+                for (let i = archiveLen; i < safeIdx; i++) {
+                    _councilSnapArchive.push(_serializeSnapshot(_btSnapshots[i]));
+                }
+            } else {
+                _councilSnapArchive.length = safeIdx;      // trim stale tail
+            }
             for (let i = safeIdx; i < total; i++) {
                 _councilSnapArchive.push(_serializeSnapshot(_btSnapshots[i]));
             }

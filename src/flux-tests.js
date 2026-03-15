@@ -3282,39 +3282,51 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         NucleusSimulator.simulateNucleus();
         await new Promise(r => setTimeout(r, 100));
         _bfsTestRandomChoreographer = false; // GC mode
-        startDemoLoop();
 
-        // Council replay: hydrate from cold storage, load snapshots into redo stack.
-        // When redo exhausts, resumeDemo transitions to live demoTick (save game).
+        // Council replay: hydrate from cold storage BEFORE starting the demo
+        // loop. The await yields to the event loop — if startDemoLoop() ran
+        // first, the uncapped tick loop would execute live ticks during the
+        // IDB read, corrupting the fresh state.
+        let _replaySnapshots = null;
         if (_replayOnFirstSeed) {
             if (_replayOnFirstSeed._cold) {
                 await _hydrateCouncilMember(lvl, _replayOnFirstSeed);
             }
             if (_replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
-                _redoStack.length = 0;
-                for (let i = _replayOnFirstSeed.snapshots.length - 1; i >= 0; i--) {
-                    _redoStack.push(_replayOnFirstSeed.snapshots[i]);
-                }
-                console.log(`%c[REPLAY] Loaded ${_replayOnFirstSeed.snapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
-                // Stop the live demoTick interval so resumeDemo() can start
-                // the redo-stack drain instead of resuming live ticks.
-                if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
-                if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-                pauseDemo();
-                _testRunning = false; // enable rendering for entire replay seed
-                // Ensure opacity defaults are applied for replay visuals
-                const _replayOpDefaults = [
-                    ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
-                    ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
-                    ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
-                    ['orbit-speed-slider', 8],
-                ];
-                for (const [id, val] of _replayOpDefaults) {
-                    const el = document.getElementById(id);
-                    if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
-                }
-                resumeDemo();
+                // Stash snapshots — startDemoLoop() clears _redoStack,
+                // so we populate it AFTER the loop initializes.
+                _replaySnapshots = _replayOnFirstSeed.snapshots;
             }
+        }
+
+        startDemoLoop();
+
+        // Now that startDemoLoop has initialized everything (xons, lattice,
+        // seed, etc.) and cleared _redoStack, populate redo from the stashed
+        // snapshots and switch to redo-drain mode.
+        if (_replaySnapshots) {
+            _redoStack.length = 0;
+            for (let i = _replaySnapshots.length - 1; i >= 0; i--) {
+                _redoStack.push(_replaySnapshots[i]);
+            }
+            console.log(`%c[REPLAY] Loaded ${_replaySnapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
+            // Kill the live tick loop so resumeDemo() starts redo drain instead
+            if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+            if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+            pauseDemo();
+            _testRunning = false; // enable rendering for entire replay seed
+            // Ensure opacity defaults are applied for replay visuals
+            const _replayOpDefaults = [
+                ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
+                ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
+                ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
+                ['orbit-speed-slider', 8],
+            ];
+            for (const [id, val] of _replayOpDefaults) {
+                const el = document.getElementById(id);
+                if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
+            }
+            resumeDemo();
         }
 
         // Poll for completion
@@ -3392,8 +3404,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                 _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
                 _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
                 if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                // Save full snapshot data to cold IDB storage
-                const snapsCopy = _btSnapshots.map(s => _deserializeSnapshot(_serializeSnapshot(s)));
+                // Save full snapshot data to cold IDB storage.
+                // Use _councilSnapArchive (forward-only, never popped by backtracking)
+                // instead of _btSnapshots which may be truncated if the backtracker
+                // rewound before termination.
+                const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
                 _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
                 // Delete evicted members from cold storage
                 for (const ps of prevSeeds) {
