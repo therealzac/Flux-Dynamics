@@ -319,25 +319,55 @@ function _xonHas2ndMove(xon, futureNode, projected, tetPlans, octPlans) {
 }
 
 // ── Single-Move Guard Check ──
-// Checks backtracker exclusion only. Projected guards were removed (redundant
-// with post-move check() and caused false-positive poisoning of unrelated xons).
+// Checks backtracker exclusion + optional projected guard pre-validation.
 function _moveViolatesGuards(xon, fromNode, toNode) {
     if (_btActive) {
         const xonIdx = _demoXons.indexOf(xon);
         if (_btIsMoveExcluded(xonIdx, toNode)) return true;
+    }
+    if (_ruleProjectedGuards) {
+        const futures = [];
+        for (const x of _demoXons) {
+            if (!x.alive) continue;
+            futures.push({
+                xon: x,
+                futureNode: x === xon ? toNode : x.node,
+                fromNode: x === xon ? fromNode : x.node,
+                futureMode: x._mode,
+                futureColor: x.col,
+            });
+        }
+        if (_validateProjectedGuards(futures).length > 0) return true;
     }
     return false;
 }
 
 // ── Detailed guard violation checker (for decision ledger logging) ──
 // Returns an array of {reason} objects explaining why a move is blocked,
-// or empty array if the move is allowed. Only checks backtracker exclusion.
+// or empty array if the move is allowed.
 function _moveViolatesGuardsDetailed(xon, fromNode, toNode) {
     const reasons = [];
     if (_btActive) {
         const xonIdx = _demoXons.indexOf(xon);
         if (_btIsMoveExcluded(xonIdx, toNode)) {
             reasons.push({ reason: 'backtracker-excluded' });
+        }
+    }
+    if (_ruleProjectedGuards) {
+        const futures = [];
+        for (const x of _demoXons) {
+            if (!x.alive) continue;
+            futures.push({
+                xon: x,
+                futureNode: x === xon ? toNode : x.node,
+                fromNode: x === xon ? fromNode : x.node,
+                futureMode: x._mode,
+                futureColor: x.col,
+            });
+        }
+        const violations = _validateProjectedGuards(futures);
+        for (const v of violations) {
+            reasons.push({ reason: `PROJECTED:${v.guard || '?'}: ${v.msg || JSON.stringify(v)}` });
         }
     }
     return reasons;
@@ -382,8 +412,22 @@ function _logWeakDecisionLedger(xon, occupied) {
     console.error(lines.join('\n'));
 }
 
-// _validateProjectedGuards: Removed — projected guards were redundant with
-// post-move check() and caused false-positive poisoning of unrelated xons' moves.
+// ── Projected Guard Validator ──
+// Iterates the PROJECTED_GUARD_CHECKS array (defined in flux-tests.js).
+// Each check function receives the projected xon states and returns violations.
+// Gated by _ruleProjectedGuards toggle (switchboard).
+function _validateProjectedGuards(xonFutures) {
+    if (typeof PROJECTED_GUARD_CHECKS === 'undefined' || !PROJECTED_GUARD_CHECKS.length) return [];
+    const violations = [];
+    for (const check of PROJECTED_GUARD_CHECKS) {
+        const result = check(xonFutures);
+        if (result) {
+            const items = Array.isArray(result) ? result : [result];
+            for (const v of items) if (v) violations.push(v);
+        }
+    }
+    return violations;
+}
 
 // _verifyPlan: Removed — backtracker handles downstream violations
 // function _verifyPlan(tetPlans, octPlans) { ... }

@@ -2833,10 +2833,16 @@ function _blIDBOpen() {
     });
 }
 
-// Canonical rule key: deterministic string from lattice level + all rule toggles
+// Canonical rule key: deterministic fingerprint of the ENTIRE rule config + snapshot version.
+// If ANY config value differs, data goes into a separate IDB bucket.
 function _blacklistRuleKey(lvl) {
-    return `L${lvl}|t20=${_ruleT20StrictMode ? 1 : 0}|oct=${T79_MAX_FULL_TICKS}|cap=${OCT_CAPACITY_MAX}` +
-        `|glu=${_ruleGluonMediatedSC ? 1 : 0}|bare=${_ruleBareTetrahedra ? 1 : 0}`;
+    return `v${_SNAPSHOT_VERSION}|L${lvl}` +
+        `|t20=${_ruleT20StrictMode ? 1 : 0}` +
+        `|oct=${T79_MAX_FULL_TICKS}` +
+        `|cap=${OCT_CAPACITY_MAX}` +
+        `|glu=${_ruleGluonMediatedSC ? 1 : 0}` +
+        `|bare=${_ruleBareTetrahedra ? 1 : 0}` +
+        `|proj=${_ruleProjectedGuards ? 1 : 0}`;
 }
 
 // Load blacklist from IndexedDB for current rules

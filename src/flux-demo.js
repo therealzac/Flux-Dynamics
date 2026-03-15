@@ -1972,12 +1972,6 @@ async function demoTick() {
 
     // T60 consistency: ensure ejected xons stay in weak mode.
     // If any code path set mode='oct' while _t60Ejected > 0, correct it here.
-    // Debug: log xon state on first tick after save game restore
-    if (_demoTick > 0 && !window._sgDebugDone && _maxTickReached > 10) {
-        window._sgDebugDone = true;
-        console.log('%c[SAVEGAME DEBUG] First live tick ' + _demoTick + ' — xon state:', 'color:orange',
-            _demoXons.map((x, i) => `x${i}:${x._mode}(t60=${x._t60Ejected},face=${x._assignedFace})`).join(' | '));
-    }
     for (const xon of _demoXons) {
         if (!xon.alive) continue;
         if (xon._t60Ejected && xon._mode !== 'weak') {

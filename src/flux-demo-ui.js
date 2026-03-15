@@ -1451,8 +1451,8 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
 {
     const _t20El = document.getElementById('rule-t20-strict-toggle');
     if (_t20El) {
-        _t20El.checked = false; // prevent browser auto-restore
-        _t20El.addEventListener('change', e => { _ruleT20StrictMode = e.target.checked; });
+        _t20El.checked = _ruleT20StrictMode; // sync to JS default
+        _t20El.addEventListener('change', e => { _ruleT20StrictMode = e.target.checked; _populateCouncilDropdown(); });
     }
 }
 {
@@ -1463,6 +1463,7 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
             T79_MAX_FULL_TICKS = parseInt(e.target.value, 10);
             const lbl = document.getElementById('rule-oct-full-value');
             if (lbl) lbl.textContent = T79_MAX_FULL_TICKS;
+            _populateCouncilDropdown();
         });
     }
 }
@@ -1474,6 +1475,7 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
             OCT_CAPACITY_MAX = parseInt(e.target.value, 10);
             const lbl = document.getElementById('rule-oct-capacity-value');
             if (lbl) lbl.textContent = OCT_CAPACITY_MAX;
+            _populateCouncilDropdown();
         });
     }
 }
@@ -1481,15 +1483,37 @@ document.getElementById('fighterjet-toggle')?.addEventListener('change', e => {
     const _gluonEl = document.getElementById('rule-gluon-mediated-toggle');
     if (_gluonEl) {
         _gluonEl.checked = _ruleGluonMediatedSC; // sync to JS default
-        _gluonEl.addEventListener('change', e => { _ruleGluonMediatedSC = e.target.checked; });
+        _gluonEl.addEventListener('change', e => { _ruleGluonMediatedSC = e.target.checked; _populateCouncilDropdown(); });
     }
 }
 {
     const _bareEl = document.getElementById('rule-bare-tet-toggle');
     if (_bareEl) {
         _bareEl.checked = _ruleBareTetrahedra; // sync to JS default
-        _bareEl.addEventListener('change', e => { _ruleBareTetrahedra = e.target.checked; });
+        _bareEl.addEventListener('change', e => { _ruleBareTetrahedra = e.target.checked; _populateCouncilDropdown(); });
     }
+    const _projGuardEl = document.getElementById('rule-projected-guards-toggle');
+    if (_projGuardEl) {
+        _projGuardEl.checked = _ruleProjectedGuards;
+        _projGuardEl.addEventListener('change', e => { _ruleProjectedGuards = e.target.checked; _populateCouncilDropdown(); });
+    }
+    // Prevent browser form restoration from desynccing checkboxes.
+    // Browsers restore checkbox states AFTER DOMContentLoaded and sometimes after pageshow.
+    // Use load + setTimeout(0) to run after all restoration is complete.
+    // Force DOM to match JS defaults (the source of truth).
+    const _forceSyncToggles = () => {
+        for (const [id, getter] of [
+            ['rule-t20-strict-toggle', () => _ruleT20StrictMode],
+            ['rule-gluon-mediated-toggle', () => _ruleGluonMediatedSC],
+            ['rule-bare-tet-toggle', () => _ruleBareTetrahedra],
+            ['rule-projected-guards-toggle', () => _ruleProjectedGuards],
+        ]) {
+            const el = document.getElementById(id);
+            if (el) el.checked = getter();
+        }
+    };
+    window.addEventListener('load', () => setTimeout(_forceSyncToggles, 0));
+    window.addEventListener('pageshow', () => setTimeout(_forceSyncToggles, 0));
 }
 
 // ── Simulation UI state: button swap + rule locking ──
@@ -1499,7 +1523,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

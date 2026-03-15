@@ -25,7 +25,7 @@ function _btPruneSnapshot(snap) {
 // Save a full snapshot of choreography state before a tick executes.
 function _btSaveSnapshot() {
     const snap = {
-        _v: 2, // snapshot version (v2 = includes nucleus topology)
+        _v: _SNAPSHOT_VERSION, // snapshot version — separates IDB keyspaces
         tick: _demoTick,
         openingPhase: _openingPhase,
         // Per-xon state (deep copy of mutable fields)

@@ -413,6 +413,8 @@ let _flashEnabled = false;
 // collide with matched ones. Re-enable for optimal throughput once the
 // collision bug is fixed.
 let _kuhnEnabled = false;
+let _ruleProjectedGuards = false; // When true, projected guards gate candidate moves pre-execution
+const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
 
 // ── Fighterjet mode: smooth Catmull-Rom spline flight paths ──────────
 let _fighterjetMode = true;
