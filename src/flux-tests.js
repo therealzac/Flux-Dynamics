@@ -3532,7 +3532,7 @@ async function _clearCacheExecute() {
 // Save the current in-progress run as a council member (even if it hasn't terminated)
 function _saveCurrentRunToCouncil() {
     if (!_sweepSeedMoves || _sweepSeedMoves.size === 0) return;
-    const seed = _forceSeed || 0;
+    const seed = _forceSeed || _runSeed || 0;
     const peak = Math.max(_demoTick || 0, _maxTickReached || 0);
     const maxSize = _goldenCouncilSize();
     const lowestPeak = _sweepGoldenCouncil.length >= maxSize
