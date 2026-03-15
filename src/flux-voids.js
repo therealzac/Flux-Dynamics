@@ -734,43 +734,64 @@ function buildBranes() {
     const slider = document.getElementById('brane-opacity-slider');
     const baseOp = slider ? +slider.value / 100 : 0.05;
 
-    // BFS from all oct nodes to assign every lattice node a distance
-    const dist = new Int32Array(N).fill(-1);
-    const queue = [];
+    // Compute oct centroid
+    const cx = [], cy = [], cz = [];
     for (const ni of _octNodeSet) {
-        dist[ni] = 0;
-        queue.push(ni);
+        cx.push(REST[ni][0]); cy.push(REST[ni][1]); cz.push(REST[ni][2]);
     }
-    let qi = 0;
-    let maxBFS = 0;
-    while (qi < queue.length) {
-        const curr = queue[qi++];
+    const centX = cx.reduce((a, b) => a + b, 0) / cx.length;
+    const centY = cy.reduce((a, b) => a + b, 0) / cy.length;
+    const centZ = cz.reduce((a, b) => a + b, 0) / cz.length;
+
+    // Compute Euclidean distance from centroid for every node
+    const eucDist = new Float64Array(N);
+    let maxEuc = 0;
+    for (let i = 0; i < N; i++) {
+        const dx = REST[i][0] - centX, dy = REST[i][1] - centY, dz = REST[i][2] - centZ;
+        eucDist[i] = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (eucDist[i] > maxEuc) maxEuc = eucDist[i];
+    }
+
+    // Find the min distance of non-oct nodes (exclude oct nodes themselves)
+    let minNonOct = Infinity;
+    for (let i = 0; i < N; i++) {
+        if (!_octNodeSet.has(i) && eucDist[i] < minNonOct) minNonOct = eucDist[i];
+    }
+
+    // Bin into equal-width radial bands from minNonOct to maxEuc
+    // Use BFS max distance to determine number of bands for consistent layering
+    // First do a quick BFS just to count layers
+    const bfsDist = new Int32Array(N).fill(-1);
+    const bfsQ = [];
+    for (const ni of _octNodeSet) { bfsDist[ni] = 0; bfsQ.push(ni); }
+    let qi = 0, maxBFS = 0;
+    while (qi < bfsQ.length) {
+        const curr = bfsQ[qi++];
         const nbs = baseNeighbors[curr];
         if (!nbs) continue;
         for (const nb of nbs) {
-            if (dist[nb.node] === -1) {
-                dist[nb.node] = dist[curr] + 1;
-                if (dist[nb.node] > maxBFS) maxBFS = dist[nb.node];
-                queue.push(nb.node);
+            if (bfsDist[nb.node] === -1) {
+                bfsDist[nb.node] = bfsDist[curr] + 1;
+                if (bfsDist[nb.node] > maxBFS) maxBFS = bfsDist[nb.node];
+                bfsQ.push(nb.node);
             }
         }
     }
+    const numBands = maxBFS; // one band per BFS layer (excluding oct)
+    const bandWidth = (maxEuc - minNonOct) / numBands;
 
-    // Group nodes by BFS distance
-    const shellNodes = new Map(); // distance → [nodeIdx, ...]
+    // Group non-oct nodes into radial bands
+    const shellNodes = new Map();
     for (let i = 0; i < N; i++) {
-        if (dist[i] >= 3) {
-            if (!shellNodes.has(dist[i])) shellNodes.set(dist[i], []);
-            shellNodes.get(dist[i]).push(i);
-        }
+        if (_octNodeSet.has(i)) continue;
+        const band = Math.min(numBands - 1, Math.floor((eucDist[i] - minNonOct) / bandWidth));
+        if (!shellNodes.has(band)) shellNodes.set(band, []);
+        shellNodes.get(band).push(i);
     }
 
-    // Build shells for distances 3 .. maxBFS-1 (skip outermost = wavefunction)
+    // Build shells for bands 0 .. numBands-2 (skip outermost = wavefunction)
     const distances = Array.from(shellNodes.keys()).sort((a, b) => a - b);
-    // Remove the outermost distance level (overlaps with wavefunction boundary)
-    if (distances.length > 0 && distances[distances.length - 1] === maxBFS) {
-        distances.pop();
-    }
+    if (distances.length > 0) distances.pop(); // remove outermost band
 
     for (const d of distances) {
         const nodes = shellNodes.get(d);
