@@ -2842,10 +2842,13 @@ function _blIDBOpen() {
 function _isCouncilEligible() {
     if (!_sweepActive) return true;  // manual demo = always save
     const maxSize = _goldenCouncilSize();
-    if (_sweepGoldenCouncil.length < maxSize) return true;
-    // Current seed already in council → still eligible (keep autosaving updates)
     const currentSeed = _forceSeed || _runSeed || 0;
+    // Current seed already in council → still eligible (keep autosaving updates)
     if (_sweepGoldenCouncil.some(m => m.seed === currentSeed)) return true;
+    // 50% of first place minimum to be admitted
+    const firstPlacePeak = _sweepGoldenCouncil.length > 0 ? _sweepGoldenCouncil[0].peak : 0;
+    if (firstPlacePeak > 0 && _maxTickReached < firstPlacePeak * 0.5) return false;
+    if (_sweepGoldenCouncil.length < maxSize) return true;
     return _maxTickReached > _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak;
 }
 
@@ -3403,7 +3406,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             const peak = result.maxTick || 0;
             const lowestPeak = _sweepGoldenCouncil.length >= maxSize
                 ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
-            if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
+            const firstPlacePeak = _sweepGoldenCouncil.length > 0 ? _sweepGoldenCouncil[0].peak : 0;
+            if (firstPlacePeak > 0 && peak < firstPlacePeak * 0.5) {
+                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below 50%% of first place (t${firstPlacePeak})`, 'color:#cc6666');
+            } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
                 // Collect evicted seeds before trimming
                 const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
                 // Push cold stub with moves (hot for golden boost) but no snapshots in RAM
@@ -3534,19 +3540,22 @@ function _saveCurrentRunToCouncil() {
     for (const [tick, tickMap] of _sweepSeedMoves) {
         movesCopy.set(tick, new Map(tickMap));
     }
-    if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
+    const firstPlacePeak = _sweepGoldenCouncil.length > 0 ? _sweepGoldenCouncil[0].peak : 0;
+    // Existing seed already in council can always update (don't gate updates on 50% rule)
+    const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
+    if (!existingMember && firstPlacePeak > 0 && peak < firstPlacePeak * 0.5) {
+        console.log(`%c[SAVE] Current run (peak t${peak}) rejected — below 50%% of first place (t${firstPlacePeak})`, 'color:#cc6666');
+    } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak || existingMember) {
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
         // Use forward-only archive (pre-serialized, never popped by backtracking)
         const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
-        // Check for existing seed in council
-        const existing = _sweepGoldenCouncil.find(m => m.seed === seed);
-        if (existing) {
-            existing.peak = Math.max(existing.peak, peak);
-            if (!existing.moves) existing.moves = movesCopy;
-            else { for (const [tick, tickMap] of movesCopy) { if (!existing.moves.has(tick)) existing.moves.set(tick, tickMap); } }
+        if (existingMember) {
+            existingMember.peak = Math.max(existingMember.peak, peak);
+            if (!existingMember.moves) existingMember.moves = movesCopy;
+            else { for (const [tick, tickMap] of movesCopy) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
             // Overwrite cold storage with merged data
-            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existing.moves);
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
             _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
@@ -3560,7 +3569,7 @@ function _saveCurrentRunToCouncil() {
         _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
         _blIDBSave(lvl);
         _populateCouncilDropdown();
-        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots → cold, ${existing ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
+        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots → cold, ${existingMember ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
     } else {
         console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
     }
