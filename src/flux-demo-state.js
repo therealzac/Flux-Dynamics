@@ -385,11 +385,11 @@ let _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }; // ru
 // ── Rule switches (switchboard) ────────────────────────────────────────────
 let _ruleRelinquishSCs = false; // When true, SCs actively removed after loops. When false, persist until vacuum severs.
 let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain tet face SCs instead of code-based relinquishment.
-let _ruleBareTetrahedra = false; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
+let _ruleBareTetrahedra = true; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
 let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
-let _ruleT20StrictMode = false;   // When true, T20 has no mode-transition exemption
+let _ruleT20StrictMode = true;   // When true, T20 has no mode-transition exemption
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
 // Used to prevent adjacent xon swaps (A→B while B→A in the same tick).
@@ -413,7 +413,7 @@ let _flashEnabled = false;
 // collide with matched ones. Re-enable for optimal throughput once the
 // collision bug is fixed.
 let _kuhnEnabled = false;
-let _ruleProjectedGuards = false; // When true, projected guards gate candidate moves pre-execution
+let _ruleProjectedGuards = true; // When true, projected guards gate candidate moves pre-execution
 const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
 
 // ── Fighterjet mode: smooth Catmull-Rom spline flight paths ──────────
