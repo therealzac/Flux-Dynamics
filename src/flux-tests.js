@@ -2955,6 +2955,13 @@ async function _blIDBLoad(lvl) {
                             console.log(`[Blacklist] Migration complete — council data moved to cold storage`);
                         } catch (e) { console.warn('[Migration] Failed to re-save blacklist:', e); }
                     }
+                    // Dedup: keep only the highest-peak entry per seed
+                    const seedBest = new Map();
+                    for (const m of goldenCouncil) {
+                        const existing = seedBest.get(m.seed);
+                        if (!existing || m.peak > existing.peak) seedBest.set(m.seed, m);
+                    }
+                    goldenCouncil = [...seedBest.values()].sort((a, b) => b.peak - a.peak);
                     const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
                     console.log(`[Blacklist] Loaded ${total} fingerprints + council [${peaks}] from IndexedDB`);
                     resolve({ map, total, seedIdx: data.seedIdx || 0, goldenCouncil });
@@ -3403,25 +3410,30 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             if (firstPlacePeak > 0 && peak < firstPlacePeak * 0.5) {
                 console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below 50%% of first place (t${firstPlacePeak})`, 'color:#cc6666');
             } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-                // Collect evicted seeds before trimming
-                const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
-                // Push cold stub with moves (hot for golden boost) but no snapshots in RAM
-                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
-                _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-                if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                // Save full snapshot data to cold IDB storage.
-                // Use _councilSnapArchive (forward-only, never popped by backtracking)
-                // instead of _btSnapshots which may be truncated if the backtracker
-                // rewound before termination.
                 const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
-                _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
-                // Delete evicted members from cold storage
-                for (const ps of prevSeeds) {
-                    if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
-                        _blIDBDeleteCouncilMember(lvl, ps);
+                // Dedup: if this seed already exists in council, update it instead of pushing a duplicate
+                const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
+                if (existingMember) {
+                    existingMember.peak = Math.max(existingMember.peak, peak);
+                    if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
+                    else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
+                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
+                    console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
+                } else {
+                    // Collect evicted seeds before trimming
+                    const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
+                    _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
+                    _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+                    if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
+                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
+                    // Delete evicted members from cold storage
+                    for (const ps of prevSeeds) {
+                        if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
+                            _blIDBDeleteCouncilMember(lvl, ps);
+                        }
                     }
+                    console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${_btSnapshots.length} snapshots → cold)`, 'color:#ffcc00;font-weight:bold');
                 }
-                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${_btSnapshots.length} snapshots → cold)`, 'color:#ffcc00;font-weight:bold');
             }
         }
 
@@ -3544,10 +3556,14 @@ function _saveCurrentRunToCouncil() {
         // Use forward-only archive (pre-serialized, never popped by backtracking)
         const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
         if (existingMember) {
-            existingMember.peak = Math.max(existingMember.peak, peak);
-            if (!existingMember.moves) existingMember.moves = movesCopy;
-            else { for (const [tick, tickMap] of movesCopy) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-            // Overwrite cold storage with merged data
+            // Only update if current run surpasses the existing peak (most mature wins)
+            if (peak <= existingMember.peak) {
+                console.log(`%c[SAVE] Current run (peak t${peak}) not more mature than existing (t${existingMember.peak}) — skip`, 'color:#cc8866');
+                return;
+            }
+            existingMember.peak = peak;
+            existingMember.moves = movesCopy;
+            // Overwrite cold storage with the more mature data
             _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
