@@ -547,6 +547,11 @@ function _computeTickFingerprint() {
 function _btRecordFingerprint() {
     const tick = _demoTick - 1; // tick was already incremented
     const fp = _computeTickFingerprint();
+    // Cross-seed blacklist check: skip states proven dead in previous seeds
+    if (_sweepActive && _sweepBlacklist.has(tick)) {
+        if (_sweepBlacklist.get(tick).has(fp)) return false;
+    }
+
     if (!_btTriedFingerprints.has(tick)) _btTriedFingerprints.set(tick, new Set());
     const fpSet = _btTriedFingerprints.get(tick);
     if (fpSet.has(fp)) return false;

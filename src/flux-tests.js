@@ -2419,7 +2419,13 @@ function _captureBfsRunResult() {
             [..._btBadMoveLedger].map(([t, s]) => [t, new Set(s)])
         ),
         elapsedMs: performance.now() - _searchStartTime,
+        traversalLog: _searchTraversalLog.slice(),
     };
+    _searchTraversalLog = []; // reset for next run
+    _searchEventCounter = 0;
+    _searchPathStack = [];
+    _searchParentNodeId = null;
+    _searchLastCandidates = null;
 }
 
 function _executeBfsTestRun(runIdx) {
@@ -2480,6 +2486,12 @@ async function startBfsExhaustivenessTest(latticeLevel) {
     _bfsTestComparison = null;
     _bfsTestReferenceFingerprints = null;
     _bfsTestEarlyAbort = false;
+    _searchTraversalLog = [];
+    _searchEventCounter = 0;
+    _searchPathStack = [];
+    _searchParentNodeId = null;
+    _searchLastCandidates = null;
+    _searchStartTime = performance.now();
     _setBfsTestPanelVisible(true);
     _bfsTestNovelCount = 0;
     _bfsTestNovelDetail = null;
@@ -2767,6 +2779,445 @@ function _updateBfsTestPanel(message) {
         const showExport = _bfsTestComparison && !_bfsTestComparison.earlyAbort;
         exportBtn.style.display = showExport ? 'inline-block' : 'none';
     }
+
+    // Show traversal log download button whenever comparison exists
+    if (_bfsTestComparison) {
+        let dlBtn = document.getElementById('btn-traversal-log');
+        if (!dlBtn) {
+            dlBtn = document.createElement('button');
+            dlBtn.id = 'btn-traversal-log';
+            dlBtn.textContent = 'Download Traversal Log';
+            dlBtn.style.cssText = 'margin-top:6px;padding:4px 10px;font-size:10px;cursor:pointer;' +
+                'background:#1a3a4a;color:#9abccc;border:1px solid #3a6a7a;border-radius:3px;display:block;width:100%;';
+            dlBtn.addEventListener('click', _downloadTraversalLog);
+            el.parentElement.appendChild(dlBtn);
+        }
+        dlBtn.style.display = 'block';
+    }
+}
+
+// ═══ Sweep Mode: Sequential Seeds with Cross-Seed Fingerprint Blacklist ════════
+
+// ── IndexedDB persistence for cross-session blacklist ──
+const _BL_IDB_NAME = 'FluxBlacklist';
+const _BL_IDB_VERSION = 1;
+const _BL_IDB_STORE = 'blacklists';
+let _blIDB = null;
+let _blIDBReady = false;
+
+function _blIDBOpen() {
+    return new Promise((resolve) => {
+        try {
+            const req = indexedDB.open(_BL_IDB_NAME, _BL_IDB_VERSION);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(_BL_IDB_STORE)) db.createObjectStore(_BL_IDB_STORE);
+            };
+            req.onsuccess = (e) => { _blIDB = e.target.result; _blIDBReady = true; resolve(); };
+            req.onerror = () => { console.warn('[Blacklist] IndexedDB unavailable'); resolve(); };
+        } catch (e) { resolve(); }
+    });
+}
+
+// Canonical rule key: deterministic string from lattice level + all rule toggles
+function _blacklistRuleKey(lvl) {
+    return `L${lvl}|t20=${_ruleT20StrictMode ? 1 : 0}|oct=${T79_MAX_FULL_TICKS}|cap=${OCT_CAPACITY_MAX}` +
+        `|glu=${_ruleGluonMediatedSC ? 1 : 0}|bare=${_ruleBareTetrahedra ? 1 : 0}`;
+}
+
+// Load blacklist from IndexedDB for current rules
+async function _blIDBLoad(lvl) {
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) return null;
+    const key = _blacklistRuleKey(lvl);
+    return new Promise((resolve) => {
+        try {
+            const tx = _blIDB.transaction(_BL_IDB_STORE, 'readonly');
+            const req = tx.objectStore(_BL_IDB_STORE).get(key);
+            req.onsuccess = () => {
+                const data = req.result;
+                if (data && data.entries) {
+                    // Reconstruct Map<tick, Set<fingerprint>> from stored array
+                    const map = new Map();
+                    let total = 0;
+                    for (const [tick, fps] of data.entries) {
+                        map.set(tick, new Set(fps));
+                        total += fps.length;
+                    }
+                    console.log(`[Blacklist] Loaded ${total} fingerprints across ${map.size} ticks from IndexedDB (key: ${key})`);
+                    resolve({ map, total, seedIdx: data.seedIdx || 0 });
+                } else {
+                    resolve(null);
+                }
+            };
+            req.onerror = () => resolve(null);
+        } catch (e) { resolve(null); }
+    });
+}
+
+// Save blacklist to IndexedDB (debounced)
+let _blIDBSaveTimer = null;
+function _blIDBSave(lvl) {
+    if (_blIDBSaveTimer) clearTimeout(_blIDBSaveTimer);
+    _blIDBSaveTimer = setTimeout(() => {
+        _blIDBSaveTimer = null;
+        _blIDBSaveNow(lvl);
+    }, 2000);
+}
+
+function _blIDBSaveNow(lvl) {
+    if (!_blIDB) return;
+    const key = _blacklistRuleKey(lvl);
+    // Serialize Map<tick, Set<fp>> → Array<[tick, Array<fp>]>
+    const entries = [];
+    for (const [tick, fpSet] of _sweepBlacklist) {
+        entries.push([tick, [...fpSet]]);
+    }
+    try {
+        const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
+        tx.objectStore(_BL_IDB_STORE).put({
+            key, entries,
+            total: _sweepTotalBlacklisted,
+            seedIdx: _sweepSeedIdx,
+            timestamp: new Date().toISOString(),
+        }, key);
+        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints to IndexedDB (key: ${key})`);
+    } catch (e) { console.warn('[Blacklist] Save failed:', e); }
+}
+
+async function startSweepTest(latticeLevel) {
+    if (_sweepActive || _bfsTestActive || _demoActive) return;
+    const lvl = latticeLevel || 1;
+
+    _sweepActive = true;
+    _sweepSeedIdx = 0;
+    _sweepBlacklist = new Map();
+    _sweepResults = [];
+    _sweepTotalBlacklisted = 0;
+    _searchTraversalLog = [];
+    _searchEventCounter = 0;
+    _searchPathStack = [];
+    _searchParentNodeId = null;
+    _searchLastCandidates = null;
+
+    // Set lattice level
+    const slider = document.getElementById('lattice-slider');
+    if (slider && +slider.value !== lvl) {
+        slider.value = lvl;
+        slider.dispatchEvent(new Event('input'));
+        await new Promise(r => setTimeout(r, 100));
+    }
+
+    _setBfsTestPanelVisible(true);
+    _updateSweepPanel('Loading blacklist...');
+
+    // Load persisted blacklist from IndexedDB for this rule config
+    const cached = await _blIDBLoad(lvl);
+    if (cached) {
+        _sweepBlacklist = cached.map;
+        _sweepTotalBlacklisted = cached.total;
+        _sweepSeedIdx = cached.seedIdx;
+        _updateSweepPanel(`Resumed: ${cached.total} blacklisted from ${cached.seedIdx} prior seeds`);
+    } else {
+        _updateSweepPanel('Starting sweep (fresh)...');
+    }
+
+    // Lock rules during sweep
+    if (typeof _lockRules === 'function') _lockRules(true);
+
+    const sweepStartTime = performance.now();
+
+    while (_sweepActive) {
+        const seed = _sweepSeedIdx + 1; // 1, 2, 3, ...
+        _forceSeed = seed;
+
+        // Reset per-seed state
+        simHalted = false;
+        _btBadMoveLedger.clear();
+        _btTriedFingerprints.clear();
+        _searchEventCounter = 0;
+        _searchPathStack = [];
+        _searchParentNodeId = null;
+        _searchLastCandidates = null;
+        _searchStartTime = performance.now();
+
+        // Set up nucleus and run
+        if (typeof stopDemo === 'function' && _demoActive) stopDemo();
+        NucleusSimulator.simulateNucleus();
+        await new Promise(r => setTimeout(r, 100));
+        _bfsTestRandomChoreographer = false; // GC mode
+        startDemoLoop();
+
+        // Poll for completion
+        await new Promise(resolve => {
+            const pollId = setInterval(() => {
+                _updateSweepPanel(null, sweepStartTime);
+                if (simHalted || !_demoActive || !_sweepActive) {
+                    clearInterval(pollId);
+                    resolve();
+                }
+            }, 100);
+        });
+        if (typeof stopDemo === 'function') stopDemo();
+
+        if (!_sweepActive) break; // user stopped
+
+        // Capture result
+        const result = _captureBfsRunResult();
+        result.seed = seed;
+        result.mode = 'choreographer';
+        result.seedIdx = _sweepSeedIdx;
+
+        // Add ALL tried fingerprints to blacklist (they're all dead ends if canary)
+        if (simHalted) {
+            let newBlacklisted = 0;
+            for (const [tick, fpSet] of _btTriedFingerprints) {
+                if (!_sweepBlacklist.has(tick)) _sweepBlacklist.set(tick, new Set());
+                const bl = _sweepBlacklist.get(tick);
+                for (const fp of fpSet) {
+                    if (!bl.has(fp)) {
+                        bl.add(fp);
+                        newBlacklisted++;
+                    }
+                }
+            }
+            _sweepTotalBlacklisted += newBlacklisted;
+            result.newBlacklisted = newBlacklisted;
+        } else {
+            result.newBlacklisted = 0;
+        }
+
+        _sweepResults.push(result);
+        _sweepSeedIdx++;
+
+        // Persist blacklist to IndexedDB after each seed
+        _blIDBSave(lvl);
+
+        // If NOT canary (rules satisfiable!), stop sweep
+        if (!simHalted) {
+            _updateSweepPanel('SOLUTION FOUND at seed ' + seed, sweepStartTime);
+            break;
+        }
+
+        // Brief pause between seeds
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    _sweepActive = false;
+    _forceSeed = null;
+    _bfsTestRandomChoreographer = false;
+    if (typeof _lockRules === 'function') _lockRules(false);
+    // Flush blacklist to IndexedDB immediately on sweep end
+    if (_blIDBSaveTimer) { clearTimeout(_blIDBSaveTimer); _blIDBSaveTimer = null; }
+    _blIDBSaveNow(lvl);
+    _updateSweepPanel('Sweep complete', sweepStartTime);
+}
+
+function _stopSweep() {
+    _sweepActive = false;
+}
+
+function _updateSweepPanel(message, sweepStartTime) {
+    const el = document.getElementById('bfs-test-results');
+    if (!el) return;
+
+    const totalElapsed = sweepStartTime ? ((performance.now() - sweepStartTime) / 1000).toFixed(1) : '?';
+
+    let html = '';
+
+    // Header
+    html += `<div style="color:#9abccc; font-size:11px; margin-bottom:6px;">`;
+    if (message) {
+        html += message;
+    } else {
+        html += `Seed ${_sweepSeedIdx + 1} / \u221E &mdash; tick ${_demoTick}, retries ${_totalBacktrackRetries}, ` +
+            `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}`;
+    }
+    html += `</div>`;
+
+    // Blacklist stats
+    html += `<div style="padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px; margin-bottom:6px;">`;
+    html += `<div style="font-size:10px; color:#9abccc;">` +
+        `Blacklisted: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states &middot; ` +
+        `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
+        `Total: ${totalElapsed}s</div>`;
+    html += `</div>`;
+
+    // Per-seed history (last 8)
+    const recent = _sweepResults.slice(-8).reverse();
+    for (const r of recent) {
+        const seedHex = '0x' + (r.seed >>> 0).toString(16).padStart(8, '0');
+        html += `<div style="font-size:9px; color:#7a9aaa; margin-bottom:2px; padding:2px 4px; ` +
+            `background:rgba(255,255,255,0.02); border-radius:2px;">` +
+            `Seed ${r.seedIdx + 1} (${seedHex}): ` +
+            `peak t${r.maxTick}, ${r.totalRetries} retries, ` +
+            `+${r.newBlacklisted || 0} blacklisted, ` +
+            `${(r.elapsedMs / 1000).toFixed(1)}s` +
+            `</div>`;
+    }
+
+    // Download button placeholder (listener attached after innerHTML)
+    if (_sweepResults.length > 0 && !_sweepActive) {
+        html += `<button id="btn-sweep-download" style="margin-top:6px;padding:4px 10px;font-size:10px;cursor:pointer;` +
+            `background:#1a3a4a;color:#9abccc;border:1px solid #3a6a7a;border-radius:3px;display:block;width:100%;"` +
+            `>Download Sweep Log</button>`;
+    }
+
+    el.innerHTML = html;
+
+    // Attach download listener after innerHTML is set
+    const dlBtn = document.getElementById('btn-sweep-download');
+    if (dlBtn) dlBtn.addEventListener('click', _downloadSweepLog);
+
+    // Stop button
+    let stopBtn = document.getElementById('btn-sweep-stop');
+    if (_sweepActive) {
+        if (!stopBtn) {
+            stopBtn = document.createElement('button');
+            stopBtn.id = 'btn-sweep-stop';
+            stopBtn.textContent = 'Stop Sweep';
+            stopBtn.style.cssText = 'margin-top:6px;padding:4px 10px;font-size:10px;cursor:pointer;' +
+                'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
+            stopBtn.addEventListener('click', _stopSweep);
+            el.parentElement.appendChild(stopBtn);
+        }
+        stopBtn.style.display = 'block';
+    } else if (stopBtn) {
+        stopBtn.style.display = 'none';
+    }
+
+    // Hide old traversal log button during sweep
+    const oldDlBtn = document.getElementById('btn-traversal-log');
+    if (oldDlBtn) oldDlBtn.style.display = 'none';
+}
+
+// ── Compact event encoding for download ──
+// Strips candidates from rewind events (option 1), keeps them only on success/escalation (option 2),
+// and uses compact string encoding for candidates (option 3): "node:score" or "node:score:x" if excluded.
+function _compactEvent(e) {
+    const compact = {
+        id: e.eventId, nid: e.nodeId, pid: e.parentId,
+        t: e.tick, r: e.retry, L: e.bfsLayer,
+        fp: e.fingerprint, o: e.outcome,
+    };
+    // Wall: only include type + guard ID (strip verbose details)
+    if (e.wall) {
+        const guardMatch = e.wall.details?.[0]?.match(/^(T\d+\w*)/);
+        compact.w = guardMatch ? guardMatch[1] : e.wall.type;
+    }
+    // Moves: compact "xonIdx:from>to:mode[0]" e.g. "0:9>13:o"
+    if (e.moves && e.moves.length > 0) {
+        compact.m = e.moves.map(m => m.xonIdx + ':' + m.from + '>' + m.to + ':' + m.mode[0]);
+    }
+    // Candidates: only on success/escalation/canary events (not rewinds — option 1+2)
+    if (e.outcome !== 'rewind' && e.candidates) {
+        const cc = {};
+        for (const [xi, arr] of Object.entries(e.candidates)) {
+            if (arr.length > 0) {
+                // Compact: "node:score" or "node:score:x" if excluded (option 3)
+                cc[xi] = arr.map(c => c.node + ':' + (c.score || 0) + (c.excluded ? ':x' : ''));
+            }
+        }
+        if (Object.keys(cc).length > 0) compact.c = cc;
+    }
+    // Exclusion count (not full list)
+    if (e.exclusionTotal > 0) compact.ex = e.exclusionTotal;
+    return compact;
+}
+
+function _downloadSweepLog() {
+    if (!_sweepResults || _sweepResults.length === 0) return;
+
+    const seeds = _sweepResults.map(r => ({
+        seedIdx: r.seedIdx,
+        seed: '0x' + (r.seed >>> 0).toString(16).padStart(8, '0'),
+        summary: {
+            maxTick: r.maxTick,
+            totalRetries: r.totalRetries,
+            totalFingerprints: r.totalFingerprints,
+            haltReason: r.haltReason,
+            haltViolation: r.haltViolation || '',
+            elapsedMs: Math.round(r.elapsedMs),
+            newBlacklisted: r.newBlacklisted || 0,
+        },
+        events: (r.traversalLog || []).map(_compactEvent),
+    }));
+
+    const payload = {
+        version: 4,
+        mode: 'sweep',
+        timestamp: new Date().toISOString(),
+        latticeLevel: typeof latticeLevel !== 'undefined' ? latticeLevel : '?',
+        rules: {
+            t20Strict: _ruleT20StrictMode,
+            maxFullOctTicks: T79_MAX_FULL_TICKS,
+            octCapacityMax: OCT_CAPACITY_MAX,
+            gluonMediated: _ruleGluonMediatedSC,
+            bareTetrahedra: _ruleBareTetrahedra,
+        },
+        totalSeeds: _sweepResults.length,
+        totalBlacklisted: _sweepTotalBlacklisted,
+        seeds,
+    };
+
+    // No pretty-print — compact JSON saves ~40% more
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sweep-log-L${payload.latticeLevel}-${payload.totalSeeds}seeds-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function _downloadTraversalLog() {
+    if (!_bfsTestResults || _bfsTestResults.length < 2) return;
+
+    const runs = _bfsTestResults.map(r => ({
+        mode: r.mode || 'unknown',
+        seed: '0x' + (r.seed >>> 0).toString(16).padStart(8, '0'),
+        summary: {
+            maxTick: r.maxTick,
+            totalRetries: r.totalRetries,
+            totalFingerprints: r.totalFingerprints,
+            haltReason: r.haltReason,
+            haltViolation: r.haltViolation || '',
+            elapsedMs: Math.round(r.elapsedMs),
+        },
+        events: (r.traversalLog || []).map(_compactEvent),
+    }));
+
+    const payload = {
+        version: 4,
+        timestamp: new Date().toISOString(),
+        latticeLevel: typeof latticeLevel !== 'undefined' ? latticeLevel : '?',
+        rules: {
+            t20Strict: _ruleT20StrictMode,
+            maxFullOctTicks: T79_MAX_FULL_TICKS,
+            octCapacityMax: OCT_CAPACITY_MAX,
+            gluonMediated: _ruleGluonMediatedSC,
+            bareTetrahedra: _ruleBareTetrahedra,
+        },
+        comparison: _bfsTestComparison ? {
+            identical: _bfsTestComparison.identical,
+            earlyAbort: _bfsTestComparison.earlyAbort || false,
+            novelCount: _bfsTestComparison.novelCount || 0,
+            summary: _bfsTestComparison.summary,
+        } : null,
+        runs,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `traversal-log-L${payload.latticeLevel}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }
 
 // Show/hide BFS panel and move to top of left panels during tests
@@ -2968,12 +3419,10 @@ function _exportBfsTestResults() {
 
     // Simulate button
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
-        // Use whatever lattice level is already on the slider
-        NucleusSimulator.simulateNucleus();
-        // Small delay to let lattice build, then start demo loop
-        setTimeout(function() {
-            if (NucleusSimulator.active) startDemoLoop();
-        }, 100);
+        if (_sweepActive || _bfsTestActive || _demoActive) return;
+        const slider = document.getElementById('lattice-slider');
+        const lvl = slider ? +slider.value : 2;
+        startSweepTest(lvl);
     });
 
     // Tournament button
@@ -2982,15 +3431,7 @@ function _exportBfsTestResults() {
         else startTournament();
     });
 
-    // BFS exhaustiveness test buttons (L1 and L2)
-    document.getElementById('btn-bfs-test-l1')?.addEventListener('click', function(){
-        if (_bfsTestActive) return;
-        startBfsExhaustivenessTest(1);
-    });
-    document.getElementById('btn-bfs-test-l2')?.addEventListener('click', function(){
-        if (_bfsTestActive) return;
-        startBfsExhaustivenessTest(2);
-    });
+    // (Exhaust L1/L2 buttons removed — Demo button now runs sweep)
 
     // BFS export button
     document.getElementById('btn-bfs-export')?.addEventListener('click', function(){

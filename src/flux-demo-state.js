@@ -540,6 +540,27 @@ const _scAttribution = new Map();
 // ══════════════════════════════════════════════════════════════════════════
 let _rewindRequested = false;        // set by guard check when T19/T20 fails
 let _rewindViolation = null;         // description of the violation that triggered rewind
+let _searchTraversalLog = [];        // per-event log for search space analysis
+let _searchEventCounter = 0;         // sequential event ID within a run
+let _searchPathStack = [];           // chain of success fingerprints [fp_at_t0, fp_at_t1, ...]
+let _searchParentNodeId = null;      // nodeId of current parent success event
+let _searchLastCandidates = null;    // snapshot of PHASE 2 candidates before matching
+
+// ── Sweep mode: sequential seeds with cross-seed fingerprint blacklist ──
+let _sweepActive = false;            // true during multi-seed sweep
+let _sweepSeedIdx = 0;               // current seed index (0, 1, 2, ...)
+let _sweepBlacklist = new Map();     // Map<tick, Set<fingerprint>> — cross-seed dead states
+let _sweepResults = [];              // per-seed summary results
+let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprints
+
+function _fnv1aHash(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+        h ^= str.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+}
 const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
 let _btSnapshots = [];               // stack of state snapshots (one per tick)

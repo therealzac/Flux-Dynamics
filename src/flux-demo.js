@@ -2902,11 +2902,35 @@ async function demoTick() {
         });
     }
 
+    // ── CANDIDATE SNAPSHOT (pre-exclusion) for traversal log ──
+    let _preExclusionCandidates = null;
+    if (_btActive && _searchTraversalLog) {
+        _preExclusionCandidates = {};
+        for (const plan of octPlans) {
+            const xi = _demoXons.indexOf(plan.xon);
+            _preExclusionCandidates[xi] = plan.candidates.map(c => ({
+                node: c.node, score: +(c.score?.toFixed(3) || 0),
+            }));
+        }
+    }
+
     // ── BACKTRACK EXCLUSION FILTER: remove moves that caused violations on previous attempts ──
     if (_btActive) {
         for (const plan of octPlans) {
             const xonIdx = _demoXons.indexOf(plan.xon);
             plan.candidates = plan.candidates.filter(c => !_btIsMoveExcluded(xonIdx, c.node));
+        }
+    }
+
+    // ── CANDIDATE SNAPSHOT (post-exclusion) — mark excluded candidates ──
+    if (_btActive && _searchTraversalLog && _preExclusionCandidates) {
+        _searchLastCandidates = {};
+        for (const plan of octPlans) {
+            const xi = _demoXons.indexOf(plan.xon);
+            const remaining = new Set(plan.candidates.map(c => c.node));
+            _searchLastCandidates[xi] = (_preExclusionCandidates[xi] || []).map(c => ({
+                ...c, excluded: !remaining.has(c.node),
+            }));
         }
     }
 
@@ -3509,6 +3533,31 @@ async function demoTick() {
     // fingerprints must be recorded so Test 2 (random) can detect novel solutions.
     if (!_rewindRequested && typeof _btRecordFingerprint === 'function') {
         _btRecordFingerprint();
+        // Log successful tick advancement with tree structure
+        if (_btActive && _searchTraversalLog) {
+            const successTick = _demoTick - 1;
+            const fp = typeof _computeTickFingerprint === 'function' ? _computeTickFingerprint() : '';
+            const pathKey = _searchPathStack.slice(0, successTick).join('\u2192') + ':' + fp;
+            const nodeId = _fnv1aHash(pathKey);
+            _searchTraversalLog.push({
+                eventId: _searchEventCounter++, nodeId, parentId: _searchParentNodeId,
+                tick: successTick, retry: _btRetryCount, bfsLayer: _bfsLayer,
+                relayPhase: typeof _relayPhase !== 'undefined' ? _relayPhase : 'normal',
+                fingerprint: fp, outcome: 'success', wall: null,
+                moves: _moveTrace.map(t => ({ xonIdx: t.xonIdx, from: t.from, to: t.to, mode: t.mode })),
+                candidates: _searchLastCandidates || {},
+                cumulativeExclusions: _btBadMoveLedger.has(successTick) ? [..._btBadMoveLedger.get(successTick)] : [],
+                exclusionTotal: _btBadMoveLedger.has(successTick) ? _btBadMoveLedger.get(successTick).size : 0,
+                xonPositions: _demoXons.filter(x => x && x.alive).map(x => x.node),
+                xonModes: _demoXons.filter(x => x && x.alive).map(x => x._mode),
+                activeSCs: activeSet.size + xonImpliedSet.size,
+                elapsed: _searchStartTime ? (performance.now() - _searchStartTime) / 1000 : 0,
+            });
+            // Update tree state: this success becomes the parent for the next tick
+            _searchPathStack[successTick] = fp;
+            _searchPathStack.length = successTick + 1;
+            _searchParentNodeId = nodeId;
+        }
     }
 
     // ── BACKTRACK CHECK (BFS): did guards request a rewind? ──
@@ -3531,6 +3580,43 @@ async function demoTick() {
         for (const ex of newExclusions) {
             if (!ledger.has(ex)) _addedNewExclusions = true;
             ledger.add(ex);
+        }
+
+        // Log rewind event with wall classification and tree structure
+        if (_searchTraversalLog) {
+            const fp = typeof _computeTickFingerprint === 'function' ? _computeTickFingerprint() : '';
+            let wall;
+            if (_rewindViolation && _rewindViolation.includes('Kepler')) {
+                wall = { type: 'kepler', details: [_rewindViolation],
+                    keplerDensity: typeof _actualDens !== 'undefined' ? _actualDens : null,
+                    keplerIdeal: typeof _idealDens !== 'undefined' ? _idealDens : null };
+            } else if (_rewindViolation && _rewindViolation.includes('POST-EXEC Pauli')) {
+                wall = { type: 'pauli-postexec', details: [_rewindViolation] };
+            } else {
+                // Parse guard ID from violation string (e.g. "T20: tick 4: stuck...")
+                const guardMatch = _rewindViolation?.match(/^(T\d+\w*)/);
+                if (guardMatch) {
+                    wall = { type: 'liveguard', details: [_rewindViolation] };
+                } else {
+                    wall = { type: 'other', details: [_rewindViolation || 'unknown'] };
+                }
+            }
+            const pathKey = _searchPathStack.slice(0, currentTick).join('\u2192') + ':' + fp;
+            const nodeId = _fnv1aHash(pathKey);
+            _searchTraversalLog.push({
+                eventId: _searchEventCounter++, nodeId, parentId: _searchParentNodeId,
+                tick: currentTick, retry: _btRetryCount, bfsLayer: _bfsLayer,
+                relayPhase: typeof _relayPhase !== 'undefined' ? _relayPhase : 'normal',
+                fingerprint: fp, outcome: 'rewind', wall,
+                moves: _moveTrace.map(t => ({ xonIdx: t.xonIdx, from: t.from, to: t.to, mode: t.mode })),
+                candidates: _searchLastCandidates || {},
+                cumulativeExclusions: [...ledger],
+                exclusionTotal: ledger.size,
+                xonPositions: _demoXons.filter(x => x && x.alive).map(x => x.node),
+                xonModes: _demoXons.filter(x => x && x.alive).map(x => x._mode),
+                activeSCs: activeSet.size + xonImpliedSet.size,
+                elapsed: _searchStartTime ? (performance.now() - _searchStartTime) / 1000 : 0,
+            });
         }
 
         // ── ESCALATION HELPER: attempt to go one layer deeper ──
@@ -3556,9 +3642,67 @@ async function demoTick() {
 
             const targetTick = _bfsFailTick - _bfsLayer;
 
+            // Log escalation event with tree structure
+            if (_searchTraversalLog) {
+                const escPathKey = _searchPathStack.slice(0, currentTick).join('\u2192') + ':escalate-L' + _bfsLayer;
+                const escNodeId = _fnv1aHash(escPathKey);
+                _searchTraversalLog.push({
+                    eventId: _searchEventCounter++, nodeId: escNodeId, parentId: _searchParentNodeId,
+                    tick: currentTick, retry: _btRetryCount, bfsLayer: _bfsLayer,
+                    relayPhase: typeof _relayPhase !== 'undefined' ? _relayPhase : 'normal',
+                    fingerprint: '', outcome: 'escalate',
+                    wall: { type: 'stale', details: [`escalated to layer ${_bfsLayer}, target tick ${targetTick}`] },
+                    moves: [], candidates: {},
+                    cumulativeExclusions: ledger ? [...ledger] : [],
+                    exclusionTotal: ledger ? ledger.size : 0,
+                    xonPositions: _demoXons.filter(x => x && x.alive).map(x => x.node),
+                    xonModes: _demoXons.filter(x => x && x.alive).map(x => x._mode),
+                    activeSCs: activeSet.size + xonImpliedSet.size,
+                    elapsed: _searchStartTime ? (performance.now() - _searchStartTime) / 1000 : 0,
+                });
+                // Truncate path stack to target tick and recompute parent
+                _searchPathStack.length = Math.max(0, targetTick);
+                if (_searchPathStack.length > 0) {
+                    const lastFp = _searchPathStack[_searchPathStack.length - 1];
+                    const parentKey = _searchPathStack.slice(0, -1).join('\u2192') + ':' + lastFp;
+                    _searchParentNodeId = _fnv1aHash(parentKey);
+                } else {
+                    _searchParentNodeId = null;
+                }
+            }
+
+            // ── SWEEP EARLY-OUT: If backtracker has dropped 100+ ticks below
+            // the high-water mark, this seed is stuck. Skip to next seed. ──
+            if (_sweepActive && _maxTickReached - targetTick >= 100) {
+                console.error(`%c[SWEEP SKIP] Seed backtracked 100+ ticks below peak (peak=${_maxTickReached}, target=${targetTick}). Skipping to next seed.`, 'color:orange;font-weight:bold');
+                _saveRunResult('sweep-skip', `backtracked to ${targetTick}, peak was ${_maxTickReached}`);
+                simHalted = true;
+                _btReset();
+                _bfsReset();
+                return false;
+            }
+
             // ── t=0 CANARY: If we've backed all the way past tick 0, the rules
             // are mathematically impossible. This is the ONLY true failure. ──
             if (targetTick < 0) {
+                // Log canary event with tree structure
+                if (_searchTraversalLog) {
+                    const canaryPathKey = _searchPathStack.join('\u2192') + ':canary';
+                    const canaryNodeId = _fnv1aHash(canaryPathKey);
+                    _searchTraversalLog.push({
+                        eventId: _searchEventCounter++, nodeId: canaryNodeId, parentId: _searchParentNodeId,
+                        tick: currentTick, retry: _btRetryCount, bfsLayer: _bfsLayer,
+                        relayPhase: typeof _relayPhase !== 'undefined' ? _relayPhase : 'normal',
+                        fingerprint: '', outcome: 'canary',
+                        wall: { type: 'canary', details: [_rewindViolation || 'rules impossible'] },
+                        moves: [], candidates: {},
+                        cumulativeExclusions: [], exclusionTotal: 0,
+                        xonPositions: _demoXons.filter(x => x && x.alive).map(x => x.node),
+                        xonModes: _demoXons.filter(x => x && x.alive).map(x => x._mode),
+                        activeSCs: activeSet.size + xonImpliedSet.size,
+                        elapsed: _searchStartTime ? (performance.now() - _searchStartTime) / 1000 : 0,
+                    });
+                }
                 console.error(`%c[CANARY] Rules are mathematically impossible — backtracker exhausted all possibilities to t=0. Last violation: ${_rewindViolation}`, 'color:red;font-weight:bold;font-size:14px');
                 _saveRunResult('canary-t0', _rewindViolation);
                 simHalted = true;

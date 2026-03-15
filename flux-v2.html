@@ -417,8 +417,6 @@
             <!-- Action buttons: start row (shown when no sim active) -->
             <div id="sim-start-buttons" style="display:flex; gap:6px; margin-top:4px;">
                 <button class="btn-primary" id="btn-simulate-nucleus">Demo</button>
-                <button id="btn-bfs-test-l1" style="flex:0 0 auto; padding:7px 10px; font-size:10px; font-weight:600; background:rgba(100,180,255,0.12); border:1px solid rgba(100,180,255,0.25); color:#7ab8d0; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Exhaust L1</button>
-                <button id="btn-bfs-test-l2" style="flex:0 0 auto; padding:7px 10px; font-size:10px; font-weight:600; background:rgba(255,180,100,0.12); border:1px solid rgba(255,180,100,0.25); color:#d0a87a; border-radius:4px; cursor:pointer; letter-spacing:0.04em;">Exhaust L2</button>
             </div>
             <!-- Action buttons: active row (shown when sim is running) -->
             <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px;">
@@ -601,12 +599,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=65"></script>
+    <script src="src/flux-demo-state.js?v=68"></script>
     <script src="src/flux-demo-xon.js?v=11"></script>
-    <script src="src/flux-demo-backtrack.js?v=30"></script>
+    <script src="src/flux-demo-backtrack.js?v=31"></script>
     <script src="src/flux-demo-planner.js?v=32"></script>
     <script src="src/flux-demo-ui.js?v=79"></script>
-    <script src="src/flux-demo.js?v=435"></script>
+    <script src="src/flux-demo.js?v=437"></script>
     <script src="src/flux-solver-render.js?v=40"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -614,7 +612,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=37"></script>
     <script src="src/flux-nucleus.js?v=46"></script>
-    <script src="src/flux-tests.js?v=246"></script>
+    <script src="src/flux-tests.js?v=253"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
