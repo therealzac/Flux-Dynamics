@@ -2866,7 +2866,11 @@ async function _blIDBLoad(lvl) {
                             for (const [tick, pairs] of member.moves) {
                                 moves.set(tick, new Map(pairs));
                             }
-                            goldenCouncil.push({ peak: member.peak, seed: member.seed, moves });
+                            // Deserialize snapshots if present
+                            const snapshots = member.snapshots
+                                ? member.snapshots.map(_deserializeSnapshot)
+                                : null;
+                            goldenCouncil.push({ peak: member.peak, seed: member.seed, moves, snapshots });
                         }
                     }
                     const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
@@ -2891,6 +2895,87 @@ function _blIDBSave(lvl) {
     }, 2000);
 }
 
+// Serialize a single backtracker snapshot for IndexedDB storage.
+// Converts Sets → arrays and Maps → [key, value] pairs.
+function _serializeSnapshot(snap) {
+    return {
+        _v: snap._v || 0,
+        tick: snap.tick,
+        openingPhase: snap.openingPhase,
+        xons: snap.xons, // plain objects already
+        activeSet: [...snap.activeSet],
+        xonImpliedSet: [...snap.xonImpliedSet],
+        impliedSet: [...snap.impliedSet],
+        scAttribution: [...snap.scAttribution.entries()],
+        pos: snap.pos, // array of [x,y,z] already
+        octFullConsecutive: snap.octFullConsecutive,
+        demoVisits: snap.demoVisits,
+        actualizationVisits: snap.actualizationVisits,
+        faceEdgeEpoch: snap.faceEdgeEpoch,
+        faceWasActualized: snap.faceWasActualized,
+        edgeBalance: snap.edgeBalance ? [...snap.edgeBalance].map(([k, v]) => [k, { ...v }]) : null,
+        ejectionBalance: snap.ejectionBalance ? [...snap.ejectionBalance] : null,
+        octWindingDirection: snap.octWindingDirection,
+        planckSeconds: snap.planckSeconds,
+        globalModeStats: snap.globalModeStats,
+        // Nucleus topology (v2+)
+        octNodeSet: snap.octNodeSet ? [...snap.octNodeSet] : null,
+        octSCIds: snap.octSCIds ? snap.octSCIds : null,
+        octEdgeSet: snap.octEdgeSet ? [...snap.octEdgeSet] : null,
+        nucleusTetFaceData: snap.nucleusTetFaceData || null,
+        octEquatorCycle: snap.octEquatorCycle || null,
+        octCageSCCycle: snap.octCageSCCycle || null,
+        octSeedCenter: snap.octSeedCenter != null ? snap.octSeedCenter : null,
+        octVoidIdx: snap.octVoidIdx != null ? snap.octVoidIdx : -1,
+        octAntipodal: snap.octAntipodal ? [...snap.octAntipodal] : null,
+    };
+}
+
+// Deserialize a snapshot from IndexedDB back into live format (with Sets/Maps).
+function _deserializeSnapshot(s) {
+    return {
+        _v: s._v || 0,
+        tick: s.tick,
+        openingPhase: s.openingPhase,
+        xons: s.xons.map(x => ({
+            ...x,
+            _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
+            trail: x.trail.slice(),
+            trailColHistory: x.trailColHistory.slice(),
+            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
+            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
+            _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
+            _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
+            _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
+        })),
+        activeSet: new Set(s.activeSet),
+        xonImpliedSet: new Set(s.xonImpliedSet),
+        impliedSet: new Set(s.impliedSet),
+        scAttribution: new Map(s.scAttribution),
+        pos: s.pos.map(p => [p[0], p[1], p[2]]),
+        octFullConsecutive: s.octFullConsecutive,
+        demoVisits: s.demoVisits ? JSON.parse(JSON.stringify(s.demoVisits)) : null,
+        actualizationVisits: s.actualizationVisits ? JSON.parse(JSON.stringify(s.actualizationVisits)) : null,
+        faceEdgeEpoch: s.faceEdgeEpoch ? JSON.parse(JSON.stringify(s.faceEdgeEpoch)) : null,
+        faceWasActualized: s.faceWasActualized ? { ...s.faceWasActualized } : null,
+        edgeBalance: s.edgeBalance ? new Map(s.edgeBalance.map(([k, v]) => [k, { ...v }])) : null,
+        ejectionBalance: s.ejectionBalance ? new Map(s.ejectionBalance) : null,
+        octWindingDirection: s.octWindingDirection,
+        planckSeconds: s.planckSeconds,
+        globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
+        // Nucleus topology (v2+)
+        octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
+        octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
+        octEdgeSet: s.octEdgeSet ? new Set(s.octEdgeSet) : null,
+        nucleusTetFaceData: s.nucleusTetFaceData ? JSON.parse(JSON.stringify(s.nucleusTetFaceData)) : null,
+        octEquatorCycle: s.octEquatorCycle ? s.octEquatorCycle.slice() : null,
+        octCageSCCycle: s.octCageSCCycle ? s.octCageSCCycle.slice() : null,
+        octSeedCenter: s.octSeedCenter != null ? s.octSeedCenter : null,
+        octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
+        octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
+    };
+}
+
 function _blIDBSaveNow(lvl) {
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl);
@@ -2899,13 +2984,17 @@ function _blIDBSaveNow(lvl) {
     for (const [tick, fpSet] of _sweepBlacklist) {
         entries.push([tick, [...fpSet]]);
     }
-    // Serialize golden council: Array of {peak, seed, moves: Array<[tick, Array<[xonIdx, toNode]>]>}
+    // Serialize golden council: Array of {peak, seed, moves, snapshots}
     const councilSerialized = _sweepGoldenCouncil.map(member => {
         const movesArr = [];
         for (const [tick, moveMap] of member.moves) {
             movesArr.push([tick, [...moveMap.entries()]]);
         }
-        return { peak: member.peak, seed: member.seed, moves: movesArr };
+        // Serialize snapshots if present
+        const snapsArr = member.snapshots
+            ? member.snapshots.map(_serializeSnapshot)
+            : null;
+        return { peak: member.peak, seed: member.seed, moves: movesArr, snapshots: snapsArr };
     });
     try {
         const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
@@ -3013,6 +3102,19 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _bfsTestRandomChoreographer = false; // GC mode
         startDemoLoop();
 
+        // Council replay: load snapshots into redo stack for buttery playback.
+        // When redo exhausts, resumeDemo transitions to live demoTick (save game).
+        if (_replayOnFirstSeed && _replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
+            _redoStack.length = 0;
+            for (let i = _replayOnFirstSeed.snapshots.length - 1; i >= 0; i--) {
+                _redoStack.push(_replayOnFirstSeed.snapshots[i]);
+            }
+            console.log(`%c[REPLAY] Loaded ${_replayOnFirstSeed.snapshots.length} snapshots — save game mode`, 'color:#66ccff;font-weight:bold');
+            pauseDemo();
+            _testRunning = false; // enable rendering for entire replay seed
+            resumeDemo();
+        }
+
         // Poll for completion
         await new Promise(resolve => {
             const pollId = setInterval(() => {
@@ -3069,11 +3171,38 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             const lowestPeak = _sweepGoldenCouncil.length >= maxSize
                 ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
             if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves });
+                // Deep-clone snapshots for replay (these are the full state at each tick)
+                const snapsCopy = _btSnapshots.map(s => ({
+                    ...s,
+                    xons: s.xons.map(x => ({ ...x, _loopSeq: x._loopSeq ? x._loopSeq.slice() : null, trail: x.trail.slice(), trailColHistory: x.trailColHistory.slice(), _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [], _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [], _dirBalance: x._dirBalance ? x._dirBalance.slice() : null, _modeStats: x._modeStats ? { ...x._modeStats } : null, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null })),
+                    activeSet: new Set(s.activeSet),
+                    xonImpliedSet: new Set(s.xonImpliedSet),
+                    impliedSet: new Set(s.impliedSet),
+                    scAttribution: new Map(s.scAttribution),
+                    pos: s.pos.map(p => [p[0], p[1], p[2]]),
+                    edgeBalance: s.edgeBalance ? new Map([...s.edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
+                    ejectionBalance: s.ejectionBalance ? new Map(s.ejectionBalance) : null,
+                    demoVisits: s.demoVisits ? JSON.parse(JSON.stringify(s.demoVisits)) : null,
+                    actualizationVisits: s.actualizationVisits ? JSON.parse(JSON.stringify(s.actualizationVisits)) : null,
+                    faceEdgeEpoch: s.faceEdgeEpoch ? JSON.parse(JSON.stringify(s.faceEdgeEpoch)) : null,
+                    faceWasActualized: s.faceWasActualized ? { ...s.faceWasActualized } : null,
+                    globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
+                    // Nucleus topology (deep copy Sets/Maps)
+                    octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
+                    octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
+                    octEdgeSet: s.octEdgeSet ? new Set(s.octEdgeSet) : null,
+                    nucleusTetFaceData: s.nucleusTetFaceData ? JSON.parse(JSON.stringify(s.nucleusTetFaceData)) : null,
+                    octEquatorCycle: s.octEquatorCycle ? s.octEquatorCycle.slice() : null,
+                    octCageSCCycle: s.octCageSCCycle ? s.octCageSCCycle.slice() : null,
+                    octSeedCenter: s.octSeedCenter != null ? s.octSeedCenter : null,
+                    octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
+                    octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
+                }));
+                _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, snapshots: snapsCopy });
                 _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
                 // Trim to max size
                 if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
+                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${snapsCopy.length} snapshots)`, 'color:#ffcc00;font-weight:bold');
             }
         }
 
@@ -3109,7 +3238,7 @@ function _stopSweep() {
 function _saveCurrentRunToCouncil() {
     if (!_sweepSeedMoves || _sweepSeedMoves.size === 0) return;
     const seed = _forceSeed || 0;
-    const peak = _demoTick || 0;
+    const peak = Math.max(_demoTick || 0, _maxTickReached || 0);
     const maxSize = _goldenCouncilSize();
     const lowestPeak = _sweepGoldenCouncil.length >= maxSize
         ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
@@ -3119,20 +3248,49 @@ function _saveCurrentRunToCouncil() {
         movesCopy.set(tick, new Map(tickMap));
     }
     if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-        _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy });
+        // Deep-clone snapshots for replay
+        const snapsCopy = _btSnapshots.map(s => ({
+            ...s,
+            xons: s.xons.map(x => ({ ...x, _loopSeq: x._loopSeq ? x._loopSeq.slice() : null, trail: x.trail.slice(), trailColHistory: x.trailColHistory.slice(), _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [], _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [], _dirBalance: x._dirBalance ? x._dirBalance.slice() : null, _modeStats: x._modeStats ? { ...x._modeStats } : null, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null })),
+            activeSet: new Set(s.activeSet),
+            xonImpliedSet: new Set(s.xonImpliedSet),
+            impliedSet: new Set(s.impliedSet),
+            scAttribution: new Map(s.scAttribution),
+            pos: s.pos.map(p => [p[0], p[1], p[2]]),
+            edgeBalance: s.edgeBalance ? new Map([...s.edgeBalance].map(([k, v]) => [k, { ...v }])) : null,
+            ejectionBalance: s.ejectionBalance ? new Map(s.ejectionBalance) : null,
+            demoVisits: s.demoVisits ? JSON.parse(JSON.stringify(s.demoVisits)) : null,
+            actualizationVisits: s.actualizationVisits ? JSON.parse(JSON.stringify(s.actualizationVisits)) : null,
+            faceEdgeEpoch: s.faceEdgeEpoch ? JSON.parse(JSON.stringify(s.faceEdgeEpoch)) : null,
+            faceWasActualized: s.faceWasActualized ? { ...s.faceWasActualized } : null,
+            globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
+            // Nucleus topology (deep copy Sets/Maps)
+            octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
+            octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
+            octEdgeSet: s.octEdgeSet ? new Set(s.octEdgeSet) : null,
+            nucleusTetFaceData: s.nucleusTetFaceData ? JSON.parse(JSON.stringify(s.nucleusTetFaceData)) : null,
+            octEquatorCycle: s.octEquatorCycle ? s.octEquatorCycle.slice() : null,
+            octCageSCCycle: s.octCageSCCycle ? s.octCageSCCycle.slice() : null,
+            octSeedCenter: s.octSeedCenter != null ? s.octSeedCenter : null,
+            octVoidIdx: s.octVoidIdx != null ? s.octVoidIdx : -1,
+            octAntipodal: s.octAntipodal ? new Map(s.octAntipodal) : null,
+        }));
+        _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, snapshots: snapsCopy });
         _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
         if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
         _blIDBSave(lvl);
         _populateCouncilDropdown();
-        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council`, 'color:#66cc88;font-weight:bold');
+        console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots)`, 'color:#66cc88;font-weight:bold');
     } else {
         console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
     }
 }
 
-// ── Council member replay — just starts a sweep with the member's seed first ──
+// ── Council member replay — starts a sweep with the member's seed first ──
+// Replay phase uses forced moves + guard suppression up to peak,
+// then continues as a normal greedy sweep (blacklist, council, etc.)
 function startCouncilReplay(memberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const slider = document.getElementById('lattice-slider');
@@ -3195,13 +3353,23 @@ async function _populateCouncilDropdown() {
     }
 
     sel.innerHTML = '';
+    let hasAny = false;
     for (let i = 0; i < council.length; i++) {
         const m = council[i];
+        if (!m.snapshots || m.snapshots.length === 0) continue;
+        // Require v2+ snapshots (includes nucleus topology for save-game restore)
+        if (!m.snapshots[0]._v || m.snapshots[0]._v < 2) continue;
         const seedHex = '0x' + m.seed.toString(16).padStart(8, '0');
         const opt = document.createElement('option');
         opt.value = i;
-        opt.textContent = `${seedHex} (peak t${m.peak})`;
+        opt.textContent = `${seedHex} (t${m.peak})`;
         sel.appendChild(opt);
+        hasAny = true;
+    }
+    if (!hasAny) {
+        sel.style.display = 'none';
+        btn.style.display = 'none';
+        return;
     }
     sel.style.display = '';
     btn.style.display = '';

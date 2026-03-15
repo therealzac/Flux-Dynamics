@@ -1839,6 +1839,8 @@ async function demoTick() {
         _ppoDeformationThisTick = false;
         _ppoBacktracksThisTick = 0;
     }
+    const _inReplayPhase = _sweepReplayActive && _sweepReplayMember
+        && _demoTick <= _sweepReplayMember.peak;
     _btSaveSnapshot();
     _rewindRequested = false;
     _rewindViolation = null;
@@ -1970,6 +1972,12 @@ async function demoTick() {
 
     // T60 consistency: ensure ejected xons stay in weak mode.
     // If any code path set mode='oct' while _t60Ejected > 0, correct it here.
+    // Debug: log xon state on first tick after save game restore
+    if (_demoTick > 0 && !window._sgDebugDone && _maxTickReached > 10) {
+        window._sgDebugDone = true;
+        console.log('%c[SAVEGAME DEBUG] First live tick ' + _demoTick + ' — xon state:', 'color:orange',
+            _demoXons.map((x, i) => `x${i}:${x._mode}(t60=${x._t60Ejected},face=${x._assignedFace})`).join(' | '));
+    }
     for (const xon of _demoXons) {
         if (!xon.alive) continue;
         if (xon._t60Ejected && xon._mode !== 'weak') {
@@ -3566,6 +3574,12 @@ async function demoTick() {
             _searchPathStack.length = successTick + 1;
             _searchParentNodeId = nodeId;
         }
+    }
+
+    // ── Council replay: suppress all rewinds during the happy path ──
+    if (_inReplayPhase && _rewindRequested) {
+        _rewindRequested = false;
+        _rewindViolation = null;
     }
 
     // ── BACKTRACK CHECK (BFS): did guards request a rewind? ──

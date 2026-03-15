@@ -708,9 +708,53 @@ function resumeDemo() {
                     const nextMs = Math.max(4, _getDemoIntervalMs());
                     _demoInterval = setTimeout(_forwardReplayStep, nextMs);
                 } else {
-                    // Redo exhausted — switch to live execution
+                    // Redo exhausted — switch to live execution (save game continue)
                     _demoInterval = null;
-                    _bfsReset(); _btReset();
+                    if (_sweepActive && _sweepReplayActive) {
+                        _sweepReplayActive = false;
+                        _sweepReplayMember = null;
+                        console.log('%c[REPLAY] Save game loaded — continuing live from tick ' + _demoTick, 'color:#66ccff;font-weight:bold');
+                    }
+                    // DON'T reset BFS/guards — preserve the restored state as-is.
+                    // The snapshot IS the save game; just start ticking from here.
+                    // Set high-water mark so "highest" display is correct.
+                    _maxTickReached = _demoTick;
+                    // Clear ejection flags and return weak xons to oct mode.
+                    // _t60Ejected is a one-way flag from the original run that forces
+                    // weak mode. In save-game context, resume with clean oct xons.
+                    for (const xon of _demoXons) {
+                        xon._t60Ejected = false;
+                        xon._weakLeftOct = false;
+                        xon._pendingWeakEjection = false;
+                        if (xon._mode === 'weak') {
+                            xon._mode = 'oct';
+                            xon._assignedFace = null;
+                            xon._quarkType = null;
+                            xon._loopSeq = null;
+                            xon._loopStep = 0;
+                            xon.col = 0xffffff;
+                            if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                        }
+                    }
+                    // Also patch all saved snapshots so backtracks don't re-set _t60Ejected
+                    for (const snap of _btSnapshots) {
+                        if (!snap.xons) continue;
+                        for (const sx of snap.xons) {
+                            sx._t60Ejected = false;
+                            sx._weakLeftOct = false;
+                            sx._pendingWeakEjection = false;
+                            if (sx._mode === 'weak') {
+                                sx._mode = 'oct';
+                                sx._assignedFace = null;
+                                sx._quarkType = null;
+                                sx._loopSeq = null;
+                                sx._loopStep = 0;
+                                sx.col = 0xffffff;
+                            }
+                        }
+                    }
+                    // Reset guards to grace so T83 (snapshot integrity) gets a fresh check
+                    // after the redo drain's snapshot stack is rebuilt
                     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
                     const liveMs = _getDemoIntervalMs();
                     if (liveMs === 0) {

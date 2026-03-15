@@ -565,6 +565,7 @@ let _sweepSeedMoves = null;          // Map<tick, Map<xonIdx, toNode>> — curre
 // ── Council replay: deterministic frame-by-frame replay of a council member ──
 let _sweepReplayActive = false;      // true during council member replay
 let _sweepReplayMember = null;       // council member being replayed {peak, seed, moves}
+let _councilReplayMode = false;      // true when replaying via snapshot playback (pause at end)
 
 function _goldenCouncilSize() {
     return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));

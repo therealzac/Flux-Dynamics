@@ -25,6 +25,7 @@ function _btPruneSnapshot(snap) {
 // Save a full snapshot of choreography state before a tick executes.
 function _btSaveSnapshot() {
     const snap = {
+        _v: 2, // snapshot version (v2 = includes nucleus topology)
         tick: _demoTick,
         openingPhase: _openingPhase,
         // Per-xon state (deep copy of mutable fields)
@@ -70,6 +71,16 @@ function _btSaveSnapshot() {
         planckSeconds: _planckSeconds,
         // Global mode stats (running totals)
         globalModeStats: { ..._globalModeStats },
+        // Nucleus topology (needed for save-game restore)
+        octNodeSet: _octNodeSet ? new Set(_octNodeSet) : null,
+        octSCIds: _octSCIds ? _octSCIds.slice() : null,
+        octEdgeSet: _octEdgeSet ? new Set(_octEdgeSet) : null,
+        nucleusTetFaceData: _nucleusTetFaceData ? JSON.parse(JSON.stringify(_nucleusTetFaceData)) : null,
+        octEquatorCycle: typeof _octEquatorCycle !== 'undefined' && _octEquatorCycle ? _octEquatorCycle.slice() : null,
+        octCageSCCycle: typeof _octCageSCCycle !== 'undefined' && _octCageSCCycle ? _octCageSCCycle.slice() : null,
+        octSeedCenter: typeof _octSeedCenter !== 'undefined' ? _octSeedCenter : null,
+        octVoidIdx: typeof _octVoidIdx !== 'undefined' ? _octVoidIdx : -1,
+        octAntipodal: typeof _octAntipodal !== 'undefined' && _octAntipodal ? new Map(_octAntipodal) : null,
     };
     _btSnapshots.push(snap);
 }
@@ -184,6 +195,16 @@ function _btRestoreSnapshot(snap, reverse) {
     // Restore Planck second counter
     if ('planckSeconds' in snap) _planckSeconds = snap.planckSeconds;
     if (snap.globalModeStats) _globalModeStats = { ...snap.globalModeStats };
+    // Restore nucleus topology (save-game support)
+    if (snap.octNodeSet) { _octNodeSet = new Set(snap.octNodeSet); }
+    if (snap.octSCIds) { _octSCIds = snap.octSCIds.slice(); }
+    if (snap.octEdgeSet) { _octEdgeSet = new Set(snap.octEdgeSet); }
+    if (snap.nucleusTetFaceData) { _nucleusTetFaceData = JSON.parse(JSON.stringify(snap.nucleusTetFaceData)); }
+    if (snap.octEquatorCycle) { _octEquatorCycle = snap.octEquatorCycle.slice(); }
+    if (snap.octCageSCCycle) { _octCageSCCycle = snap.octCageSCCycle.slice(); }
+    if ('octSeedCenter' in snap) { _octSeedCenter = snap.octSeedCenter; }
+    if ('octVoidIdx' in snap) { _octVoidIdx = snap.octVoidIdx; }
+    if (snap.octAntipodal) { _octAntipodal = new Map(snap.octAntipodal); }
     // Clear tick-level state
     _moveRecord.clear();
     _moveTrace.length = 0;
