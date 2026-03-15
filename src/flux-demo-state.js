@@ -701,6 +701,8 @@ const QUARK_TOPOLOGY = {
 let WEAK_FORCE_COLOR = 0x7f00ff;
 
 const XON_TRAIL_LENGTH = 250;
+const FJ_SUBS = 12; // fighterjet subdivisions per trail segment
+const XON_TRAIL_VERTS = XON_TRAIL_LENGTH * FJ_SUBS + FJ_SUBS; // max vertices in FJ mode
 
 // ── Weak Force Lifecycle Recorder ──
 // Records up to 10 full lifecycles of weak force excitations for debugging.

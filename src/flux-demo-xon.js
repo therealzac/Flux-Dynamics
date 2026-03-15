@@ -108,8 +108,8 @@ function _spawnXon(face, quarkType, sign) {
 
     // Trail line — fading vertex-colored path
     const trailGeo = new THREE.BufferGeometry();
-    const trailPos = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
-    const trailCol = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+    const trailPos = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
+    const trailCol = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
     trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
     trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
     const trailMat = new THREE.LineBasicMaterial({
@@ -312,8 +312,8 @@ function _initPersistentXons() {
         scene.add(group);
 
         const trailGeo = new THREE.BufferGeometry();
-        const trailPos = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
-        const trailCol = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+        const trailPos = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
+        const trailCol = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
         trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
         trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
         const trailMat = new THREE.LineBasicMaterial({

@@ -833,8 +833,8 @@ function _tickDemoXons(dt) {
         // so black pixels are visible against the grey background.
         if (xon.trailLine && !xon._weakTrailLine) {
             const wGeo = new THREE.BufferGeometry();
-            const wPos = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
-            const wCol = new Float32Array((XON_TRAIL_LENGTH + 1) * 3);
+            const wPos = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
+            const wCol = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
             wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
             wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
             const wMat = new THREE.LineBasicMaterial({
@@ -974,11 +974,11 @@ function _tickDemoXons(dt) {
 
         // ── Fighterjet curved trails: subdivide each segment with CR spline ──
         if (_fighterjetMode && bodyLen >= 2) {
-            const FJ_SUBS = 12; // subdivisions per trail segment
+            // FJ_SUBS defined in flux-demo-state.js
             const fp = _trailFP;
             xon._lastTrailFlashBoost = 0;
             let out = 0; // output vertex index
-            for (let vi = 0; vi < bodyLen - 1 && out < XON_TRAIL_LENGTH - FJ_SUBS - 2; vi++) {
+            for (let vi = 0; vi < bodyLen - 1 && out < XON_TRAIL_VERTS - FJ_SUBS - 2; vi++) {
                 const i = startIdx + vi;
                 // 4 control points for this segment: p0, p1(=fp[i]), p2(=fp[i+1]), p3
                 const cp1 = fp[i]     || pos[xon.trail[i]];
@@ -1002,7 +1002,7 @@ function _tickDemoXons(dt) {
                 // Check if this segment is an equatorial SC hop → use circular arc
                 const isEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.trail[i], xon.trail[i + 1]));
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
-                for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_LENGTH; s++) {
+                for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
                     let px, py, pz;
                     if (teleport) {
@@ -1050,7 +1050,7 @@ function _tickDemoXons(dt) {
             }
             // Trail head: CR-subdivide current hop up to tweenT (matches sprite path)
             // During reverse animation: skip head (trails show restored state instantly)
-            if (!xon._fjReverseFrom && out < XON_TRAIL_LENGTH - FJ_SUBS - 2 && xon.tweenT < 1 && bodyLen >= 1) {
+            if (!xon._fjReverseFrom && out < XON_TRAIL_VERTS - FJ_SUBS - 2 && xon.tweenT < 1 && bodyLen >= 1) {
                 const _hfp = _trailFP;
                 const hi = startIdx + bodyLen - 1; // last body index
                 const hp1 = _hfp[hi] || pos[xon.trail[hi]]; // prevNode pos
@@ -1069,7 +1069,7 @@ function _tickDemoXons(dt) {
                     const hcb = (headCol & 0xff) / 255;
                     const headIsEqHop = _fjEqEdgeSet && _fjEqEdgeSet.has(pairId(xon.prevNode, xon.node));
                     const headSubs = Math.max(1, Math.round(FJ_SUBS * xon.tweenT));
-                    for (let s = 1; s <= headSubs && out < XON_TRAIL_LENGTH; s++) {
+                    for (let s = 1; s <= headSubs && out < XON_TRAIL_VERTS; s++) {
                         const u = (s / FJ_SUBS) * (xon.tweenT > 0 ? 1 : 0);
                         const t = u * xon.tweenT / (headSubs / FJ_SUBS);
                         let px, py, pz;
@@ -1097,12 +1097,12 @@ function _tickDemoXons(dt) {
                     }
                 }
             }
-            xon.trailGeo.setDrawRange(0, Math.min(out, XON_TRAIL_LENGTH));
+            xon.trailGeo.setDrawRange(0, Math.min(out, XON_TRAIL_VERTS));
             xon.trailGeo.attributes.position.needsUpdate = true;
             xon.trailGeo.attributes.color.needsUpdate = true;
             if (xon._weakTrailLine) {
                 xon._weakTrailLine.material.opacity = weakOp * sparkOp;
-                xon._weakTrailLine.geometry.setDrawRange(0, Math.min(out, XON_TRAIL_LENGTH));
+                xon._weakTrailLine.geometry.setDrawRange(0, Math.min(out, XON_TRAIL_VERTS));
                 xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
                 xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
             }
@@ -1525,6 +1525,17 @@ function startDemoLoop() {
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     if (typeof _setSimUIActive === 'function') _setSimUIActive(true);
 
+    // Reset opacity sliders to HTML defaults (tournament/sweep may have overridden)
+    const _opDefaults = [
+        ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
+        ['graph-opacity-slider', 21], ['trail-opacity-slider', 100],
+        ['spark-opacity-slider', 100], ['weak-opacity-slider', 34],
+    ];
+    for (const [id, val] of _opDefaults) {
+        const el = document.getElementById(id);
+        if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
+    }
+
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();
 
@@ -1535,6 +1546,10 @@ function startDemoLoop() {
     bumpState();
     const pSolved = detectImplied();
     applyPositions(pSolved);
+    // Clear implied SCs before void check — FCC rest geometry has some SC pairs
+    // at unit distance which detectImplied promotes. These are phantom voids at t=0.
+    impliedSet.clear(); impliedBy.clear();
+    bumpState(); // invalidate void cache so updateVoidSpheres re-evaluates
     updateVoidSpheres();
 
     // Hide xon sparks/trails
