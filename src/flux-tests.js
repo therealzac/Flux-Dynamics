@@ -3293,6 +3293,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     _redoStack.push(_replayOnFirstSeed.snapshots[i]);
                 }
                 console.log(`%c[REPLAY] Loaded ${_replayOnFirstSeed.snapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
+                // Stop the live demoTick interval so resumeDemo() can start
+                // the redo-stack drain instead of resuming live ticks.
+                if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+                if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
                 pauseDemo();
                 _testRunning = false; // enable rendering for entire replay seed
                 // Ensure opacity defaults are applied for replay visuals
