@@ -472,6 +472,17 @@ PHASE 4 enforces Pauli exclusion absolutely:
 - **pairId(a,b)**: Always use this for SC edge lookup (canonical `min:max` format)
 - **_occAdd/_occDel**: Use these helpers for occupied map manipulation (count-based, not boolean)
 
+### Slider Defaults & Play-Mode Overrides
+Visualization slider defaults exist in **three places** — all three must stay in sync:
+
+1. **HTML defaults** (`flux-v2.html`): `value="..."` attributes on `<input>` sliders. These control what the user sees on page load (before pressing play).
+2. **Play-mode overrides** (`flux-demo.js`, `_opDefaults` array in `startDemoLoop()`): Force slider values when the demo starts. These can differ from HTML defaults (e.g., bg=20% on load → bg=0% on play).
+3. **Replay overrides** (`flux-tests.js`, `_replayOpDefaults` array in council replay init): Same as play-mode but for cold-storage council replays.
+
+When changing a default, decide: should it apply on load, on play, or both? Update the appropriate locations. The `_opDefaults` arrays dispatch `input` events so listeners fire.
+
+Camera defaults live in `flux-ui.js` (`sph={theta, phi, r}` and `panTarget`).
+
 ---
 
 ## 12. Roadmap
