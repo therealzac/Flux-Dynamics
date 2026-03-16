@@ -1619,6 +1619,71 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
+    // ── T94: Historical trail colors are immutable ──
+    // Once a trail segment is recorded, its role (color) must never change.
+    // Only the most recent entry (head) may be updated by _trailRecolor.
+    // All older entries are frozen history.
+    {
+      id: 'T94', name: 'Historical trail colors immutable',
+      snapshot(g) {
+        // Capture role of every trail entry except the head (which T93 covers)
+        g._t94Prev = [];
+        for (let i = 0; i < _demoXons.length; i++) {
+          const xon = _demoXons[i];
+          if (!xon.alive || !xon.trail || xon.trail.length < 2) {
+            g._t94Prev.push(null);
+            continue;
+          }
+          // Store roles of all entries except the last (head)
+          const roles = [];
+          for (let j = 0; j < xon.trail.length - 1; j++) {
+            roles.push(xon.trail[j].role);
+          }
+          g._t94Prev.push(roles);
+        }
+      },
+      check(tick, g) {
+        if (!g._t94Prev) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const xon = _demoXons[i];
+          if (!xon.alive || !xon.trail) continue;
+          const prev = g._t94Prev[i];
+          if (!prev) continue;
+          // Previous snapshot's historical entries should still be present
+          // and unchanged. They are now at the same indices (trail only grows
+          // or gets truncated from the front via shift).
+          // Trail may have shifted — compare from the end backwards.
+          // prev had trail.length-1 entries (all but head). Now trail may be longer.
+          // The entries that were historical last tick are still historical this tick
+          // (they can't become the head). Check that their roles haven't changed.
+          const curLen = xon.trail.length;
+          const prevHistLen = prev.length;
+          // If trail was truncated (shorter than prev history), skip — truncation is valid
+          if (curLen - 1 < prevHistLen) continue;
+          // The prev historical entries now start at offset (curLen - 1 - prevHistLen)
+          // because new entries may have been pushed, shifting the old ones leftward.
+          // Actually trail entries are pushed to end, so old entries stay at same index
+          // unless shifted out. Trail max length is 12, so oldest entries get shifted.
+          // Compare: prev[j] should match trail[j] for j < prevHistLen,
+          // BUT if trail shifted (grew past max), the indices shift.
+          // Simpler: compare from end. prev[prevHistLen-1] was second-to-last,
+          // now it's at trail[curLen - 2] if 1 new entry, trail[curLen-3] if 2, etc.
+          // Number of new entries pushed this tick:
+          const newEntries = curLen - 1 - prevHistLen;
+          if (newEntries < 0) continue; // trail shrunk, skip
+          for (let j = 0; j < prevHistLen; j++) {
+            const curIdx = j + newEntries;
+            if (curIdx >= curLen - 1) break; // don't check head
+            if (curIdx < 0) continue; // shifted out of trail buffer
+            if (xon.trail[curIdx].role !== prev[j]) {
+              return `tick ${tick}: X${i} trail[${curIdx}] role changed from ${prev[j]} to ${xon.trail[curIdx].role}`;
+            }
+          }
+        }
+        return null;
+      }
+    },
+
     // ── T-DirBal: Directional balance convergence ──
     // After 64 ticks, each alive xon must have used >= 3 distinct direction
     // indices in _dirBalance. Validates the balance tracking is working and
@@ -3145,7 +3210,7 @@ async function _blIDBLoad(lvl) {
                     _blLoadedBuckets = new Set();
                     const ms = (performance.now() - t0).toFixed(1);
                     console.log(`[BL] Loaded metadata: ${data.total} fps across ${_blBucketCount} buckets + council [${peaks}] in ${ms}ms`);
-                    resolve({ map: new Map(), total: data.total || 0, seedIdx: data.seedIdx || 0, goldenCouncil });
+                    resolve({ map: new Map(), total: data.total || 0, seedIdx: data.seedIdx || 0, usedSeeds: data.usedSeeds || [], goldenCouncil });
                     return;
                 }
 
@@ -3165,7 +3230,7 @@ async function _blIDBLoad(lvl) {
                     }
                     const ms = (performance.now() - t0).toFixed(1);
                     console.log(`[BL] Loaded legacy blob: ${total} fps + council [${peaks}] in ${ms}ms (will migrate on next save)`);
-                    resolve({ map, total, seedIdx: data.seedIdx || 0, goldenCouncil });
+                    resolve({ map, total, seedIdx: data.seedIdx || 0, usedSeeds: data.usedSeeds || [], goldenCouncil });
                 } else {
                     resolve(null);
                 }
@@ -3389,6 +3454,7 @@ function _blIDBSaveBlacklist(lvl) {
             bucketCount,
             total: _sweepTotalBlacklisted,
             seedIdx: _sweepSeedIdx,
+            usedSeeds: [..._sweepUsedSeeds],
             councilIndex,
             timestamp: new Date().toISOString(),
         }, baseKey);
@@ -3629,6 +3695,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
     _sweepActive = true;
     _sweepSeedIdx = 0;
+    _sweepUsedSeeds = new Set();
     _sweepBlacklist = new Map();
     _sweepResults = [];
     _sweepTotalBlacklisted = 0;
@@ -3665,6 +3732,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _sweepBlacklist = cached.map;
         _sweepTotalBlacklisted = cached.total;
         _sweepSeedIdx = cached.seedIdx;
+        _sweepUsedSeeds = new Set(cached.usedSeeds || []);
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
         }
@@ -3697,7 +3765,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         && _sweepGoldenCouncil.length > replayMemberIdx) ? _sweepGoldenCouncil[replayMemberIdx] : null;
 
     while (_sweepActive) {
-        let seed = _sweepSeedIdx + 1; // 1, 2, 3, ...
+        // Pick a random seed we haven't used yet
+        let seed;
+        do { seed = (Math.random() * 0xFFFFFFFF) >>> 0; } while (_sweepUsedSeeds.has(seed) || seed === 0);
+        _sweepUsedSeeds.add(seed);
 
         // Council replay: override first seed with the member's seed
         if (_replayOnFirstSeed) {

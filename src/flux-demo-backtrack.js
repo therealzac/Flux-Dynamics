@@ -167,31 +167,16 @@ function _btRestoreSnapshot(snap, reverse) {
             // Rewind: truncate
             if (x.trail.length > tLen) x.trail.length = tLen;
             // Recolor: role changed via wash without a push
+            // Recolor head only — historical entries are immutable (T94)
             if (s._tRecolor && x.trail.length === tLen && x.trail.length > 0) {
                 x.trail[x.trail.length - 1].role = s._tRecolor;
-                if (s._tRecolor === 'weak' || s._tRecolor === 'gluon') {
-                    for (let k = x.trail.length - 2; k >= Math.max(0, x.trail.length - XON_TRAIL_LENGTH); k--) {
-                        if (x.trail[k].role !== 'oct') break;
-                        x.trail[k].role = s._tRecolor;
-                    }
-                }
             }
             // Forward: push ALL delta entries (handles 0, 1, or 2 pushes per tick)
             if (x.trail.length < tLen && s._tDelta) {
                 for (const e of s._tDelta) {
                     x.trail.push({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] });
                 }
-                // Wash at transition — mirrors _trailRecolor in live play
-                const lastRole = x.trail[x.trail.length - 1].role;
-                if ((lastRole === 'gluon' || lastRole === 'weak') && x.trail.length >= 2) {
-                    const prevRole = x.trail[x.trail.length - s._tDelta.length - 1]?.role;
-                    if (prevRole === 'oct') {
-                        for (let k = x.trail.length - s._tDelta.length - 1; k >= Math.max(0, x.trail.length - XON_TRAIL_LENGTH); k--) {
-                            if (x.trail[k].role !== 'oct') break;
-                            x.trail[k].role = lastRole;
-                        }
-                    }
-                }
+                // Historical trail entries are immutable (T94). No backwards wash.
             }
             // Safety: if delta didn't reach target trailLen (stale snapshot), pad with current node
             while (x.trail.length < tLen) {

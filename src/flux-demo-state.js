@@ -578,7 +578,8 @@ let _searchLastCandidates = null;    // snapshot of PHASE 2 candidates before ma
 
 // ── Sweep mode: sequential seeds with cross-seed fingerprint blacklist ──
 let _sweepActive = false;            // true during multi-seed sweep
-let _sweepSeedIdx = 0;               // current seed index (0, 1, 2, ...)
+let _sweepSeedIdx = 0;               // current take number (0, 1, 2, ...)
+let _sweepUsedSeeds = new Set();     // Set of seeds already tried (prevents reuse)
 let _sweepBlacklist = new Map();     // Map<tick, Set<fingerprint>> — cross-seed dead states
 let _sweepResults = [];              // per-seed summary results
 let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprints

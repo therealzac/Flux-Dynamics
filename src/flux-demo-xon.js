@@ -64,14 +64,7 @@ function _trailRecolor(xon) {
     if (!t || t.length === 0) return;
     const newRole = _xonRole(xon);
     t[t.length - 1].role = newRole;
-    // Wash recent oct entries when transitioning to weak/gluon
-    if (newRole === 'weak' || newRole === 'gluon') {
-        const minIdx = Math.max(0, t.length - XON_TRAIL_LENGTH);
-        for (let i = t.length - 2; i >= minIdx; i--) {
-            if (t[i].role !== 'oct') break;
-            t[i].role = newRole;
-        }
-    }
+    // Historical trail entries are immutable (T94). Only the head is updated.
 }
 
 // Spawn a xon at a node with spark, trail, and tween — mirrors excitation visuals.
