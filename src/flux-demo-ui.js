@@ -545,8 +545,8 @@ function _logPhase2Summary(octPlans) {
 let _xonPanelBuilt = false;
 
 const _XP_ROLE_DISPLAY = {
-    pu1: 'Proton Up 1', pu2: 'Proton Up 2', pd: 'Proton Down',
-    nd1: 'Neutron Down 1', nd2: 'Neutron Down 2', nu: 'Neutron Up',
+    pu1: 'Prot. ▲1', pu2: 'Prot. ▲2', pd: 'Prot. ▼',
+    nd1: 'Neut. ▼1', nd2: 'Neut. ▼2', nu: 'Neut. ▲',
     oct: 'Oct', gluon: 'Gluon', weak: 'Weak',
 };
 const _XP_ROLE_INITIALS = {
@@ -570,8 +570,8 @@ function _xpPicTextColor(c) {
 
 function _buildXonPanel() {
     const _STAT_LABELS = {
-        pu1:'Proton ▲1', pu2:'Proton ▲2', pd:'Proton ▼',
-        nd1:'Neutron ▼1', nd2:'Neutron ▼2', nu:'Neutron ▲',
+        pu1:'Prot. ▲1', pu2:'Prot. ▲2', pd:'Prot. ▼',
+        nd1:'Neut. ▼1', nd2:'Neut. ▼2', nu:'Neut. ▲',
         oct:'Oct', gluon:'Gluon', weak:'Weak',
     };
     const _ALL_ROLES = ['pu1','pu2','pd','nd1','nd2','nu','oct','gluon','weak'];
@@ -1125,6 +1125,14 @@ function _playbackUpdateDisplay() {
     if (typeof updateStatus === 'function') updateStatus();
     // Force-update bottom-stats even when simHalted (updateStatus bails early)
     _updateBottomStats();
+    // Sync spark colors from role (snapshot col may be stale white from oct mode)
+    for (let i = 0; i < _demoXons.length; i++) {
+        const x = _demoXons[i];
+        if (!x || !x.alive) continue;
+        const role = typeof _xonRole === 'function' ? _xonRole(x) : 'oct';
+        const roleCol = _xpRoleColor(role);
+        if (x.col !== roleCol) { x.col = roleCol; if (x.sparkMat) x.sparkMat.color.setHex(roleCol); }
+    }
     updateDemoPanel();
     _updateEdgeBalancePanel();
     updateXonPanel();

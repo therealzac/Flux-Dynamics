@@ -3286,6 +3286,7 @@ function _serializeSnapshot(snap) {
         octWindingDirection: snap.octWindingDirection,
         planckSeconds: snap.planckSeconds,
         globalModeStats: snap.globalModeStats,
+        globalRoleStats: snap.globalRoleStats || null,
         // Nucleus topology (v2+)
         octNodeSet: snap.octNodeSet ? [...snap.octNodeSet] : null,
         octSCIds: snap.octSCIds ? snap.octSCIds : null,
@@ -3331,6 +3332,7 @@ function _deserializeSnapshot(s) {
         octWindingDirection: s.octWindingDirection,
         planckSeconds: s.planckSeconds,
         globalModeStats: s.globalModeStats ? { ...s.globalModeStats } : null,
+        globalRoleStats: s.globalRoleStats ? { ...s.globalRoleStats } : null,
         // Nucleus topology (v2+)
         octNodeSet: s.octNodeSet ? new Set(s.octNodeSet) : null,
         octSCIds: s.octSCIds ? s.octSCIds.slice() : null,
@@ -3418,23 +3420,33 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
             for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
                 const xon = snap.xons[xi];
                 // Clean trail: just this snapshot's node (+ previous clean trail from prior snapshot)
+                const role = xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
+                const roleCol = (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
+                    : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
+                    : xon.col || 0xffffff;
                 if (si === 0) {
-                    // First snapshot: single entry
                     xon.trail = [xon.node];
-                    xon.trailColHistory = [xon.col || 0xffffff];
-                    xon._trailRoleHistory = [xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct')];
-                    // Frozen pos from this snapshot's solver state
+                    xon.trailColHistory = [roleCol];
+                    xon._trailRoleHistory = [role];
                     const p = snap.pos && snap.pos[xon.node];
                     xon._trailFrozenPos = [p ? [p[0], p[1], p[2]] : [0, 0, 0]];
                 } else {
-                    // Append this snapshot's node to previous snapshot's clean trail
                     const prev = snapshots[si - 1].xons[xi];
                     xon.trail = prev.trail.concat(xon.node);
-                    xon.trailColHistory = prev.trailColHistory.concat(xon.col || 0xffffff);
-                    const role = xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
+                    xon.trailColHistory = prev.trailColHistory.concat(roleCol);
                     xon._trailRoleHistory = prev._trailRoleHistory.concat(role);
                     const p = snap.pos && snap.pos[xon.node];
                     xon._trailFrozenPos = prev._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
+                }
+                // Wash: gluon/weak trails override recent oct entries (matches _trailRecolor)
+                if (role === 'gluon' || role === 'weak') {
+                    const rh = xon._trailRoleHistory;
+                    const ch = xon.trailColHistory;
+                    for (let k = rh.length - 2; k >= 0; k--) {
+                        if (rh[k] !== 'oct') break;
+                        rh[k] = role;
+                        ch[k] = roleCol;
+                    }
                 }
             }
         }
@@ -3448,11 +3460,24 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
                     const cx = lastCold.xons[xi];
                     // Replace bloated trail prefix with clean cold trail + this snapshot's node
                     hx.trail = cx.trail.concat(hx.node);
-                    hx.trailColHistory = cx.trailColHistory.concat(hx.col || 0xffffff);
                     const role = hx._quarkType || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : 'oct');
+                    const roleCol = (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
+                        : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
+                        : hx.col || 0xffffff;
+                    hx.trailColHistory = cx.trailColHistory.concat(roleCol);
                     hx._trailRoleHistory = cx._trailRoleHistory.concat(role);
                     const p = firstHot.pos && firstHot.pos[hx.node];
                     hx._trailFrozenPos = cx._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
+                    // Wash: gluon/weak trails override recent oct entries (matches _trailRecolor)
+                    if (role === 'gluon' || role === 'weak') {
+                        const rh = hx._trailRoleHistory;
+                        const ch = hx.trailColHistory;
+                        for (let k = rh.length - 2; k >= 0; k--) {
+                            if (rh[k] !== 'oct') break;
+                            rh[k] = role;
+                            ch[k] = roleCol;
+                        }
+                    }
                 }
             }
         }

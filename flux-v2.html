@@ -150,16 +150,18 @@
         .xon-card.highlighted { background: rgba(255,255,255,0.10); }
         .xon-card { cursor: pointer; }
         /* Profile pic: colored circle with initials */
-        .card-pic { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+        .card-pic { width: 12.5%; min-width: 28px; max-width: 40px; aspect-ratio: 1; border-radius: 50%; flex-shrink: 0;
             display: flex; align-items: center; justify-content: center;
             font-family: var(--font-sans); font-weight: 700; font-size: 10px; color: rgba(255,255,255,0.65); }
         .card-pic-sm { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
             display: flex; align-items: center; justify-content: center;
             font-family: var(--font-sans); font-weight: 600; font-size: 8.5px; color: rgba(255,255,255,0.55);
             background: rgba(255,255,255,0.08); }
-        .xon-card-id { font-weight: 600; font-size: 14px; color: var(--text-2); white-space: nowrap; }
+        .xon-card-id { font-weight: 600; font-size: 14px; color: var(--text-2); white-space: nowrap;
+            width: 25%; min-width: 60px; flex-shrink: 0; }
         .xon-card-node-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
-        .role-card-name { font-weight: 600; font-size: 13px; color: var(--text-2); white-space: nowrap; }
+        .role-card-name { font-weight: 600; font-size: 13px; color: var(--text-2); white-space: nowrap;
+            width: 25%; min-width: 60px; flex-shrink: 0; }
         .op-slider { flex: 1; min-width: 0; height: 6px; appearance: none; -webkit-appearance: none;
             background: rgba(255,255,255,0.12); border-radius: 3px; cursor: pointer; outline: none; }
         .op-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px;
@@ -700,9 +702,9 @@
     <script src="src/flux-solver-proxy.js?v=2"></script>
     <script src="src/flux-demo-state.js?v=105"></script>
     <script src="src/flux-demo-xon.js?v=18"></script>
-    <script src="src/flux-demo-backtrack.js?v=40"></script>
+    <script src="src/flux-demo-backtrack.js?v=41"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=129"></script>
+    <script src="src/flux-demo-ui.js?v=131"></script>
     <script src="src/flux-demo.js?v=489"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
@@ -711,7 +713,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=339"></script>
+    <script src="src/flux-tests.js?v=341"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

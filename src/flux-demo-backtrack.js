@@ -78,6 +78,7 @@ function _btCreateSnapshot() {
         planckSeconds: _planckSeconds,
         // Global mode stats (running totals)
         globalModeStats: { ..._globalModeStats },
+        globalRoleStats: { ..._globalRoleStats },
         // Nucleus topology (needed for save-game restore)
         octNodeSet: _octNodeSet ? new Set(_octNodeSet) : null,
         octSCIds: _octSCIds ? _octSCIds.slice() : null,
@@ -230,6 +231,7 @@ function _btRestoreSnapshot(snap, reverse) {
     // Restore Planck second counter
     if ('planckSeconds' in snap) _planckSeconds = snap.planckSeconds;
     if (snap.globalModeStats) _globalModeStats = { ...snap.globalModeStats };
+    if (snap.globalRoleStats) _globalRoleStats = { ...snap.globalRoleStats };
     // Restore nucleus topology (save-game support)
     if (snap.octNodeSet) { _octNodeSet = new Set(snap.octNodeSet); }
     if (snap.octSCIds) { _octSCIds = snap.octSCIds.slice(); }
