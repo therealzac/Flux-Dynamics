@@ -4,16 +4,22 @@
 # All file edits go to the WORKTREE, never the main repo.
 # The user will tell you EXPLICITLY when to push to GitHub.
 # Never implicitly push. Never edit files outside the worktree.
+# WORKTREE MUST BE UPDATED FIRST. Only copy to main repo when
+# pushing to GitHub. Never push stale/out-of-sync files.
 
 # ⛔⛔⛔ ONLY WORK ON THE WORKTREE. PERIOD. ⛔⛔⛔
 # All file edits go to the WORKTREE, never the main repo.
 # The user will tell you EXPLICITLY when to push to GitHub.
 # Never implicitly push. Never edit files outside the worktree.
+# WORKTREE MUST BE UPDATED FIRST. Only copy to main repo when
+# pushing to GitHub. Never push stale/out-of-sync files.
 
 # ⛔⛔⛔ ONLY WORK ON THE WORKTREE. PERIOD. ⛔⛔⛔
 # All file edits go to the WORKTREE, never the main repo.
 # The user will tell you EXPLICITLY when to push to GitHub.
 # Never implicitly push. Never edit files outside the worktree.
+# WORKTREE MUST BE UPDATED FIRST. Only copy to main repo when
+# pushing to GitHub. Never push stale/out-of-sync files.
 
 # ⚠️⚠️⚠️ SCIENTIFIC SIMULATION — RESEARCHER APPROVAL REQUIRED ⚠️⚠️⚠️
 # This is a particle physics simulation. It is EXTREMELY SENSITIVE.
