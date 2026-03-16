@@ -3270,7 +3270,7 @@ function _serializeSnapshot(snap) {
         _v: snap._v || 0,
         tick: snap.tick,
         openingPhase: snap.openingPhase,
-        xons: snap.xons, // plain objects already (must have _role from _btCreateSnapshot)
+        xons: snap.xons.map(x => x._role ? x : { ...x, _role: x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct' }),
         activeSet: [...snap.activeSet],
         xonImpliedSet: [...snap.xonImpliedSet],
         impliedSet: [...snap.impliedSet],
@@ -3309,7 +3309,7 @@ function _deserializeSnapshot(s) {
         xons: s.xons.map(x => ({
             ...x,
             // Backfill _role for legacy IDB data (pre-_role snapshots)
-            _role: x._role || x._quarkType || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : 'oct'),
+            _role: x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct'),
             _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
@@ -3422,7 +3422,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
             for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
                 const xon = snap.xons[xi];
                 // Clean trail: just this snapshot's node (+ previous clean trail from prior snapshot)
-                const role = xon._role || xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
+                const role = xon._role || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : xon._quarkType || 'oct');
                 const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
                     : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                     : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
@@ -3463,7 +3463,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
                     const cx = lastCold.xons[xi];
                     // Replace bloated trail prefix with clean cold trail + this snapshot's node
                     hx.trail = cx.trail.concat(hx.node);
-                    const role = hx._role || hx._quarkType || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : 'oct');
+                    const role = hx._role || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : hx._quarkType || 'oct');
                     const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
                         : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                         : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
@@ -3489,22 +3489,8 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
         console.log(`%c[Council IDB] Cold set cleaned: ${coldEnd} snapshots → 1 trail entry/tick (trail len ${beforeLen})`, 'color:#88cc88');
     }
 
-    // ── GC blacklist entries for cold set ticks ──
-    // Cold set is frozen — backtracker will never revisit those ticks.
-    if (coldEnd > 0 && _sweepBlacklist && _sweepBlacklist.size > 0) {
-        const coldMaxTick = snapshots[coldEnd - 1].tick;
-        let gcCount = 0;
-        for (const [tick] of _sweepBlacklist) {
-            if (tick <= coldMaxTick) {
-                _sweepBlacklist.delete(tick);
-                gcCount++;
-            }
-        }
-        if (gcCount > 0) {
-            _sweepTotalBlacklisted = [..._sweepBlacklist.values()].reduce((s, set) => s + set.size, 0);
-            console.log(`%c[Council IDB] GC'd ${gcCount} blacklist tick entries (ticks ≤ ${coldMaxTick})`, 'color:#88cc88');
-        }
-    }
+    // NOTE: blacklist is cross-seed — do NOT GC based on one member's cold set.
+    // Fingerprints from seed A at tick N must still block seed B at tick N.
 
     const snapsArr = snapshots.map(_serializeSnapshot);
     const movesArr = [];
