@@ -1027,7 +1027,7 @@ function _tickDemoXons(dt) {
                     } else {
                         const flashBoost = xon.flashT * 0.4 * progress;
                         xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-                        const alpha = sparkOp * xonOp * segRoleOp * Math.min(1, fadeCurve + flashBoost);
+                        const alpha = sparkOp * _xoi * segRoleOp * Math.min(1, fadeCurve + flashBoost);
                         xon.trailCol[out*3] = scr * alpha; xon.trailCol[out*3+1] = scg * alpha; xon.trailCol[out*3+2] = scb * alpha;
                     }
                     out++;
@@ -1059,7 +1059,7 @@ function _tickDemoXons(dt) {
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
                         else { const bl = _fjBlend(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = bl[0]; py = bl[1]; pz = bl[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
-                        const headAlpha = sparkOp * xonOp * headRoleOp;
+                        const headAlpha = sparkOp * _xoi * headRoleOp;
                         xon.trailCol[out*3] = hcr*headAlpha; xon.trailCol[out*3+1] = hcg*headAlpha; xon.trailCol[out*3+2] = hcb*headAlpha;
                         out++;
                     }
@@ -1113,7 +1113,7 @@ function _tickDemoXons(dt) {
             const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
             const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-            const alpha = sparkOp * xonOp * segRoleOp * Math.min(1, fadeCurve + flashBoost);
+            const alpha = sparkOp * _xoi * segRoleOp * Math.min(1, fadeCurve + flashBoost);
             xon.trailCol[vi * 3] = cr * alpha;
             xon.trailCol[vi * 3 + 1] = cg * alpha;
             xon.trailCol[vi * 3 + 2] = cb * alpha;
