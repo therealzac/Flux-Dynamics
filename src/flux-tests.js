@@ -3270,7 +3270,7 @@ function _serializeSnapshot(snap) {
         _v: snap._v || 0,
         tick: snap.tick,
         openingPhase: snap.openingPhase,
-        xons: snap.xons, // plain objects already
+        xons: snap.xons, // plain objects already (must have _role from _btCreateSnapshot)
         activeSet: [...snap.activeSet],
         xonImpliedSet: [...snap.xonImpliedSet],
         impliedSet: [...snap.impliedSet],
@@ -3308,6 +3308,8 @@ function _deserializeSnapshot(s) {
         openingPhase: s.openingPhase,
         xons: s.xons.map(x => ({
             ...x,
+            // Backfill _role for legacy IDB data (pre-_role snapshots)
+            _role: x._role || x._quarkType || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : 'oct'),
             _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
