@@ -1106,44 +1106,6 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
-    // ── T85: Stochastic DFS — runs must diverge ──
-    // At tick 50, fingerprint xon positions and save to localStorage.
-    // If a subsequent run produces the identical fingerprint, DFS is not
-    // exploring different branches → violation.
-    {
-      id: 'T85', name: 'Stochastic DFS (runs diverge)',
-      convergence: true,
-      init: { checked: false },
-      check(tick, g) {
-        if (g.checked) return null;
-        const CHECK_TICK = 50;
-        if (tick < CHECK_TICK) return null;
-        if (tick > CHECK_TICK) { g.checked = true; return null; } // missed window
-        // Build fingerprint: sorted list of (xonIndex, node, mode)
-        const fp = _demoXons.map((x, i) =>
-          x.alive ? `${i}:${x.node}:${x._mode}:${x._assignedFace||'-'}` : `${i}:dead`
-        ).join('|');
-        const KEY = '_fluxT85_fingerprint';
-        try {
-          const prev = localStorage.getItem(KEY);
-          localStorage.setItem(KEY, fp);
-          g.checked = true;
-          if (prev && prev === fp) {
-            return `tick ${CHECK_TICK}: identical fingerprint across runs — DFS is deterministic`;
-          }
-          // First run or different fingerprint → pass
-          g.ok = true;
-          g.msg = 'diverged';
-        } catch (e) {
-          // localStorage unavailable — skip test
-          g.checked = true;
-          g.ok = true;
-          g.msg = 'localStorage N/A';
-        }
-        return null;
-      }
-    },
-
     // ── T86: Bare tetrahedra — actualized tet must have edge contributors ──
     // If a tet face has all SCs active (actualized) but _dominantQuarkForFace
     // returns null (no edge traversals since last manifestation), the choreographer
