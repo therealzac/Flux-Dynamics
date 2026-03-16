@@ -4784,6 +4784,17 @@ function _exportBfsTestResults() {
         exportTickLog();
     });
 
+    // Import replay button
+    document.getElementById('btn-import-replay')?.addEventListener('click', function() {
+        document.getElementById('replay-file-input')?.click();
+    });
+    document.getElementById('replay-file-input')?.addEventListener('change', function(e) {
+        if (e.target.files && e.target.files[0]) {
+            importReplay(e.target.files[0]);
+            e.target.value = ''; // reset so same file can be re-imported
+        }
+    });
+
     // Stop/clear button
     document.getElementById('btn-stop-nucleus')?.addEventListener('click', function(){
         NucleusSimulator.deactivate();
