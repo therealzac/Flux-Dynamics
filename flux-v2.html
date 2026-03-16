@@ -413,6 +413,36 @@
                         When ON, idle xons must remain on oct cage nodes. No idle_tet loitering allowed.
                     </div>
                 </div>
+                <div id="rule-t90-tolerance-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">8a. Quark ejection tol.</span>
+                        <input type="range" id="rule-t90-tolerance-slider" min="1" max="16" value="1" autocomplete="off" style="flex:1; accent-color:#ff6644;">
+                        <span id="rule-t90-tolerance-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        T90: ticks a first-place quark type may stay actualized before ejection.
+                    </div>
+                </div>
+                <div id="rule-t91-tolerance-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">8b. Face ejection tol.</span>
+                        <input type="range" id="rule-t91-tolerance-slider" min="1" max="16" value="1" autocomplete="off" style="flex:1; accent-color:#ff6644;">
+                        <span id="rule-t91-tolerance-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        T91: ticks a first-place face may stay actualized before ejection.
+                    </div>
+                </div>
+                <div id="rule-t92-tolerance-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">8c. Hadron ejection tol.</span>
+                        <input type="range" id="rule-t92-tolerance-slider" min="1" max="16" value="1" autocomplete="off" style="flex:1; accent-color:#ff6644;">
+                        <span id="rule-t92-tolerance-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        T92: ticks a leading hadron face may stay actualized before ejection.
+                    </div>
+                </div>
             </div>
 
             <!-- Action buttons: start row (shown when no sim active) -->
@@ -614,11 +644,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=92"></script>
+    <script src="src/flux-demo-state.js?v=93"></script>
     <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=110"></script>
+    <script src="src/flux-demo-ui.js?v=111"></script>
     <script src="src/flux-demo.js?v=469"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
@@ -627,7 +657,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=39"></script>
     <script src="src/flux-nucleus.js?v=47"></script>
-    <script src="src/flux-tests.js?v=329"></script>
+    <script src="src/flux-tests.js?v=330"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

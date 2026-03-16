@@ -1601,6 +1601,36 @@ window.addEventListener('DOMContentLoaded', () => {
         _idleOctEl.checked = _ruleIdleOctOnly;
         _idleOctEl.addEventListener('change', e => { _ruleIdleOctOnly = e.target.checked; _populateCouncilDropdown(); });
     }
+    const _t90TolEl = document.getElementById('rule-t90-tolerance-slider');
+    if (_t90TolEl) {
+        _t90TolEl.value = T90_TOLERANCE;
+        _t90TolEl.addEventListener('input', e => {
+            T90_TOLERANCE = parseInt(e.target.value, 10);
+            const lbl = document.getElementById('rule-t90-tolerance-value');
+            if (lbl) lbl.textContent = T90_TOLERANCE;
+            _populateCouncilDropdown();
+        });
+    }
+    const _t91TolEl = document.getElementById('rule-t91-tolerance-slider');
+    if (_t91TolEl) {
+        _t91TolEl.value = T91_TOLERANCE;
+        _t91TolEl.addEventListener('input', e => {
+            T91_TOLERANCE = parseInt(e.target.value, 10);
+            const lbl = document.getElementById('rule-t91-tolerance-value');
+            if (lbl) lbl.textContent = T91_TOLERANCE;
+            _populateCouncilDropdown();
+        });
+    }
+    const _t92TolEl = document.getElementById('rule-t92-tolerance-slider');
+    if (_t92TolEl) {
+        _t92TolEl.value = T92_TOLERANCE;
+        _t92TolEl.addEventListener('input', e => {
+            T92_TOLERANCE = parseInt(e.target.value, 10);
+            const lbl = document.getElementById('rule-t92-tolerance-value');
+            if (lbl) lbl.textContent = T92_TOLERANCE;
+            _populateCouncilDropdown();
+        });
+    }
     // Sync JS from DOM after browser form restoration.
     // Read DOM → JS so JS always matches what the user sees.
     const _syncJSFromDOM = () => {
@@ -1618,6 +1648,12 @@ window.addEventListener('DOMContentLoaded', () => {
         if (idleOctEl) _ruleIdleOctOnly = idleOctEl.checked;
         if (octFullEl) T79_MAX_FULL_TICKS = parseInt(octFullEl.value, 10);
         if (octCapEl) OCT_CAPACITY_MAX = parseInt(octCapEl.value, 10);
+        const t90TolEl = document.getElementById('rule-t90-tolerance-slider');
+        const t91TolEl = document.getElementById('rule-t91-tolerance-slider');
+        const t92TolEl = document.getElementById('rule-t92-tolerance-slider');
+        if (t90TolEl) T90_TOLERANCE = parseInt(t90TolEl.value, 10);
+        if (t91TolEl) T91_TOLERANCE = parseInt(t91TolEl.value, 10);
+        if (t92TolEl) T92_TOLERANCE = parseInt(t92TolEl.value, 10);
         _populateCouncilDropdown();
     };
     // Fire after load, pageshow, AND with escalating delays to catch late browser restoration
@@ -1633,7 +1669,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-idle-oct-only-toggle'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-idle-oct-only-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

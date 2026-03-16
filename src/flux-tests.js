@@ -1361,47 +1361,46 @@ const LIVE_GUARD_REGISTRY = [
     // tet whose dominant quark is still underrepresented wastes progress.
     {
       id: 'T90', name: 'First-place quark ejection',
-      init: { _prevActualized: null, _prevDominantWasLeader: null },
+      init: { _leaderTicks: null },
       snapshot(g) {
         if (!_nucleusTetFaceData) return;
-        g._prevActualized = {};
-        g._prevDominantWasLeader = {};
+        if (!g._leaderTicks) g._leaderTicks = {};
         const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
           const allActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-          g._prevActualized[fId] = allActive;
           if (allActive && typeof _dominantQuarkForFace === 'function' && _actualizationVisits) {
             const dominant = _dominantQuarkForFace(fId);
-            if (!dominant) { g._prevDominantWasLeader[fId] = false; continue; }
-            // Check if dominant is in 1st place for this face
+            if (!dominant) { g._leaderTicks[fId] = 0; continue; }
             const fv = _actualizationVisits[fId];
-            if (!fv) { g._prevDominantWasLeader[fId] = false; continue; }
+            if (!fv) { g._leaderTicks[fId] = 0; continue; }
             let maxCount = 0;
             for (const t of types) { if ((fv[t] || 0) > maxCount) maxCount = fv[t] || 0; }
             const dominantCount = fv[dominant] || 0;
-            // Leader = dominant's count equals the max AND max > 0
-            g._prevDominantWasLeader[fId] = (dominantCount === maxCount && maxCount > 0);
+            if (dominantCount === maxCount && maxCount > 0) {
+              g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+            } else {
+              g._leaderTicks[fId] = 0;
+            }
+          } else {
+            g._leaderTicks[fId] = 0;
           }
         }
       },
       check(tick, g) {
-        // No grace period — balance rules enforced from tick 0
         if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
-        if (!g._prevActualized || !g._prevDominantWasLeader || !_nucleusTetFaceData) return null;
+        if (!g._leaderTicks || !_nucleusTetFaceData) return null;
+        const tol = typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
-          const wasActive = g._prevActualized[fId];
-          const wasLeader = g._prevDominantWasLeader[fId];
-          // Rule: if face was actualized AND dominant was in 1st place → must be torn down this tick
-          if (!wasActive || !wasLeader) continue;
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
           if (nowActive) {
             const dominant = typeof _dominantQuarkForFace === 'function' ? _dominantQuarkForFace(fId) : '?';
-            return `tick ${tick}: face ${fId} still actualized but dominant ${dominant} is already in 1st place — must be ejected`;
+            return `tick ${tick}: face ${fId} still actualized but dominant ${dominant} in 1st place for ${g._leaderTicks[fId]} ticks (tolerance=${tol})`;
           }
         }
         return null;
@@ -1415,11 +1414,10 @@ const LIVE_GUARD_REGISTRY = [
     // Enforced via backtracker — no brute-force SC removal.
     {
       id: 'T91', name: 'First-place face ejection',
-      init: { _prevActualized: null, _prevFaceWasLeader: null },
+      init: { _leaderTicks: null },
       snapshot(g) {
         if (!_nucleusTetFaceData || !_actualizationVisits) return;
-        g._prevActualized = {};
-        g._prevFaceWasLeader = {};
+        if (!g._leaderTicks) g._leaderTicks = {};
         // Compute total visits per face
         const totals = {};
         let maxTotal = 0;
@@ -1435,28 +1433,27 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const allActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-          g._prevActualized[fId] = allActive;
-          // Leader = this face has the max total AND max > 0 AND not tied with all others
           const isLeader = (totals[fId] === maxTotal && maxTotal > 0);
-          // Only flag as leader if there's meaningful separation (not all faces tied)
           const tiedCount = Object.values(totals).filter(v => v === maxTotal).length;
-          g._prevFaceWasLeader[fId] = isLeader && tiedCount < 8; // all 8 tied = balanced, no ejection
+          if (allActive && isLeader && tiedCount < 8) {
+            g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+          } else {
+            g._leaderTicks[fId] = 0;
+          }
         }
       },
       check(tick, g) {
-        // No grace period — balance rules enforced from tick 0
         if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
-        if (!g._prevActualized || !g._prevFaceWasLeader || !_nucleusTetFaceData) return null;
+        if (!g._leaderTicks || !_nucleusTetFaceData) return null;
+        const tol = typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
-          const wasActive = g._prevActualized[fId];
-          const wasLeader = g._prevFaceWasLeader[fId];
-          if (!wasActive || !wasLeader) continue;
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
           if (nowActive) {
-            return `tick ${tick}: face ${fId} still actualized but has most total visits — must be ejected`;
+            return `tick ${tick}: face ${fId} still actualized but has most total visits for ${g._leaderTicks[fId]} ticks (tolerance=${tol})`;
           }
         }
         return null;
@@ -1469,11 +1466,10 @@ const LIVE_GUARD_REGISTRY = [
     // down. Keeps proton and neutron scores in lockstep.
     {
       id: 'T92', name: 'First-place hadron ejection',
-      init: { _prevActualized: null, _prevHadronLeading: null },
+      init: { _leaderTicks: null },
       snapshot(g) {
         if (!_nucleusTetFaceData || !_actualizationVisits) return;
-        g._prevActualized = {};
-        g._prevHadronLeading = {}; // faceId → 'proton'|'neutron'|null
+        if (!g._leaderTicks) g._leaderTicks = {};
 
         // Compute per-hadron face-evenness from _actualizationVisits
         const protonPerFace = [], neutronPerFace = [];
@@ -1492,37 +1488,41 @@ const LIVE_GUARD_REGISTRY = [
         const nEven = calcEvenness(neutronPerFace);
 
         // Determine which hadron (if any) is strictly leading
-        const MARGIN = 0.001; // avoid floating point ties
+        const MARGIN = 0.001;
         const leader = (pEven > nEven + MARGIN) ? 'proton'
                      : (nEven > pEven + MARGIN) ? 'neutron'
-                     : null; // balanced — no ejection needed
+                     : null;
 
         const protonTypes = new Set(['pu1', 'pu2', 'pd']);
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
           const allActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
-          g._prevActualized[fId] = allActive;
           if (allActive && leader && typeof _dominantQuarkForFace === 'function') {
             const dominant = _dominantQuarkForFace(fId);
-            if (!dominant) { g._prevHadronLeading[fId] = null; continue; }
+            if (!dominant) { g._leaderTicks[fId] = 0; continue; }
             const domHadron = protonTypes.has(dominant) ? 'proton' : 'neutron';
-            g._prevHadronLeading[fId] = (domHadron === leader) ? leader : null;
+            if (domHadron === leader) {
+              g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+            } else {
+              g._leaderTicks[fId] = 0;
+            }
           } else {
-            g._prevHadronLeading[fId] = null;
+            g._leaderTicks[fId] = 0;
           }
         }
       },
       check(tick, g) {
         if (g.ok === null) { g.ok = true; g.msg = ''; }
-        if (!g._prevActualized || !g._prevHadronLeading || !_nucleusTetFaceData) return null;
+        if (!g._leaderTicks || !_nucleusTetFaceData) return null;
+        const tol = typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
-          if (!g._prevActualized[fId] || !g._prevHadronLeading[fId]) continue;
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
           if (nowActive) {
-            return `tick ${tick}: face ${fId} still actualized but ${g._prevHadronLeading[fId]} hadron is in 1st place — must be ejected`;
+            return `tick ${tick}: face ${fId} still actualized but leading hadron in 1st place for ${g._leaderTicks[fId]} ticks (tolerance=${tol})`;
           }
         }
         return null;
@@ -3008,6 +3008,9 @@ function _blacklistRuleKey(lvl) {
     if (_ruleBareTetrahedra)    k += '|bare';
     if (_ruleProjectedGuards)   k += '|proj';
     if (_ruleIdleOctOnly)       k += '|idle';
+    if (T90_TOLERANCE > 1) k += `|eq${T90_TOLERANCE}`;
+    if (T91_TOLERANCE > 1) k += `|ef${T91_TOLERANCE}`;
+    if (T92_TOLERANCE > 1) k += `|eh${T92_TOLERANCE}`;
     return k;
 }
 
