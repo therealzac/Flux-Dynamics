@@ -814,8 +814,7 @@ function _fjTurnAngle(p0, p1, p2) {
 // Handles tween interpolation, spark flash, trail rendering, and trail decay.
 function _tickDemoXons(dt) {
     const sparkOp = (+document.getElementById('spark-opacity-slider').value) / 100;
-    const weakOpEl = document.getElementById('weak-opacity-slider');
-    const weakOp = weakOpEl ? (+weakOpEl.value) / 100 : 0.8;
+    const weakOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity.weak != null) ? _roleOpacity.weak : 0.13;
     const demoStepSec = _getDemoIntervalMs() * 0.001;
 
     for (let xi = _demoXons.length - 1; xi >= 0; xi--) {
@@ -952,6 +951,11 @@ function _tickDemoXons(dt) {
         const isGluon = xon._mode === 'gluon';
         const isWeak = xon._mode === 'weak';
         const gluonBoost = isGluon ? 1.5 : 1.0;
+        // Per-xon × per-role opacity hierarchy
+        const _xoi = (typeof _xonOpacity !== 'undefined' && _xonOpacity[xi] != null) ? _xonOpacity[xi] : 1;
+        const _curRole = typeof _xonRole === 'function' ? _xonRole(xon) : 'oct';
+        const _roleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[_curRole] != null) ? _roleOpacity[_curRole] : 1;
+        const xonOp = _xoi * _roleOp;
         // Swap spark blending for gluon/weak xons (additive can't show dark colors)
         const needsNormal = isWeak || isGluon;
         if (needsNormal && xon.sparkMat.blending !== THREE.NormalBlending) {
@@ -963,10 +967,10 @@ function _tickDemoXons(dt) {
         }
         const pulse = (0.22 + xon.flashT * 0.26) * flicker * hlBoost * gluonBoost;
         xon.spark.scale.set(pulse, pulse, 1);
-        // Weak sparkles: respect both weak and xon opacity sliders
-        xon.sparkMat.opacity = isWeak ? weakOp * sparkOp :
-            isGluon ? Math.min(0.5, (0.3 + xon.flashT * 0.2) * flicker * sparkOp) :
-            Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost);
+        // Spark opacity: sparkOp × xonOp (per-xon × per-role)
+        xon.sparkMat.opacity = isWeak ? sparkOp * xonOp :
+            isGluon ? Math.min(0.5, (0.3 + xon.flashT * 0.2) * flicker * sparkOp * xonOp) :
+            Math.min(1.0, (0.6 + xon.flashT * 0.4) * flicker * sparkOp * hlBoost * xonOp);
         // Decay highlight timer
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
@@ -1041,9 +1045,10 @@ function _tickDemoXons(dt) {
                     xon.trailPos[out * 3 + 1] = py;
                     xon.trailPos[out * 3 + 2] = pz;
                     if (xon._weakTrailPos) {
-                        xon._weakTrailPos[out * 3]     = isOverlay ? px : NaN;
-                        xon._weakTrailPos[out * 3 + 1] = isOverlay ? py : NaN;
-                        xon._weakTrailPos[out * 3 + 2] = isOverlay ? pz : NaN;
+                        // Always write real position — NaN renders at origin in WebGL
+                        xon._weakTrailPos[out * 3]     = px;
+                        xon._weakTrailPos[out * 3 + 1] = py;
+                        xon._weakTrailPos[out * 3 + 2] = pz;
                     }
                     // Progress through entire trail for alpha fade (0=tail, 1=head)
                     const progress = (vi + u) / Math.max(bodyLen - 1, 1);
@@ -1062,8 +1067,10 @@ function _tickDemoXons(dt) {
                     } else {
                         const flashBoost = xon.flashT * 0.4 * progress;
                         xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-                        const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);
+                        const alpha = sparkOp * xonOp * Math.min(1, fadeCurve + flashBoost);
                         xon.trailCol[out*3] = scr * alpha; xon.trailCol[out*3+1] = scg * alpha; xon.trailCol[out*3+2] = scb * alpha;
+                        // Zero overlay color for non-overlay segments (position already set above)
+                        if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
                     }
                     out++;
                 }
@@ -1095,9 +1102,9 @@ function _tickDemoXons(dt) {
                         else { const bl = _fjBlend(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = bl[0]; py = bl[1]; pz = bl[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
                         if (xon._weakTrailPos) {
-                            xon._weakTrailPos[out*3] = headIsOverlay ? px : NaN;
-                            xon._weakTrailPos[out*3+1] = headIsOverlay ? py : NaN;
-                            xon._weakTrailPos[out*3+2] = headIsOverlay ? pz : NaN;
+                            xon._weakTrailPos[out*3] = px;
+                            xon._weakTrailPos[out*3+1] = py;
+                            xon._weakTrailPos[out*3+2] = pz;
                         }
                         if (headIsOverlay) {
                             xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
@@ -1105,7 +1112,8 @@ function _tickDemoXons(dt) {
                                 xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
                             }
                         } else {
-                            xon.trailCol[out*3] = hcr*sparkOp; xon.trailCol[out*3+1] = hcg*sparkOp; xon.trailCol[out*3+2] = hcb*sparkOp;
+                            xon.trailCol[out*3] = hcr*sparkOp*xonOp; xon.trailCol[out*3+1] = hcg*sparkOp*xonOp; xon.trailCol[out*3+2] = hcb*sparkOp*xonOp;
+                            if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
                         }
                         out++;
                     }
@@ -1115,7 +1123,7 @@ function _tickDemoXons(dt) {
             xon.trailGeo.attributes.position.needsUpdate = true;
             xon.trailGeo.attributes.color.needsUpdate = true;
             if (xon._weakTrailLine) {
-                xon._weakTrailLine.material.opacity = weakOp * sparkOp;
+                xon._weakTrailLine.material.opacity = weakOp * sparkOp * xonOp;
                 xon._weakTrailLine.geometry.setDrawRange(0, Math.min(out, XON_TRAIL_VERTS));
                 xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
                 xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
@@ -1183,18 +1191,22 @@ function _tickDemoXons(dt) {
                 }
                 continue;
             }
-            // Non-overlay segment: break overlay line with NaN positions
+            // Non-overlay segment: hide on overlay with zero color + real position
+            // (NaN positions render at origin in WebGL, causing phantom lines to node 0)
             if (xon._weakTrailPos) {
-                xon._weakTrailPos[vi * 3] = NaN;
-                xon._weakTrailPos[vi * 3 + 1] = NaN;
-                xon._weakTrailPos[vi * 3 + 2] = NaN;
+                xon._weakTrailPos[vi * 3] = np[0];
+                xon._weakTrailPos[vi * 3 + 1] = np[1];
+                xon._weakTrailPos[vi * 3 + 2] = np[2];
+                xon._weakTrailCol[vi * 3] = 0;
+                xon._weakTrailCol[vi * 3 + 1] = 0;
+                xon._weakTrailCol[vi * 3 + 2] = 0;
             }
             // Gentle fade: linear with floor so long trails stay visible
             const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
             const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
             const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-            const alpha = sparkOp * Math.min(1, fadeCurve + flashBoost);
+            const alpha = sparkOp * xonOp * Math.min(1, fadeCurve + flashBoost);
             xon.trailCol[vi * 3] = cr * alpha;
             xon.trailCol[vi * 3 + 1] = cg * alpha;
             xon.trailCol[vi * 3 + 2] = cb * alpha;
@@ -1229,9 +1241,9 @@ function _tickDemoXons(dt) {
                         xon.trailCol[last * 3 + 1] = 0;
                         xon.trailCol[last * 3 + 2] = 0;
                     } else {
-                        xon.trailCol[last * 3] = hcr * sparkOp;
-                        xon.trailCol[last * 3 + 1] = hcg * sparkOp;
-                        xon.trailCol[last * 3 + 2] = hcb * sparkOp;
+                        xon.trailCol[last * 3] = hcr * sparkOp * xonOp;
+                        xon.trailCol[last * 3 + 1] = hcg * sparkOp * xonOp;
+                        xon.trailCol[last * 3 + 2] = hcb * sparkOp * xonOp;
                     }
                     // Mirror head to overlay
                     if (xon._weakTrailPos) {
@@ -1243,9 +1255,12 @@ function _tickDemoXons(dt) {
                             xon._weakTrailCol[last * 3 + 1] = hcg;
                             xon._weakTrailCol[last * 3 + 2] = hcb;
                         } else {
-                            xon._weakTrailPos[last * 3] = NaN;
-                            xon._weakTrailPos[last * 3 + 1] = NaN;
-                            xon._weakTrailPos[last * 3 + 2] = NaN;
+                            xon._weakTrailPos[last * 3] = xon.group.position.x;
+                            xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
+                            xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;
+                            xon._weakTrailCol[last * 3] = 0;
+                            xon._weakTrailCol[last * 3 + 1] = 0;
+                            xon._weakTrailCol[last * 3 + 2] = 0;
                         }
                     }
                 }
@@ -1257,7 +1272,7 @@ function _tickDemoXons(dt) {
         xon.trailGeo.attributes.color.needsUpdate = true;
         // Flush weak overlay geometry + drive opacity from slider
         if (xon._weakTrailLine) {
-            xon._weakTrailLine.material.opacity = weakOp * sparkOp;
+            xon._weakTrailLine.material.opacity = weakOp * sparkOp * xonOp;
             xon._weakTrailLine.geometry.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
             xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
             xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
@@ -3605,6 +3620,45 @@ async function demoTick() {
 
     // ── Color tets based on geometric actualization (all SCs active) ──
     _applyTetColoring(true); // true = count actualization visits during live ticks
+    // ── Per-xon/role SC opacity for shapes layer ──
+    if (typeof _roleOpacity !== 'undefined' && typeof _ruleAnnotations !== 'undefined') {
+        _ruleAnnotations.scOpacity.clear();
+        const graphOp = +(document.getElementById('graph-opacity-slider')?.value || 1) / 100;
+        for (let xi = 0; xi < _demoXons.length; xi++) {
+            const xon = _demoXons[xi];
+            if (!xon || !xon.alive) continue;
+            const xoi = _xonOpacity[xi] != null ? _xonOpacity[xi] : 1;
+            const role = typeof _xonRole === 'function' ? _xonRole(xon) : 'oct';
+            const roleOp = _roleOpacity[role] != null ? _roleOpacity[role] : 1;
+            const op = xoi * roleOp * graphOp;
+            // Tet/idle_tet: annotate face SCs
+            if ((xon._mode === 'tet' || xon._mode === 'idle_tet') && xon._assignedFace != null && _nucleusTetFaceData) {
+                const fd = _nucleusTetFaceData[xon._assignedFace];
+                if (fd && fd.scIds) {
+                    for (const scId of fd.scIds) _ruleAnnotations.scOpacity.set(scId, op);
+                }
+            }
+            // Gluon: annotate bound SCs
+            if (xon._mode === 'gluon' && xon._gluonBoundSCs) {
+                for (const scId of xon._gluonBoundSCs) _ruleAnnotations.scOpacity.set(scId, op);
+            }
+        }
+        // Oct cage SCs: use oct role opacity × min of oct xon opacities
+        if (_octSCIds && _roleOpacity.oct != null) {
+            let minOctXoi = 1;
+            for (let xi = 0; xi < _demoXons.length; xi++) {
+                const xon = _demoXons[xi];
+                if (xon && xon.alive && xon._mode === 'oct') {
+                    minOctXoi = Math.min(minOctXoi, _xonOpacity[xi] != null ? _xonOpacity[xi] : 1);
+                }
+            }
+            const octOp = minOctXoi * _roleOpacity.oct * graphOp;
+            for (const scId of _octSCIds) {
+                if (!_ruleAnnotations.scOpacity.has(scId)) _ruleAnnotations.scOpacity.set(scId, octOp);
+            }
+        }
+        _ruleAnnotations.dirty = true;
+    }
     if (typeof updateVoidSpheres === 'function') updateVoidSpheres();
 
     const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;

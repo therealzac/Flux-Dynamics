@@ -743,11 +743,7 @@ document.getElementById('trail-opacity-slider').addEventListener('input',()=>{
         document.getElementById('trail-opacity-slider').value;
 });
 
-// Weak force opacity slider label update
-document.getElementById('weak-opacity-slider').addEventListener('input',()=>{
-    const pct=+document.getElementById('weak-opacity-slider').value;
-    document.getElementById('weak-opacity-val').textContent=pct+'%';
-});
+// Weak force opacity: now driven by _roleOpacity['weak'] via role card slider in updateXonPanel().
 // ═══ SHELL LAYER — Concentric wavefunction shells from oct center ═══════════
 // One 3D convex hull per BFS distance level (≥3) from _octNodeSet, up to but
 // not including the outermost boundary (which is the wavefunction layer).

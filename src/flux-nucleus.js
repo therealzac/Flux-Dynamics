@@ -352,38 +352,37 @@ const NucleusSimulator = (function(){
     // ── Color legend: reads live QUARK_COLORS/GLUON_COLOR/WEAK_FORCE_COLOR ──
     // Called on init and whenever the color phase slider changes.
     function _updateLegend(){
-        const el = document.getElementById('color-legend');
+        // Update role card profile-pic colors when phase shifts (cards live in #role-card-list)
+        const el = document.getElementById('role-card-list');
         if(!el) return;
-        const toHex = c => '#' + c.toString(16).padStart(6, '0');
-        const entries = [
-            { label: 'pu\u2081',  key: 'pu1', pattern: 'ham CW' },
-            { label: 'pu\u2082',  key: 'pu2', pattern: 'ham CCW' },
-            { label: 'pd',        key: 'pd',  pattern: 'hook' },
-            { label: 'nd\u2081',  key: 'nd1', pattern: 'ham CW' },
-            { label: 'nd\u2082',  key: 'nd2', pattern: 'ham CCW' },
-            { label: 'nu',        key: 'nu',  pattern: 'fork' },
-            { label: 'oct',       color: 0xffffff },
-            { label: 'gluon',     key: '_gluon' },
-            { label: 'weak',      key: '_weak' },
-        ];
-        let html = `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 8px;">`;
-        for(const e of entries){
-            let color;
-            if (e.color !== undefined) color = e.color;
-            else if (e.key === '_gluon') color = GLUON_COLOR;
-            else if (e.key === '_weak') color = WEAK_FORCE_COLOR;
-            else color = QUARK_COLORS[e.key];
-            const hex = toHex(color);
-            const patternSpan = e.pattern
-                ? `<span style="color:var(--text-3); font-size:9px; margin-left:2px;">${e.pattern}</span>`
-                : '';
-            const border = color === 0xffffff ? ' border:1px solid var(--text-3); box-sizing:border-box;' : '';
-            html += `<div style="display:flex; align-items:center; gap:4px; font-size:11px;">`
-                + `<span style="display:inline-block; width:10px; height:10px; background:${hex}; border-radius:2px; flex-shrink:0;${border}"></span>`
-                + `<span style="color:${hex === '#000000' ? 'var(--text-3)' : hex}; white-space:nowrap;">${e.label}</span>${patternSpan}</div>`;
+        const toHex = c => '#' + (c || 0).toString(16).padStart(6, '0');
+        const _ptc = (c) => {
+            const r = ((c >> 16) & 0xff) / 255, g = ((c >> 8) & 0xff) / 255, b = (c & 0xff) / 255;
+            return (0.299*r + 0.587*g + 0.114*b) > 0.45 ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.65)';
+        };
+        const roleMap = {
+            pu1: QUARK_COLORS.pu1, pu2: QUARK_COLORS.pu2, pd: QUARK_COLORS.pd,
+            nd1: QUARK_COLORS.nd1, nd2: QUARK_COLORS.nd2, nu: QUARK_COLORS.nu,
+            oct: 0xffffff, gluon: GLUON_COLOR, weak: WEAK_FORCE_COLOR,
+        };
+        for (const card of el.children) {
+            const key = card.dataset.role;
+            if (!key || !roleMap[key]) continue;
+            const pic = card.querySelector('.card-pic');
+            if (pic) { pic.style.background = toHex(roleMap[key]); pic.style.color = _ptc(roleMap[key]); }
         }
-        html += `</div>`;
-        el.innerHTML = html;
+        // Also update xon card profile pics (their color tracks current role)
+        const xonList = document.getElementById('xon-card-list');
+        if (!xonList || typeof _xons === 'undefined') return;
+        for (const card of xonList.children) {
+            const idx = parseInt(card.dataset.xonIdx, 10);
+            if (isNaN(idx) || !_xons[idx]) continue;
+            const xon = _xons[idx];
+            const role = typeof _xonRole === 'function' ? _xonRole(xon) : 'oct';
+            const color = roleMap[role] || 0xffffff;
+            const pic = card.querySelector('.card-pic');
+            if (pic) { pic.style.background = toHex(color); pic.style.color = _ptc(color); }
+        }
     }
     // Alias for old call sites
     function _populateDeuteronQuarkLegend() { _updateLegend(); }

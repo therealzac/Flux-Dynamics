@@ -5,7 +5,7 @@
 const DEMO_VISUAL_DEFAULTS = [
     ['sphere-opacity-slider', 1], ['void-opacity-slider', 13],
     ['graph-opacity-slider', 1], ['trail-opacity-slider', 100],
-    ['spark-opacity-slider', 100], ['weak-opacity-slider', 13],
+    ['spark-opacity-slider', 100],
     ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
     ['bg-gray-slider', 0],
     ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 1000],
@@ -430,7 +430,12 @@ let T90_TOLERANCE = 12; // T90: ticks a first-place quark may stay actualized be
 let T91_TOLERANCE = 12; // T91: ticks a first-place face may stay actualized before ejection
 let T92_TOLERANCE = 12; // T92: ticks a leading hadron face may stay actualized before ejection
 let _ruleAdaptiveEjection = false; // Rule 9: adaptive √n tolerance (mutually exclusive with rule 8 family)
+let _ruleCubeRootEjection = false; // Rule 10: adaptive ∛n tolerance (mutually exclusive with rules 8 & 9)
 const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
+
+// ── Per-xon and per-role opacity ──
+let _xonOpacity = new Float32Array(6).fill(1.0);   // Per-xon opacity multiplier (0–1)
+let _roleOpacity = { pu1:1, pu2:1, pd:1, nd1:1, nd2:1, nu:1, oct:1, gluon:1, weak:0.13 };
 
 // ── Trail visual parameters ──
 let _trailFadeFloor = 0.15; // 0 = full fade (tail invisible), 1 = no fade (uniform brightness)

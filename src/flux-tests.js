@@ -1373,6 +1373,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const allActive = fd.scIds.every(scId =>
@@ -1425,6 +1427,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
@@ -1455,6 +1459,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const allActive = fd.scIds.every(scId =>
@@ -1507,6 +1513,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
@@ -1534,6 +1542,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const allActive = fd.scIds.every(scId =>
@@ -1610,6 +1620,8 @@ const LIVE_GUARD_REGISTRY = [
           const fId = parseInt(fIdStr);
           const tol = _ruleAdaptiveEjection
             ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : _ruleCubeRootEjection
+            ? Math.max(1, Math.ceil(Math.cbrt(g._leaderValue[fId] || 1)))
             : (typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
@@ -3070,6 +3082,8 @@ function _blacklistRuleKey(lvl) {
     if (_ruleProjectedGuards)   k += '|proj';
     if (_ruleAdaptiveEjection) {
         k += '|adpt';
+    } else if (_ruleCubeRootEjection) {
+        k += '|cbrt';
     } else {
         if (T90_TOLERANCE > 1) k += `|eq${T90_TOLERANCE}`;
         if (T91_TOLERANCE > 1) k += `|ef${T91_TOLERANCE}`;

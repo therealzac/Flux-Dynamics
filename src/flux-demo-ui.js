@@ -539,6 +539,115 @@ function _logPhase2Summary(octPlans) {
 }
 
 // ── Xon panel update (sidebar) ──
+// ── Xon Panel: build-once / update-in-place ──
+// Structure is built once on first call; subsequent calls only patch dynamic values
+// (node numbers, colors, highlight state) so sliders remain interactive.
+let _xonPanelBuilt = false;
+
+const _XP_ROLE_DISPLAY = {
+    pu1: 'Proton Up 1', pu2: 'Proton Up 2', pd: 'Proton Down',
+    nd1: 'Neutron Down 1', nd2: 'Neutron Down 2', nu: 'Neutron Up',
+    oct: 'Oct', gluon: 'Gluon', weak: 'Weak',
+};
+const _XP_ROLE_INITIALS = {
+    pu1: 'PU1', pu2: 'PU2', pd: 'PD',
+    nd1: 'ND1', nd2: 'ND2', nu: 'NU',
+    oct: 'Oct', gluon: 'Glu', weak: 'Wk',
+};
+const _XP_ROLE_PATTERNS = {
+    pu1: '(Fork)', pu2: '(Hook)', pd: '(Ham. CW)',
+    nd1: '(Fork)', nd2: '(Hook)', nu: '(Ham. CCW)',
+    oct: '', gluon: '', weak: '',
+};
+
+function _xpRoleColor(key) {
+    if (key === 'oct') return 0xffffff;
+    if (key === 'gluon') return typeof GLUON_COLOR !== 'undefined' ? GLUON_COLOR : 0x80ff00;
+    if (key === 'weak') return typeof WEAK_FORCE_COLOR !== 'undefined' ? WEAK_FORCE_COLOR : 0x7f00ff;
+    return (typeof QUARK_COLORS !== 'undefined' && QUARK_COLORS[key]) || 0x888888;
+}
+function _xpHex(c) { return '#' + (c || 0).toString(16).padStart(6, '0'); }
+function _xpPicTextColor(c) {
+    const r = ((c >> 16) & 0xff) / 255, g = ((c >> 8) & 0xff) / 255, b = (c & 0xff) / 255;
+    return (0.299*r + 0.587*g + 0.114*b) > 0.45 ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.65)';
+}
+
+function _buildXonPanel() {
+    // ── Role cards (Quark Types section) ──
+    const roleEl = document.getElementById('role-card-list');
+    if (roleEl) {
+        const roles = ['pu1','pu2','pd','nd1','nd2','nu','oct','gluon','weak'];
+        let rhtml = '';
+        for (const key of roles) {
+            const color = _xpRoleColor(key);
+            const hex = _xpHex(color);
+            const opVal = Math.round((_roleOpacity[key] != null ? _roleOpacity[key] : 1) * 100);
+            const pattern = _XP_ROLE_PATTERNS[key] || '';
+            const patternSpan = pattern ? `<span class="role-card-pattern">${pattern}</span>` : '';
+            rhtml += `<div class="role-card" data-role="${key}">`
+                + `<div class="card-pic" style="background:${hex};color:${_xpPicTextColor(color)};">${_XP_ROLE_INITIALS[key]}</div>`
+                + `<span class="role-card-name">${_XP_ROLE_DISPLAY[key]}</span>`
+                + patternSpan
+                + `<input type="range" class="op-slider" id="role-opacity-${key}" min="0" max="100" value="${opVal}" step="1">`
+                + `<span class="op-val" id="role-opacity-val-${key}">${opVal}%</span>`
+                + `</div>`;
+        }
+        roleEl.innerHTML = rhtml;
+
+        // Delegate role slider events
+        roleEl.addEventListener('input', (e) => {
+            if (!e.target.classList.contains('op-slider')) return;
+            const card = e.target.closest('.role-card');
+            if (!card) return;
+            const key = card.dataset.role;
+            if (!key) return;
+            const val = +e.target.value;
+            _roleOpacity[key] = val / 100;
+            const valEl = document.getElementById(`role-opacity-val-${key}`);
+            if (valEl) valEl.textContent = val + '%';
+        });
+    }
+
+    // ── Xon cards ──
+    const listEl = document.getElementById('xon-card-list');
+    if (!listEl) return;
+
+    let html = '';
+    for (let i = 0; i < 6; i++) {
+        html += `<div class="xon-card" data-xon-idx="${i}">`
+            + `<div class="card-pic card-pic-xon" id="xon-pic-${i}" style="background:#888;">X${i}</div>`
+            + `<span class="xon-card-id">X${i}</span>`
+            + `<div class="card-pic-sm" id="xon-node-pic-${i}">?</div>`
+            + `<span class="xon-card-node-label" id="xon-node-lbl-${i}">Node ?</span>`
+            + `<input type="range" class="op-slider" id="xon-opacity-${i}" min="0" max="100" value="100" step="1">`
+            + `<span class="op-val" id="xon-opacity-val-${i}">100%</span>`
+            + `</div>`;
+    }
+    listEl.innerHTML = html;
+
+    // Click + opacity slider delegation
+    listEl.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('op-slider')) return;
+        const card = e.target.closest('.xon-card');
+        if (!card) return;
+        const idx = parseInt(card.dataset.xonIdx, 10);
+        if (!isNaN(idx)) _highlightXon(idx);
+    });
+    listEl.addEventListener('input', (e) => {
+        if (!e.target.classList.contains('op-slider')) return;
+        const card = e.target.closest('.xon-card');
+        if (!card) return;
+        const idx = parseInt(card.dataset.xonIdx, 10);
+        if (isNaN(idx)) return;
+        const val = +e.target.value;
+        _xonOpacity[idx] = val / 100;
+        const valEl = document.getElementById(`xon-opacity-val-${idx}`);
+        if (valEl) valEl.textContent = val + '%';
+    });
+
+    _xonPanelBuilt = true;
+}
+
 function updateXonPanel() {
     if (_testRunning) return;
     const panel = document.getElementById('xon-panel');
@@ -546,115 +655,36 @@ function updateXonPanel() {
     panel.style.display = (_demoActive || _playbackMode) ? 'block' : 'none';
     if (!_demoActive && !_playbackMode) return;
 
-    const listEl = document.getElementById('xon-panel-list');
-    if (!listEl) return;
+    // Build structure once; after that only patch dynamic values
+    if (!_xonPanelBuilt) _buildXonPanel();
 
-    let html = '';
+    // ── Update xon cards in-place (node, color, highlight) ──
     for (let i = 0; i < _demoXons.length; i++) {
         const x = _demoXons[i];
-        if (!x.alive) continue;
-        const modeCol = x._mode === 'oct' ? '#ffffff' :
-                        x._mode === 'weak' ? '#' + (WEAK_FORCE_COLOR || 0x7f00ff).toString(16).padStart(6, '0') :
-                        x._mode === 'gluon' ? '#' + (GLUON_COLOR || 0x000000).toString(16).padStart(6, '0') :
-                        x._mode === 'oct_formation' ? '#ffffff' :
-                        x._mode === 'tet' ? '#' + (x.col || 0xffffff).toString(16).padStart(6, '0') :
-                        x._mode === 'idle_tet' ? '#' + (x.col || 0x888888).toString(16).padStart(6, '0') : '#888888';
-        // Display labels: oct=idle, tet/idle_tet=hadron type (p_u, p_d, n_u, n_d)
-        const QUARK_LABELS = { pu1: 'pu\u2081', pu2: 'pu\u2082', pd: 'pd', nd1: 'nd\u2081', nd2: 'nd\u2082', nu: 'nu' };
-        let modeLabel, faceStr;
-        if (x._mode === 'oct') {
-            modeLabel = 'idle';
-            faceStr = '';
-        } else if (x._mode === 'weak') {
-            modeLabel = 'weak';
-            faceStr = '';
-        } else if (x._mode === 'gluon') {
-            modeLabel = 'gluon';
-            faceStr = '';
-        } else if (x._mode === 'oct_formation') {
-            modeLabel = 'form';
-            faceStr = '';
-        } else {
-            // tet or idle_tet — show hadron type
-            modeLabel = x._quarkType ? QUARK_LABELS[x._quarkType] || x._quarkType : x._mode;
-            faceStr = x._assignedFace ? ` f${x._assignedFace}` : '';
+        if (!x || !x.alive) continue;
+
+        const role = typeof _xonRole === 'function' ? _xonRole(x) : 'oct';
+        const color = _xpRoleColor(role);
+        const hex = _xpHex(color);
+        const tc = _xpPicTextColor(color);
+
+        // Profile pic color
+        const pic = document.getElementById(`xon-pic-${i}`);
+        if (pic) { pic.style.background = hex; pic.style.color = tc; }
+
+        // Node number
+        const nodePic = document.getElementById(`xon-node-pic-${i}`);
+        if (nodePic && nodePic.textContent !== '' + x.node) nodePic.textContent = x.node;
+        const nodeLbl = document.getElementById(`xon-node-lbl-${i}`);
+        if (nodeLbl) { const t = 'Node ' + x.node; if (nodeLbl.textContent !== t) nodeLbl.textContent = t; }
+
+        // Highlight state
+        const card = pic?.closest('.xon-card');
+        if (card) {
+            const hl = _xonHighlightTimers.has(i);
+            if (hl && !card.classList.contains('highlighted')) card.classList.add('highlighted');
+            else if (!hl && card.classList.contains('highlighted')) card.classList.remove('highlighted');
         }
-        // Balance bar: 1 - coeffOfVariation(_dirBalance), clamped [0,1]
-        let balPct = 0;
-        let balColor = '#ff8800';
-        if (x._dirBalance) {
-            const counts = x._dirBalance;
-            let sum = 0, n = 0;
-            for (let d = 0; d < 10; d++) { sum += counts[d]; n++; }
-            const mean = sum / n;
-            if (mean > 0) {
-                let variance = 0;
-                for (let d = 0; d < 10; d++) variance += (counts[d] - mean) ** 2;
-                const cv = Math.sqrt(variance / n) / mean;
-                balPct = Math.max(0, Math.min(1, 1 - cv));
-            }
-            balColor = balPct > 0.6 ? '#44cc44' : balPct > 0.4 ? '#cccc44' : '#ff8800';
-        }
-        const barFull = Math.round(balPct * 8);
-        const barEmpty = 8 - barFull;
-        const barStr = '\u2588'.repeat(barFull) + '\u2591'.repeat(barEmpty);
-        const balStr = `${Math.round(balPct * 100)}%`;
-
-        // Mode stats line
-        const ms = x._modeStats || { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
-        const msStr = `o:${ms.oct} t:${ms.tet} i:${ms.idle_tet}` + (ms.gluon > 0 ? ` g:${ms.gluon}` : '') + (ms.weak > 0 ? ` w:${ms.weak}` : '');
-
-        // Tooltip: full 10-direction breakdown
-        const db = x._dirBalance || new Array(10).fill(0);
-        const tipDirs = `base[0-3]: ${db.slice(0, 4).join(',')} sc[4-9]: ${db.slice(4).join(',')}`;
-
-        const highlighted = _xonHighlightTimers.has(i);
-        const border = highlighted ? `2px solid ${modeCol}` : '1px solid #334455';
-        const bg = highlighted ? 'rgba(255,255,255,0.15)' : '#0d1520';
-        html += `<button class="xon-btn" data-xon-idx="${i}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; width:48px; height:52px; padding:2px; cursor:pointer; border-radius:4px; background:${bg}; border:${border}; font-family:monospace; outline:none;" title="X${i}: n${x.node} ${modeLabel}${faceStr}\n${tipDirs}">`
-            + `<span style="color:${modeCol}; font-weight:bold; font-size:11px;">X${i}</span>`
-            + `<span style="color:var(--text-2); font-size:8px;">n${x.node}</span>`
-            + `<span style="color:var(--text-3); font-size:7px;">${modeLabel}${faceStr}</span>`
-            + `<span style="color:${balColor}; font-size:6px; letter-spacing:-0.5px;">${barStr} ${balStr}</span>`
-            + `<span style="color:var(--text-3); font-size:6px;">${msStr}</span>`
-            + `</button>`;
-    }
-    // Running totals: xon-ticks spent in each mode (global across all xons)
-    const g = typeof _globalModeStats !== 'undefined' ? _globalModeStats : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
-    const totalTicks = g.oct + g.tet + g.idle_tet + g.weak + g.gluon;
-    const pct = (v) => totalTicks > 0 ? Math.round(v / totalTicks * 100) : 0;
-    // Current mode counts (live)
-    const now = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
-    for (const x of _demoXons) { if (x.alive && now[x._mode] !== undefined) now[x._mode]++; }
-    const nowParts = [];
-    if (now.oct > 0) nowParts.push(`<span style="color:#fff">oct:${now.oct}</span>`);
-    if (now.tet > 0) nowParts.push(`<span style="color:#5bf">tet:${now.tet}</span>`);
-    if (now.idle_tet > 0) nowParts.push(`<span style="color:#888">idle:${now.idle_tet}</span>`);
-    if (now.gluon > 0) nowParts.push(`<span style="color:#80ff00">gluon:${now.gluon}</span>`);
-    if (now.weak > 0) nowParts.push(`<span style="color:#7f00ff">weak:${now.weak}</span>`);
-    html += `<div style="width:100%; text-align:center; font-size:9px; margin-top:4px; letter-spacing:0.03em;">${nowParts.join(' &middot; ')}</div>`;
-    // Historical running totals
-    const histParts = [];
-    histParts.push(`<span style="color:#aaa">oct:${g.oct}</span>`);
-    histParts.push(`<span style="color:#5bf">tet:${g.tet}</span>`);
-    histParts.push(`<span style="color:#888">idle:${g.idle_tet}</span>`);
-    histParts.push(`<span style="color:#80ff00">gluon:${g.gluon}</span>`);
-    histParts.push(`<span style="color:#7f00ff">weak:${g.weak}</span>`);
-    html += `<div style="width:100%; text-align:center; font-size:8px; margin-top:2px; color:var(--text-3);">totals: ${histParts.join(' &middot; ')}</div>`;
-
-    listEl.innerHTML = html;
-
-    // Click delegation: attach ONE handler to parent (survives innerHTML rebuilds).
-    // Guard against duplicate attachment with a flag.
-    if (!listEl._xonDelegated) {
-        listEl._xonDelegated = true;
-        listEl.addEventListener('mousedown', (e) => {
-            // Find closest .xon-btn ancestor of the click target
-            const btn = e.target.closest('.xon-btn');
-            if (!btn) return;
-            const idx = parseInt(btn.dataset.xonIdx, 10);
-            if (!isNaN(idx)) _highlightXon(idx);
-        });
     }
 }
 
@@ -787,6 +817,7 @@ function isDemoPaused() {
 function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
+    _xonPanelBuilt = false; // rebuild panel on next demo start
     // Only reset visual defaults flag when sweep is fully over —
     // mid-sweep seed transitions must NOT reapply slider defaults.
     if (!_sweepActive) _demoOpDefaultsApplied = false;
@@ -1631,11 +1662,12 @@ window.addEventListener('DOMContentLoaded', () => {
             _populateCouncilDropdown();
         });
     }
-    // Rule 9: adaptive ejection — mutually exclusive with rule 8 sliders
+    // Rule 9 & 10: adaptive ejection — mutually exclusive with rule 8 sliders and each other
     const _adaptEl = document.getElementById('rule-adaptive-ejection-toggle');
+    const _cubeEl = document.getElementById('rule-cuberoot-ejection-toggle');
     const _rule8Sliders = ['rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
-    function _syncRule8vs9() {
-        const on = _ruleAdaptiveEjection;
+    function _syncRule8vs9vs10() {
+        const on = _ruleAdaptiveEjection || _ruleCubeRootEjection;
         for (const id of _rule8Sliders) {
             const sl = document.getElementById(id);
             if (sl) { sl.disabled = on; sl.style.opacity = on ? '0.3' : '1'; }
@@ -1646,16 +1678,29 @@ window.addEventListener('DOMContentLoaded', () => {
                 btn.disabled = on; btn.style.opacity = on ? '0.3' : '1';
             }
         });
+        // Dim the other adaptive checkbox when one is active
+        if (_adaptEl) { _adaptEl.disabled = _ruleCubeRootEjection; _adaptEl.parentElement.style.opacity = _ruleCubeRootEjection ? '0.3' : '1'; }
+        if (_cubeEl) { _cubeEl.disabled = _ruleAdaptiveEjection; _cubeEl.parentElement.style.opacity = _ruleAdaptiveEjection ? '0.3' : '1'; }
     }
     if (_adaptEl) {
         _adaptEl.checked = _ruleAdaptiveEjection;
         _adaptEl.addEventListener('change', e => {
             _ruleAdaptiveEjection = e.target.checked;
-            _syncRule8vs9();
+            if (e.target.checked) { _ruleCubeRootEjection = false; if (_cubeEl) _cubeEl.checked = false; }
+            _syncRule8vs9vs10();
             _populateCouncilDropdown();
         });
-        _syncRule8vs9(); // apply initial state
     }
+    if (_cubeEl) {
+        _cubeEl.checked = _ruleCubeRootEjection;
+        _cubeEl.addEventListener('change', e => {
+            _ruleCubeRootEjection = e.target.checked;
+            if (e.target.checked) { _ruleAdaptiveEjection = false; if (_adaptEl) _adaptEl.checked = false; }
+            _syncRule8vs9vs10();
+            _populateCouncilDropdown();
+        });
+    }
+    _syncRule8vs9vs10(); // apply initial state
     // Wire left/right ticker buttons for tolerance sliders
     document.querySelectorAll('.tol-tick').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1689,6 +1734,18 @@ window.addEventListener('DOMContentLoaded', () => {
         if (t92TolEl) T92_TOLERANCE = parseInt(t92TolEl.value, 10);
         const adaptEl = document.getElementById('rule-adaptive-ejection-toggle');
         if (adaptEl) _ruleAdaptiveEjection = adaptEl.checked;
+        const cubeEl = document.getElementById('rule-cuberoot-ejection-toggle');
+        if (cubeEl) _ruleCubeRootEjection = cubeEl.checked;
+        // Per-role opacity sliders
+        for (const key of Object.keys(_roleOpacity)) {
+            const sl = document.getElementById(`role-opacity-${key}`);
+            if (sl) _roleOpacity[key] = +sl.value / 100;
+        }
+        // Per-xon opacity sliders
+        for (let i = 0; i < 6; i++) {
+            const sl = document.getElementById(`xon-opacity-${i}`);
+            if (sl) _xonOpacity[i] = +sl.value / 100;
+        }
         _populateCouncilDropdown();
     };
     // Fire after load, pageshow, AND with escalating delays to catch late browser restoration
