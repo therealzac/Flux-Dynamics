@@ -3563,9 +3563,11 @@ async function demoTick() {
     _demoTick++;
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
-        // Append-only: one snapshot per high-water tick, never removed.
-        // _btSnapshots may be pruned by the backtracker, but _councilSnapArchive
-        // is the permanent forward-only record. Structurally impossible to lose data.
+    }
+    // Archive gate uses archive length, not _maxTickReached — after backtracker
+    // truncates the archive, re-played ticks must be re-archived even though
+    // _maxTickReached (display high-water) hasn't decreased.
+    if (_demoTick > _councilSnapArchive.length) {
         _councilSnapArchive.push(_serializeSnapshot(_btCreateSnapshot()));
         // Capture fingerprint of the tick that achieved the new high-water mark
         if (typeof _computeTickFingerprint === 'function') {
