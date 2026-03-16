@@ -31,6 +31,7 @@ function _btCreateSnapshot() {
         // Per-xon state (deep copy of mutable fields)
         xons: _demoXons.map(x => ({
             node: x.node, prevNode: x.prevNode, _mode: x._mode,
+            _role: _xonRole(x), // explicit role snapshot — used by cold-set trail reconstruction
             _assignedFace: x._assignedFace, _quarkType: x._quarkType,
             _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
             _loopStep: x._loopStep, col: x.col,
