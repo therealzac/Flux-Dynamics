@@ -41,17 +41,26 @@ function _btCreateSnapshot() {
             _gluonForFace: x._gluonForFace, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
-            trail: x.trail.slice(),
-            trailColHistory: x.trailColHistory.slice(),
-            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
-            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map((p, ti) => {
-                // Fix stale [0,0,0] from pre-solver init
-                if (p[0] === 0 && p[1] === 0 && p[2] === 0 && typeof pos !== 'undefined') {
-                    const rp = pos[x.trail[ti]];
-                    if (rp && (rp[0] !== 0 || rp[1] !== 0 || rp[2] !== 0)) return [rp[0], rp[1], rp[2]];
+            trailLen: x.trail ? x.trail.length : 0, // O(1) — trails live on live xon, not snapshot
+            // Delta: trail entries added this tick (0, 1, or 2). Uses _trailLenAtTickStart.
+            _tDelta: (() => {
+                if (!x.trail || x.trail.length === 0) return null;
+                const startLen = x._trailLenAtTickStart || 0;
+                if (x.trail.length <= startLen) return null;
+                const delta = [];
+                for (let i = startLen; i < x.trail.length; i++) {
+                    const e = x.trail[i];
+                    delta.push({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] });
                 }
-                return [p[0], p[1], p[2]];
-            }) : [],
+                return delta;
+            })(),
+            // Recolor: if _trailRecolor changed last entry's role without a push
+            _tRecolor: (() => {
+                if (!x.trail || x.trail.length === 0) return null;
+                const startLen = x._trailLenAtTickStart || 0;
+                if (x.trail.length !== startLen || startLen === 0) return null;
+                return x.trail[x.trail.length - 1].role;
+            })(),
         })),
         // Global SC sets (shallow copy — Set of primitive IDs)
         activeSet: new Set(activeSet),
@@ -142,18 +151,56 @@ function _btRestoreSnapshot(snap, reverse) {
         }
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
         x._modeStats = x._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
-        x.trail = s.trail.slice();
-        x.trailColHistory = s.trailColHistory.slice();
-        x._trailRoleHistory = s._trailRoleHistory ? s._trailRoleHistory.slice() : [];
-        x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
-        // NOTE: Re-freeze of stale [0,0,0] entries moved AFTER pos[] restore (below)
-        // so it uses the snapshot's own solver positions, not the previous frame's.
+        // ── Trail restore: unified entry objects {node, role, pos} ──
+        const tLen = s.trailLen != null ? s.trailLen : (s.trail ? s.trail.length : 0);
+        if (s.trail && s.trail.length > 0 && typeof s.trail[0] === 'object') {
+            // Snapshot has full unified trail array (from IDB) — copy it
+            x.trail = s.trail.map(e => ({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] }));
+        } else {
+            // Modern snapshot — delta-based restore
+            // Rewind: truncate
+            if (x.trail.length > tLen) x.trail.length = tLen;
+            // Recolor: role changed via wash without a push
+            if (s._tRecolor && x.trail.length === tLen && x.trail.length > 0) {
+                x.trail[x.trail.length - 1].role = s._tRecolor;
+                if (s._tRecolor === 'weak' || s._tRecolor === 'gluon') {
+                    for (let k = x.trail.length - 2; k >= Math.max(0, x.trail.length - XON_TRAIL_LENGTH); k--) {
+                        if (x.trail[k].role !== 'oct') break;
+                        x.trail[k].role = s._tRecolor;
+                    }
+                }
+            }
+            // Forward: push ALL delta entries (handles 0, 1, or 2 pushes per tick)
+            if (x.trail.length < tLen && s._tDelta) {
+                for (const e of s._tDelta) {
+                    x.trail.push({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] });
+                }
+                // Wash at transition — mirrors _trailRecolor in live play
+                const lastRole = x.trail[x.trail.length - 1].role;
+                if ((lastRole === 'gluon' || lastRole === 'weak') && x.trail.length >= 2) {
+                    const prevRole = x.trail[x.trail.length - s._tDelta.length - 1]?.role;
+                    if (prevRole === 'oct') {
+                        for (let k = x.trail.length - s._tDelta.length - 1; k >= Math.max(0, x.trail.length - XON_TRAIL_LENGTH); k--) {
+                            if (x.trail[k].role !== 'oct') break;
+                            x.trail[k].role = lastRole;
+                        }
+                    }
+                }
+            }
+            // Safety: if delta didn't reach target trailLen (stale snapshot), pad with current node
+            while (x.trail.length < tLen) {
+                const p = snap.pos && snap.pos[s.node] ? snap.pos[s.node] : [0,0,0];
+                x.trail.push({ node: s.node, role: s._role || _xonRole(x), pos: [p[0], p[1], p[2]] });
+            }
+        }
+        // Ensure trail head matches xon node (catches any delta mismatch)
+        if (x.trail.length > 0 && x.trail[x.trail.length - 1].node !== s.node) {
+            const p = snap.pos && snap.pos[s.node] ? snap.pos[s.node] : [0,0,0];
+            x.trail.push({ node: s.node, role: s._role || _xonRole(x), pos: [p[0], p[1], p[2]] });
+        }
         // Pop most recent trail entry on reverse — visually removes the last hop
         if (fjReverse && x.trail.length > 0) {
             x.trail.pop();
-            if (x.trailColHistory.length > 0) x.trailColHistory.pop();
-            if (x._trailRoleHistory && x._trailRoleHistory.length > 0) x._trailRoleHistory.pop();
-            if (x._trailFrozenPos && x._trailFrozenPos.length > 0) x._trailFrozenPos.pop();
         }
         // Update visuals
         if (x.sparkMat) x.sparkMat.color.setHex(x.col);
@@ -190,26 +237,16 @@ function _btRestoreSnapshot(snap, reverse) {
         pos[i][1] = snap.pos[i][1];
         pos[i][2] = snap.pos[i][2];
     }
-    // Re-freeze stale [0,0,0] entries NOW that pos[] has been restored from the
-    // snapshot — this uses the snapshot's own solver positions (correct), not the
-    // previous frame's (wrong). Also backfill missing frozen positions when the
-    // snapshot's _trailFrozenPos is shorter than trail (old IDB data).
+    // Re-freeze stale [0,0,0] trail positions NOW that pos[] has been restored.
     for (let xi = 0; xi < _demoXons.length && xi < snap.xons.length; xi++) {
         const x = _demoXons[xi];
-        if (!x._trailFrozenPos) x._trailFrozenPos = [];
-        // Backfill if frozen pos array is shorter than trail (legacy snapshots)
-        while (x._trailFrozenPos.length < x.trail.length) {
-            const n = x.trail[x._trailFrozenPos.length];
-            const p = pos[n];
-            x._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
-        }
-        // Patch [0,0,0] entries with the snapshot's restored pos[]
-        for (let ti = 0; ti < x._trailFrozenPos.length; ti++) {
-            const fp = x._trailFrozenPos[ti];
-            if (fp[0] === 0 && fp[1] === 0 && fp[2] === 0) {
-                const p = pos[x.trail[ti]];
+        if (!x.trail) continue;
+        for (let ti = 0; ti < x.trail.length; ti++) {
+            const e = x.trail[ti];
+            if (!e.pos || (e.pos[0] === 0 && e.pos[1] === 0 && e.pos[2] === 0)) {
+                const p = pos[e.node];
                 if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
-                    x._trailFrozenPos[ti] = [p[0], p[1], p[2]];
+                    e.pos = [p[0], p[1], p[2]];
                 }
             }
         }

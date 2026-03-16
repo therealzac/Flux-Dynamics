@@ -603,6 +603,7 @@ let _sweepReplayActive = false;      // true during council member replay
 let _sweepReplayMember = null;       // council member being replayed {peak, seed, moves}
 let _replayAncestorPeak = -1;        // ancestor's peak tick when extending a replay (-1 = fresh run)
 let _councilReplayMode = false;      // true when replaying via snapshot playback (pause at end)
+let _replayGuardMode = false;        // when true, guards halt replay on failure instead of silent reset
 
 function _goldenCouncilSize() {
     return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));
@@ -819,25 +820,12 @@ function _recomputeColors(phase) {
     GLUON_COLOR      = _getWheelColor(COLOR_ROLE_OFFSETS.gluon + phase);
     WEAK_FORCE_COLOR = _getWheelColor(COLOR_ROLE_OFFSETS.weak + phase);
 
-    // Update live xon visuals + sync trailColHistory from role history
+    // Update live xon spark colors — trail colors are derived at render time from entry.role
     if (typeof _demoXons !== 'undefined' && _demoXons) {
         for (const xon of _demoXons) {
             if (!xon || !xon.alive) continue;
-            // Update xon.col to current phase
             xon.col = _roleToColor(_xonRole(xon));
             if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
-            // Rebuild trailColHistory from role history so T24 sees valid current-phase colors
-            if (xon._trailRoleHistory && xon.trailColHistory) {
-                for (let i = 0; i < xon._trailRoleHistory.length; i++) {
-                    xon.trailColHistory[i] = _roleToColor(xon._trailRoleHistory[i]);
-                }
-            }
-            // Also rebuild frozen colors (used during playback/death animation)
-            if (xon._frozenRoles && xon._frozenColors) {
-                for (let i = 0; i < xon._frozenRoles.length; i++) {
-                    xon._frozenColors[i] = _roleToColor(xon._frozenRoles[i]);
-                }
-            }
         }
     }
     // Refresh shapes (tet void colors) to match new phase

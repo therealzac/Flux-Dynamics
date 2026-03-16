@@ -4,7 +4,7 @@
 // Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span><br><span style="font-size:0.55em; color:#556677; margin-top:-2px; display:block; line-height:1;">(Best ${_maxTickReached})</span>`;
     _updateTimelineScrubber();
 }
 
@@ -67,6 +67,39 @@ function _updateBottomStats() {
         const dev = Math.abs(parseFloat(actual) - ideal);
         densEl.textContent = actual + '%';
         densEl.style.color = dev < 0.001 ? '#6a8aaa' : dev < 0.01 ? '#ffaa44' : '#ff4444';
+    }
+    // Highest ps
+    const hpEl = document.getElementById('st-highest-ps');
+    if (hpEl) hpEl.textContent = _maxTickReached || 0;
+    // Quark balance scores
+    const visits = _actualizationVisits || _demoVisits;
+    if (visits) {
+        const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+        const calcEvenness = (arr) => {
+            const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+            if (m === 0) return 0;
+            const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+            return Math.max(0, 1 - sd / m);
+        };
+        const totals = [], protonPerFace = [], neutronPerFace = [];
+        for (let f = 1; f <= 8; f++) {
+            const v = visits[f];
+            if (!v) continue;
+            let ft = 0;
+            for (const t of types6) ft += v[t] || 0;
+            totals.push(ft);
+            protonPerFace.push((v.pu1 || 0) + (v.pu2 || 0) + (v.pd || 0));
+            neutronPerFace.push((v.nd1 || 0) + (v.nd2 || 0) + (v.nu || 0));
+        }
+        const evenness = totals.length > 0 ? calcEvenness(totals) : 0;
+        const pEven = protonPerFace.length > 0 ? calcEvenness(protonPerFace) : 0;
+        const nEven = neutronPerFace.length > 0 ? calcEvenness(neutronPerFace) : 0;
+        const oEl = document.getElementById('st-balance-overall');
+        if (oEl) oEl.textContent = (evenness * 100).toFixed(1) + '%';
+        const pEl = document.getElementById('st-balance-proton');
+        if (pEl) pEl.textContent = (pEven * 100).toFixed(1) + '%';
+        const nEl = document.getElementById('st-balance-neutron');
+        if (nEl) nEl.textContent = (nEven * 100).toFixed(1) + '%';
     }
 }
 
@@ -810,6 +843,33 @@ function _highlightXon(idx) {
     _xonHighlightTimers.set(idx, setTimeout(() => _xonHighlightTimers.delete(idx), 2000));
 }
 
+function _showReplayCorruption(tick, msg) {
+    // Use sim-start-buttons (always visible) as anchor, fallback to pause button
+    const anchor = document.getElementById('sim-start-buttons') || document.getElementById('btn-nucleus-pause');
+    if (!anchor) return;
+    let container = document.getElementById('replay-corruption-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'replay-corruption-container';
+        container.style.cssText = 'margin-top:4px;';
+        anchor.parentNode.insertBefore(container, anchor.nextSibling);
+    }
+    container.innerHTML = `<span style="color:#ff4444;font-weight:bold;font-size:11px;">CORRUPTED @ t=${tick}</span>` +
+        `<button id="btn-clear-replay-test" style="margin-left:8px;font-size:10px;padding:2px 8px;cursor:pointer;background:#333;color:#ccc;border:1px solid #555;border-radius:3px;">Clear test</button>` +
+        `<div style="color:#ff6666;font-size:9px;margin-top:2px;max-width:300px;word-wrap:break-word;">${msg}</div>`;
+    document.getElementById('btn-clear-replay-test')?.addEventListener('click', function() {
+        localStorage.removeItem('flux_replay_test');
+        _clearReplayCorruption();
+        _replayGuardMode = false;
+    });
+    console.error(`[REPLAY GUARD] Corruption detected at tick ${tick}: ${msg}`);
+}
+
+function _clearReplayCorruption() {
+    const el = document.getElementById('replay-corruption-container');
+    if (el) el.remove();
+}
+
 function pauseDemo() {
     _demoPaused = true;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
@@ -820,6 +880,8 @@ function resumeDemo() {
     _demoPaused = false;
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     simHalted = false;
+    const _pb = document.getElementById('btn-nucleus-pause');
+    if (_pb) { _pb.textContent = '\u23F8'; _pb.title = 'Pause simulation'; }
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
         if (_redoStack.length > 0) {
             // Drain redo stack at playback speed (responsive to slider changes).
@@ -839,8 +901,13 @@ function resumeDemo() {
                     while (!snap && _redoStack.length > 0) snap = _redoStack.pop();
                     if (!snap) { _demoInterval = null; return; }
                     _btRestoreSnapshot(snap);
-                    _augmentTrailsFromSnapshots();
                     simHalted = false;
+                    // Fire guards during replay if replay guard mode is active
+                    if (_replayGuardMode) {
+                        if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
+                        if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
+                        if (simHalted) { _demoInterval = null; return; }
+                    }
                     // Throttle visual updates to ~30fps for buttery speed
                     const now = performance.now();
                     if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {
@@ -1032,7 +1099,6 @@ async function _playbackStepForward() {
         _btSaveSnapshot(); // save current state so rewind can reach it
         const redoSnap = _redoStack.pop();
         _btRestoreSnapshot(redoSnap);
-        _augmentTrailsFromSnapshots();
         simHalted = false;
         _playbackUpdateDisplay();
         return;
@@ -1067,7 +1133,6 @@ function startReverse() {
         const snap = _btSnapshots.pop();
         if (!snap) { stopReverse(); return; }
         _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
-        _augmentTrailsFromSnapshots();
         simHalted = false;
         _bfsReset();
         _btReset();
@@ -1106,7 +1171,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span><br><span style="font-size:0.55em; color:#556677; margin-top:-2px; display:block; line-height:1;">(Best ${_maxTickReached})</span>`;
     _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);
@@ -1196,7 +1261,6 @@ function _timelineScrubTo(targetPos) {
     if (typeof simHalted !== 'undefined') simHalted = false;
     _bfsReset(); _btReset();
     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
-    _augmentTrailsFromSnapshots();
     _playbackUpdateDisplay();
     const pb = document.getElementById('btn-nucleus-pause');
     if (pb) pb.textContent = '\u25B6';
@@ -1235,7 +1299,27 @@ function _updatePlaybackButtons() {
 function exportTickLog() {
     // During council replay or paused demo, export full snapshots
     if (_btSnapshots && _btSnapshots.length > 0 && typeof _serializeSnapshot === 'function') {
+        // Serialize then reconstruct trails for export (modern snapshots use trailLen only)
         const snapData = _btSnapshots.map(s => _serializeSnapshot(s));
+        // Reconstruct unified trail arrays so exported file is self-contained
+        const numXons = snapData[0] && snapData[0].xons ? snapData[0].xons.length : 0;
+        for (let si = 0; si < snapData.length; si++) {
+            const snap = snapData[si];
+            if (!snap.xons) continue;
+            for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
+                const xon = snap.xons[xi];
+                const role = xon._role || 'oct';
+                xon.col = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role) : xon.col || 0xffffff;
+                const p = snap.pos && snap.pos[xon.node];
+                const entry = { node: xon.node, role, pos: p ? [p[0], p[1], p[2]] : [0, 0, 0] };
+                if (si === 0) {
+                    xon.trail = [entry];
+                } else {
+                    const prev = snapData[si - 1].xons[xi];
+                    xon.trail = prev.trail.concat([entry]);
+                }
+            }
+        }
         const seed = _forceSeed || _runSeed || 0;
         const peak = _btSnapshots[_btSnapshots.length - 1].tick || 0;
         const data = {
@@ -1408,10 +1492,9 @@ function _spawnPlaybackXon(startNode) {
         _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
-        trail: [startNode], trailColHistory: [col], _trailRoleHistory: ['oct'], _trailFrozenPos: [],
+        trail: [{ node: startNode, role: 'oct', pos: pos[startNode] ? [pos[startNode][0], pos[startNode][1], pos[startNode][2]] : [0,0,0] }],
         tweenT: 1, flashT: 1.0, _highlightT: 0, alive: true,
     };
-    _trailInitFrozen(xon);
     _demoXons.push(xon);
     return xon;
 }
@@ -1542,18 +1625,6 @@ function _playbackTrailLen() {
     return el ? +el.value : 55;
 }
 
-// Reconstruct xon trails from _btSnapshots history after a snapshot restore.
-// Each snapshot stores the FULL trail for that tick (including multi-hop
-// movements within a single tick). The snapshot trail is already complete —
-// no augmentation needed. This function is now a no-op; kept as a stub so
-// call sites don't break.
-function _augmentTrailsFromSnapshots() {
-    // Snapshot trails are restored directly by _btRestoreSnapshot().
-    // Prepending from snapshot node positions created teleportation artifacts
-    // because snapshots store one node per tick while trails have multiple
-    // entries per tick from multi-hop movements (walkToFace, weak BFS, etc.).
-}
-
 // Incremental visit tracker for playback
 let _pbVisitsUpTo = -1; // last frame index we've counted visits for
 
@@ -1635,21 +1706,14 @@ function _applyMovieFrame(idx) {
         // since node positions barely shift between adjacent frames)
         const trailStart = Math.max(0, idx - _playbackTrailLen() + 1);
         x.trail = [];
-        x.trailColHistory = [];
-        x._trailRoleHistory = [];
-        x._trailFrozenPos = [];
         for (let t = trailStart; t <= idx; t++) {
             const tf = frames[t];
             if (!tf || !tf.xons[i]) continue;
             const tn = tf.xons[i].n;
             const m = tf.xons[i].m, q = tf.xons[i].q;
-            x.trail.push(tn);
-            x.trailColHistory.push(_modeColor(m, q));
-            // Derive role from mode + quark type
             const role = (m === 'tet' || m === 'idle_tet') ? (q || 'oct') :
                          m === 'gluon' ? 'gluon' : m === 'weak' ? 'weak' : 'oct';
-            x._trailRoleHistory.push(role);
-            x._trailFrozenPos.push([rPos[tn][0], rPos[tn][1], rPos[tn][2]]);
+            x.trail.push({ node: tn, role, pos: [rPos[tn][0], rPos[tn][1], rPos[tn][2]] });
         }
 
         // Snap sprite to position

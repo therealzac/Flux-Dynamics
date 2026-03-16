@@ -870,8 +870,6 @@ function _executeOctMove(xon, target) {
     // Update xonic movement balance counters
     _updateDirBalance(xon, fromNode, target.node);
 
-    // Push trail history + per-segment color, start tween
-    _trailPush(xon, target.node, xon.col);
     xon.tweenT = 0;
     if (_flashEnabled) xon.flashT = 1.0;
     return true;
@@ -1191,7 +1189,6 @@ function _walkToFace(xon, targetNodes) {
     _moveRecord.set(step, fromWF);
     _traceMove(xon, fromWF, step, 'walkToFace');
 
-    _trailPush(xon, step, xon.col);
     xon.tweenT = 0;
 
     // Return the target if we reached it in one hop, otherwise null (still walking)
@@ -1263,7 +1260,6 @@ function _returnXonToOct(xon, occupied) {
         _moveRecord.set(target.node, fromRTO);
         _traceMove(xon, fromRTO, target.node, 'returnToOct');
         if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, target.node); }
-        _trailPush(xon, target.node, xon.col);
     } else {
         // Already at an oct node — just switch mode
         _relinquishFaceSCs(xon);

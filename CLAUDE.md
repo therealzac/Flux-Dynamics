@@ -97,6 +97,12 @@ Every entry in `LIVE_GUARD_REGISTRY` is keyed by its `id` field (e.g. `'T90'`, `
 
 ---
 
+## Guiding Principle: Simplicity
+
+**Make it as simple as possible.** Simplifying the code clarifies the physics _and_ makes it easier to maintain. When choosing between approaches, prefer the one with fewer data structures, fewer code paths, and less indirection. Complexity is the enemy of correctness in a physics simulation — every unnecessary abstraction is a place where bugs hide.
+
+---
+
 ## Quick Start
 - **Press the "demo" button** to start the deuteron simulation
 - Dev server: `python3 -m http.server 8080` from project root, open `flux-v2.html`
@@ -611,6 +617,95 @@ Fermions never form on larger lattices. Investigate whether compute-load shortcu
 
 Display both. Swap the current naming: what was "tick" becomes the above definition.
 
+**⚠️ CURRENT NAMING IS SWAPPED IN CODE vs UI:**
+- UI shows `_demoTick` as "Planck Seconds" and `_planckSeconds` as "Flux Events"
+- In code: `_planckSeconds` = flux events (SC deformations), `_demoTick` = total ticks
+- When polling programmatically, use `_demoTick` to match the number displayed as "Planck Seconds" on screen
+- The replay test pipeline uses `_demoTick` for milestones (100/200/300) to match what the user sees
+
 ### 12.8 Re-Center Lattice Around Nuclear Octa
 
 Currently centered around a single node. Should be centered around the nuclear octa itself, giving symmetrical space above and below the nucleus for weak force operation.
+
+---
+
+## 13. Replay System — Architecture & Fidelity Guide
+
+**Replays are the primary output of this simulation.** A replay is a complete, deterministic record of a simulation run that can be scrubbed forward/backward and re-played from any point. Replay fidelity is non-negotiable — a replay from t=0 must be structurally identical to the original live run.
+
+### Goal
+Streamline onboarding for anyone working on replay correctness. The replay pipeline touches multiple files and has subtle invariants. This section documents the full data flow so you don't have to rediscover it.
+
+### Data Flow: Live Play → IDB → Replay
+
+1. **Live play**: Each tick, `_btCreateSnapshot()` (flux-demo-backtrack.js) captures the full simulation state. Snapshots are stored in `_btSnapshots[]` (mutable, used by backtracker) and `_councilSnapArchive[]` (forward-only, only appended when `_demoTick > _maxTickReached`).
+
+2. **Snapshot storage — O(N) not O(N²)**: Snapshots do NOT store trail arrays. Each xon in a snapshot stores:
+   - `trailLen` (integer) — how long the trail was at this tick
+   - `_tNode`, `_tCol`, `_tRole`, `_tPos` — the single trail entry for this tick, recorded from the live trail at snapshot time (already reflects `_trailRecolor` wash)
+   - `_role` — explicit role string, never inferred
+
+   This keeps memory O(N) across all snapshots. Trail arrays live only on the live xon objects.
+
+3. **Save to IDB**: `_blIDBSaveCouncilMember()` (flux-tests.js) serializes snapshots via `_serializeSnapshot()` which strips any trail arrays and preserves `_t*` fields. No trail reconstruction at save time.
+
+4. **Load from IDB**: `_deserializeSnapshot()` produces snapshots with `trail: null` (modern) or `trail: [...]` (legacy). The `_t*` fields and `trailLen` survive the round-trip.
+
+5. **Replay restore**: `_btRestoreSnapshot()` (flux-demo-backtrack.js) handles two paths:
+   - **Rewind** (trail.length > trailLen): truncate trail arrays
+   - **Forward** (trail.length < trailLen): push `_tNode`/`_tCol`/`_tRole`/`_tPos` from the snapshot — direct read, no inference
+   - **Wash at transitions**: If `_tRole` is gluon/weak and previous trail entry was 'oct', walk back through consecutive oct entries and overwrite (mirrors `_trailRecolor` in live play). Only fires once at the transition, not on every gluon tick.
+
+### Critical Invariants
+
+- **First playthrough ≡ replay from t=0**: These must produce structurally identical trails. If they diverge, the replay is broken.
+- **`_tCol`/`_tRole` are recorded, not inferred**: Role inference from `_mode`/`_quarkType` is fragile (stale `_quarkType` on gluon xons). The snapshot records the actual trail entry values from the live xon at snapshot time.
+- **`_councilSnapArchive` is the source of truth for saves**: It's forward-only (never popped by backtracking). `_btSnapshots` is mutable and may contain backtracked states.
+- **Auto-retry creates multiple runs**: When auto-retry-best restarts from a council replay, `_councilSnapArchive` gets cleared and rebuilt from t=0. If multiple retries happen before save, the archive may contain multiple t=0→t=x runs concatenated. `_blIDBSaveCouncilMember` trims to the last contiguous run (last index where `tick` decreases) before writing.
+- **Append-only saves**: When extending a replay (descendant surpasses ancestor), read existing IDB data, keep ancestor's snapshots, append new ticks beyond `_replayAncestorPeak`. The combined result is also trimmed for multi-run contamination.
+
+### Common Bugs & How They Manifest
+
+| Symptom | Root Cause | Fix Location |
+|---------|-----------|-------------|
+| Trails missing on replay | Snapshots stored `trailLen` but `_t*` fields missing | `_btCreateSnapshot` — ensure `_tNode`/`_tCol`/`_tRole`/`_tPos` recorded |
+| Wrong colors on replay from t=0 | Forward restore inferring role instead of reading `_tRole` | `_btRestoreSnapshot` forward path |
+| "Gluon clouds" at end of replay | Wash running on every gluon tick instead of only at transitions | Check `wasOct` transition detection in forward restore |
+| Replay bouncing t=0→t=x→t=0 | Multiple auto-retry runs in IDB | Trim logic in `_blIDBSaveCouncilMember` |
+| Trail data lost on descendant extension | Append-only save not chaining correctly | `_blIDBSaveCouncilMember` append-only path |
+| Stale white xon colors | `_role` not recorded, color derived from inference | Ensure `_role` explicit in `_btCreateSnapshot`, `_serializeSnapshot` |
+
+### Key Files
+- **flux-demo-backtrack.js**: `_btCreateSnapshot`, `_btRestoreSnapshot` — snapshot lifecycle
+- **flux-tests.js**: `_serializeSnapshot`, `_deserializeSnapshot`, `_blIDBSaveCouncilMember`, `_saveCurrentRunToCouncil` — IDB persistence
+- **flux-demo.js**: `_councilSnapArchive` population (inside `_demoTick > _maxTickReached` block), autosave milestone trigger
+- **flux-demo-state.js**: `_btSnapshots`, `_councilSnapArchive` declarations
+
+---
+
+### Trail Color Invariant
+**The color of an xon's most recent trail segment is always the same color as the xon.** Enforced by live guard T93. `_trailPush` records `_xonRole(xon)` as the entry's `.role`; `_trailRecolor` updates it on mode transitions. At tick end, `trail[trail.length-1].role === _xonRole(xon)` must hold for every alive xon.
+
+### Replay Integrity Test (🧪 button)
+Automated pipeline: record→save→reload→replay w/guards→scrub→extend, targeting tick milestones 100→200→300. Uses `_demoTick` (not `_planckSeconds`) to match the "Planck Seconds" number shown on screen. When polling simulation state programmatically, always cross-check with a screenshot — the variable names in code do NOT match the UI labels (see §12.7).
+
+**⚠️ Auto-retry best is enabled during the test.** The recording phase runs a normal sweep with auto-retry-best checked. This means the sweep may restart from a council replay mid-recording (when a new best surpasses the old one). This could be a source of replay corruption — the `_councilSnapArchive` may contain spliced snapshots from multiple runs/seeds. Investigate whether auto-retry-best introduces snapshot discontinuities.
+
+### 2026-03-16: Trail Architecture Simplification & Replay Fidelity (In Progress)
+
+**What changed**: Replaced 4 parallel trail arrays (`trail[]`, `trailColHistory[]`, `_trailRoleHistory[]`, `_trailFrozenPos[]`) with a single unified array of `{node, role, pos}` entry objects. Color is now derived at render time via `_roleToColor(entry.role)` — never stored. Snapshot format changed from broken `_tNode/_tCol/_tRole/_tPos` single-entry fields to `_tDelta` (array of all entries pushed this tick) + `_tRecolor` (role-only wash). `_trailLenAtTickStart` set once per tick drives delta computation.
+
+**Two replay paths exist — they diverge on trail data**:
+
+| Path | Source | Trail data | Status |
+|------|--------|-----------|--------|
+| **Dropdown replay** (IDB → `_hydrateCouncilMember` → redo drain) | `_councilSnapArchive` (tick-END snapshots with correct `_tDelta`) | Full trail arrays reconstructed during hydration | Working |
+| **Scrub-to-t=0** (`_timelineScrubTo` → redo drain) | `_btSnapshots` (tick-START snapshots, `_tDelta` always null) | Trail reconstruction added to `resumeDemo()` before drain | Under test |
+
+**Root cause of scrub-to-t=0 failures**: `_btSnapshots` are created at tick START (before choreography runs). At that point, `_tDelta` is correctly null (no moves yet) and `trailLen` reflects the trail length BEFORE moves. During redo forward replay, the delta-based restore path in `_btRestoreSnapshot` can't grow trails because there are no deltas. The fix: `resumeDemo()` now iterates the redo stack chronologically before draining and reconstructs full trail arrays by replaying `trailLen` growth + deltas (same pattern as IDB hydration).
+
+**Safety nets in `_btRestoreSnapshot`**: (1) `while (x.trail.length < tLen)` pads missing entries with xon's current node. (2) Ensures trail head always matches `s.node`. These catch any remaining delta gaps but can create non-unit-distance segments.
+
+**What's validated**: T59 (trail head matches node) passes. T57 (segment length) is the remaining risk — synthetic trail entries from padding may span non-adjacent nodes. The `resumeDemo()` reconstruction should eliminate this by building trails incrementally from chronological snapshots.
+
+**What still needs testing**: (1) Fresh 100+ run → scrub to t=0 → play → verify T57/T59 pass and live continuation works. (2) Dropdown replay of same run → verify trails match. (3) Auto-retry-best on reload → verify redo drain completes cleanly.

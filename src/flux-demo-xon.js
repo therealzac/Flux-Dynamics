@@ -50,44 +50,28 @@ function _clearModeProps(xon) {
     xon._gluonClientXon = null;
 }
 
-// ── Trail helper: freeze 3D positions at record time so trails don't deform with solver ──
-function _trailPush(xon, node, color) {
-    xon.trail.push(node);
-    xon.trailColHistory.push(color);
-    // Store role key for phase-independent color resolution
-    if (!xon._trailRoleHistory) xon._trailRoleHistory = [];
-    xon._trailRoleHistory.push(_xonRole(xon));
+// ── Trail: unified entry objects {node, role, pos} ──
+// Each trail entry is a single object — no parallel arrays to sync.
+// Color is derived at render time via _roleToColor(entry.role).
+function _trailPush(xon, node) {
     const p = pos[node];
-    xon._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
+    xon.trail.push({ node, role: _xonRole(xon), pos: p ? [p[0], p[1], p[2]] : [0, 0, 0] });
 }
-// Retroactively update the last trail segment color when a xon changes mode.
-// Called after setting xon.col so the transition segment shows the new color immediately.
-// When entering weak/gluon mode, wash all recent consecutive 'oct' trail entries
-// so the visual trail matches the xon's identity (no white oct segments lingering).
+// Retroactively update the last trail segment's role when a xon changes mode.
+// When entering weak/gluon mode, wash all recent consecutive 'oct' trail entries.
 function _trailRecolor(xon) {
+    const t = xon.trail;
+    if (!t || t.length === 0) return;
     const newRole = _xonRole(xon);
-    if (xon.trailColHistory && xon.trailColHistory.length > 0) {
-        xon.trailColHistory[xon.trailColHistory.length - 1] = xon.col;
-    }
-    if (xon._trailRoleHistory && xon._trailRoleHistory.length > 0) {
-        xon._trailRoleHistory[xon._trailRoleHistory.length - 1] = newRole;
-        // Wash recent oct entries when transitioning to weak/gluon
-        if (newRole === 'weak' || newRole === 'gluon') {
-            for (let i = xon._trailRoleHistory.length - 2; i >= 0; i--) {
-                if (xon._trailRoleHistory[i] !== 'oct') break;
-                xon._trailRoleHistory[i] = newRole;
-                if (xon.trailColHistory) xon.trailColHistory[i] = xon.col;
-            }
+    t[t.length - 1].role = newRole;
+    // Wash recent oct entries when transitioning to weak/gluon
+    if (newRole === 'weak' || newRole === 'gluon') {
+        const minIdx = Math.max(0, t.length - XON_TRAIL_LENGTH);
+        for (let i = t.length - 2; i >= minIdx; i--) {
+            if (t[i].role !== 'oct') break;
+            t[i].role = newRole;
         }
     }
-}
-
-// Initialize frozen pos array from current trail (for init/reset)
-function _trailInitFrozen(xon) {
-    xon._trailFrozenPos = xon.trail.map(n => {
-        const p = pos[n];
-        return p ? [p[0], p[1], p[2]] : [0, 0, 0];
-    });
 }
 
 // Spawn a xon at a node with spark, trail, and tween — mirrors excitation visuals.
@@ -137,12 +121,11 @@ function _spawnXon(face, quarkType, sign) {
         _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }, // ticks spent in each mode
         col, group, spark, sparkMat,
         trailLine, trailGeo, trailPos, trailCol,
-        trail: [seq[0]], trailColHistory: [col], _trailRoleHistory: [quarkType],
-        _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+        trail: [{ node: seq[0], role: quarkType, pos: pos[seq[0]] ? [pos[seq[0]][0], pos[seq[0]][1], pos[seq[0]][2]] : [0,0,0] }],
+        tweenT: 1, flashT: 1.0,
         _highlightT: 0,
         alive: true,
     };
-    _trailInitFrozen(xon);
     _demoXons.push(xon);
     return xon;
 }
@@ -170,14 +153,9 @@ function _destroyXon(xon) {
     if (xon.group) { scene.remove(xon.group); xon.group = null; }
     if (xon.sparkMat) { xon.sparkMat.dispose(); xon.sparkMat = null; }
     xon.spark = null;
-    // Snapshot trail positions + colors — dying tracers keep historical state,
-    // they do NOT follow the live solver. This creates a cool ghosting effect.
-    xon._frozenPos = xon.trail.map(nodeIdx => {
-        const p = pos[nodeIdx];
-        return p ? [p[0], p[1], p[2]] : [0, 0, 0];
-    });
-    xon._frozenColors = xon.trailColHistory ? [...xon.trailColHistory] : null;
-    xon._frozenRoles = xon._trailRoleHistory ? [...xon._trailRoleHistory] : null;
+    // Snapshot trail for dying decay — freeze positions + roles from unified entries.
+    xon._frozenPos = xon.trail.map(e => e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0, 0, 0]);
+    xon._frozenRoles = xon.trail.map(e => e.role);
     xon._dying = true; // signal to _tickDemoXons: decay trail
 }
 
@@ -202,7 +180,7 @@ function _decayDyingXons() {
         // Remove one trail point per tick
         if (xon._frozenPos.length > 0) {
             xon._frozenPos.shift();
-            if (xon._frozenColors) xon._frozenColors.shift();
+            if (xon._frozenRoles) xon._frozenRoles.shift();
         }
         // Cleanup in simulation domain — don't wait for render frame.
         // Without this, a fully-decayed xon can sit in _dying=true for
@@ -276,8 +254,6 @@ function _advanceXon(xon) {
         if (typeof _ppoTetCompletionsThisTick !== 'undefined') _ppoTetCompletionsThisTick++;
     }
 
-    // Push trail history + per-segment color, start tween
-    _trailPush(xon, toNode, xon.col);
     xon.tweenT = 0;
     if (_flashEnabled) xon.flashT = 1.0;
     return true;
@@ -345,12 +321,11 @@ function _initPersistentXons() {
             _gluonForFace: null, _gluonBoundSCs: null, _gluonClientXon: null,
             col, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
-            trail: [startNode], trailColHistory: [col], _trailRoleHistory: ['oct'],
-            _trailFrozenPos: [], tweenT: 1, flashT: 1.0,
+            trail: [{ node: startNode, role: 'oct', pos: pos[startNode] ? [pos[startNode][0], pos[startNode][1], pos[startNode][2]] : [0,0,0] }],
+            tweenT: 1, flashT: 1.0,
             _highlightT: 0,
             alive: true,
         };
-        _trailInitFrozen(xon);
         // Interceptor: enforce single-hop-per-tick + validate each individual movement
         let _nodeVal = startNode;
         xon._movedThisTick = false;
@@ -417,13 +392,9 @@ function _annihilateXonPair(xonA, xonB) {
     for (const xon of [xonA, xonB]) {
         xon.alive = false;
         if (xon.group) xon.group.visible = false; // spark vanishes
-        // Freeze trail positions for dying decay
-        xon._frozenPos = xon.trail.map(nodeIdx => {
-            const p = pos[nodeIdx];
-            return p ? [p[0], p[1], p[2]] : [0, 0, 0];
-        });
-        xon._frozenColors = xon.trailColHistory ? [...xon.trailColHistory] : null;
-    xon._frozenRoles = xon._trailRoleHistory ? [...xon._trailRoleHistory] : null;
+        // Freeze trail for dying decay — from unified entries
+        xon._frozenPos = xon.trail.map(e => e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0, 0, 0]);
+        xon._frozenRoles = xon.trail.map(e => e.role);
         xon._dying = true;
     }
     _gluonStoredPairs++;
@@ -465,8 +436,8 @@ function _manifestXonPair() {
     const xonA = dead[0];
     const xonB = dead[1];
     // Clear any residual dying state from trail fade
-    xonA._dying = false; xonA._frozenPos = null; xonA._frozenColors = null; xonA._dyingStartTick = null;
-    xonB._dying = false; xonB._frozenPos = null; xonB._frozenColors = null; xonB._dyingStartTick = null;
+    xonA._dying = false; xonA._frozenPos = null; xonA._frozenRoles = null; xonA._dyingStartTick = null;
+    xonB._dying = false; xonB._frozenPos = null; xonB._frozenRoles = null; xonB._dyingStartTick = null;
     xonA.alive = true;
     xonA.node = nodeA; // bypass interceptor for respawn
     xonA.prevNode = nodeA;
@@ -478,10 +449,7 @@ function _manifestXonPair() {
     xonA._loopStep = 0;
     xonA.col = 0xffffff;
     xonA._movedThisTick = false;
-    xonA.trail = [nodeA];
-    xonA.trailColHistory = [0xffffff];
-    xonA._trailRoleHistory = ['oct'];
-    _trailInitFrozen(xonA);
+    xonA.trail = [{ node: nodeA, role: 'oct', pos: pos[nodeA] ? [pos[nodeA][0], pos[nodeA][1], pos[nodeA][2]] : [0,0,0] }];
     xonA.tweenT = 1;
     if (_flashEnabled) xonA.flashT = 1.0;
     if (xonA.sparkMat) xonA.sparkMat.color.setHex(0xffffff);
@@ -499,10 +467,7 @@ function _manifestXonPair() {
     xonB._loopStep = 0;
     xonB.col = 0xffffff;
     xonB._movedThisTick = false;
-    xonB.trail = [nodeB];
-    xonB.trailColHistory = [0xffffff];
-    xonB._trailRoleHistory = ['oct'];
-    _trailInitFrozen(xonB);
+    xonB.trail = [{ node: nodeB, role: 'oct', pos: pos[nodeB] ? [pos[nodeB][0], pos[nodeB][1], pos[nodeB][2]] : [0,0,0] }];
     xonB.tweenT = 1;
     if (_flashEnabled) xonB.flashT = 1.0;
     if (xonB.sparkMat) xonB.sparkMat.color.setHex(0xffffff);
