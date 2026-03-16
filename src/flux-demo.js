@@ -971,12 +971,12 @@ function _tickDemoXons(dt) {
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
 
-        // Role-based overlay routing: weak/gluon segments always go to
-        // NormalBlending overlay so weak/gluon opacity sliders work at any phase.
+        // Role-based overlay routing: weak AND gluon segments go to
+        // NormalBlending overlay so they paint opaquely over additive trails.
         const _rhArr = xon._trailRoleHistory;
         const _isOverlayRole = (idx) => {
             if (!_rhArr || !_rhArr[idx]) return false;
-            return _rhArr[idx] === 'weak';
+            return _rhArr[idx] === 'weak' || _rhArr[idx] === 'gluon';
         };
         const _isGluonRole = (idx) => {
             if (!_rhArr || !_rhArr[idx]) return false;
@@ -1052,9 +1052,6 @@ function _tickDemoXons(dt) {
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                         if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
-                    } else if (isGluon) {
-                        // Gluon: solid laser beam — full brightness, no fade, on main trail (additive glow)
-                        xon.trailCol[out*3] = scr * sparkOp; xon.trailCol[out*3+1] = scg * sparkOp; xon.trailCol[out*3+2] = scb * sparkOp;
                     } else if (isOverlay) {
                         // Weak segments go on NormalBlending overlay (role-based routing)
                         // Full brightness — no fadeCurve; material opacity (weakOp * sparkOp) handles brightness.
@@ -1085,8 +1082,7 @@ function _tickDemoXons(dt) {
                     const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak';
-                    const headIsGluon = headRole === 'gluon';
+                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
@@ -1103,10 +1099,7 @@ function _tickDemoXons(dt) {
                             xon._weakTrailPos[out*3+1] = headIsOverlay ? py : NaN;
                             xon._weakTrailPos[out*3+2] = headIsOverlay ? pz : NaN;
                         }
-                        if (headIsGluon) {
-                            // Gluon head: solid laser beam on main trail
-                            xon.trailCol[out*3] = hcr*sparkOp; xon.trailCol[out*3+1] = hcg*sparkOp; xon.trailCol[out*3+2] = hcb*sparkOp;
-                        } else if (headIsOverlay) {
+                        if (headIsOverlay) {
                             xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                             if (xon._weakTrailCol) {
                                 xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
@@ -1173,19 +1166,7 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Gluon segments: solid laser beam on main trail (additive glow), no fade
-            if (_isGluonRole(i)) {
-                xon.trailCol[vi * 3] = cr * sparkOp;
-                xon.trailCol[vi * 3 + 1] = cg * sparkOp;
-                xon.trailCol[vi * 3 + 2] = cb * sparkOp;
-                if (xon._weakTrailPos) {
-                    xon._weakTrailPos[vi * 3] = NaN;
-                    xon._weakTrailPos[vi * 3 + 1] = NaN;
-                    xon._weakTrailPos[vi * 3 + 2] = NaN;
-                }
-                continue;
-            }
-            // Weak segments: render on overlay line (NormalBlending) so opacity slider works
+            // Weak + gluon segments: render on overlay line (NormalBlending) so they paint opaquely
             if (_isOverlayRole(i)) {
                 xon.trailCol[vi * 3] = 0;
                 xon.trailCol[vi * 3 + 1] = 0;
@@ -1238,18 +1219,12 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak';
-                    const headIsGluon = headRole === 'gluon';
+                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    if (headIsGluon) {
-                        // Gluon head: solid laser beam on main trail
-                        xon.trailCol[last * 3] = hcr * sparkOp;
-                        xon.trailCol[last * 3 + 1] = hcg * sparkOp;
-                        xon.trailCol[last * 3 + 2] = hcb * sparkOp;
-                    } else if (headIsOverlay) {
-                        // Weak head: hide on main, show on overlay
+                    if (headIsOverlay) {
+                        // Weak/gluon head: hide on main, show on overlay
                         xon.trailCol[last * 3] = 0;
                         xon.trailCol[last * 3 + 1] = 0;
                         xon.trailCol[last * 3 + 2] = 0;
