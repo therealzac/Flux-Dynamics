@@ -344,21 +344,13 @@
             <!-- ═══ RULES SWITCHBOARD ═══ -->
             <div id="switchboard-panel" style="margin:8px 0; padding:8px 10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px;">
                 <div style="font-size:9px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px;">Rules</div>
-                <div id="rule-t20-strict-row" style="margin-bottom:2px;">
-                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
-                        <input type="checkbox" id="rule-t20-strict-toggle" checked autocomplete="off" style="accent-color:#ff9944;">
-                        1. Strict T20 (no mode-transition exemption)
-                    </label>
-                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
-                        When ON, every xon must move every tick — no exceptions.
-                        When OFF, mode transitions (oct↔tet) are exempt from T20.
-                    </div>
-                </div>
                 <div id="rule-oct-full-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
                         <span style="white-space:nowrap;">2. Max full-oct ticks</span>
-                        <input type="range" id="rule-oct-full-slider" min="1" max="8" value="1" autocomplete="off" style="flex:1; accent-color:#ff9944;">
-                        <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
+                        <button class="btn-ghost tol-tick" data-slider="rule-oct-full-slider" data-dir="-1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9664;</button>
+                        <input type="range" id="rule-oct-full-slider" min="1" max="16" value="12" autocomplete="off" style="flex:1; accent-color:#ff9944;">
+                        <button class="btn-ghost tol-tick" data-slider="rule-oct-full-slider" data-dir="1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9654;</button>
+                        <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">12</span>
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         T79: max consecutive ticks with all 6 xons on oct nodes before forced tet assignment.
@@ -367,21 +359,13 @@
                 <div id="rule-oct-capacity-row" style="margin-top:6px; margin-bottom:2px;">
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
                         <span style="white-space:nowrap;">3. Max oct occupancy</span>
+                        <button class="btn-ghost tol-tick" data-slider="rule-oct-capacity-slider" data-dir="-1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9664;</button>
                         <input type="range" id="rule-oct-capacity-slider" min="1" max="6" value="6" autocomplete="off" style="flex:1; accent-color:#66bbff;">
+                        <button class="btn-ghost tol-tick" data-slider="rule-oct-capacity-slider" data-dir="1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9654;</button>
                         <span id="rule-oct-capacity-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">6</span>
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         T55: hard max xons allowed on oct nodes simultaneously.
-                    </div>
-                </div>
-                <div id="rule-gluon-mediated-row" style="margin-top:6px; margin-bottom:2px;">
-                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
-                        <input type="checkbox" id="rule-gluon-mediated-toggle" checked autocomplete="off" style="accent-color:#80ff00;">
-                        4. Gluon-mediated SC lifecycle
-                    </label>
-                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
-                        When ON, gluon xons physically hold tet face shortcuts open during quark loops,
-                        releasing them when the loop completes. Replaces code-based relinquishment with a physical mechanism.
                     </div>
                 </div>
                 <div id="rule-bare-tet-row" style="margin-top:6px; margin-bottom:2px;">
@@ -392,25 +376,6 @@
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         When ON, actualized tets with no edge contributors are violations (T86).
                         When OFF, bare tets are allowed — they simply don't count as quarks until edges are colored.
-                    </div>
-                </div>
-                <div id="rule-projected-guards-row" style="margin-top:6px; margin-bottom:2px;">
-                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
-                        <input type="checkbox" id="rule-projected-guards-toggle" checked autocomplete="off" style="accent-color:#66bbff;">
-                        6. Projected guard pre-validation
-                    </label>
-                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
-                        When ON, candidate moves are pre-checked against all guards with projected() before execution.
-                        Prevents violations before they happen. May reduce throughput.
-                    </div>
-                </div>
-                <div id="rule-idle-oct-only-row" style="margin-top:6px; margin-bottom:2px;">
-                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
-                        <input type="checkbox" id="rule-idle-oct-only-toggle" autocomplete="off" style="accent-color:#ff9944;">
-                        7. Idle on oct/tet nodes only
-                    </label>
-                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
-                        When ON, idle xons must remain on oct cage nodes. No idle_tet loitering allowed.
                     </div>
                 </div>
                 <div id="rule-t90-tolerance-row" style="margin-top:6px; margin-bottom:2px;">
@@ -650,20 +615,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=94"></script>
+    <script src="src/flux-demo-state.js?v=96"></script>
     <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=112"></script>
-    <script src="src/flux-demo.js?v=470"></script>
+    <script src="src/flux-demo-ui.js?v=114"></script>
+    <script src="src/flux-demo.js?v=473"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=19"></script>
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=39"></script>
-    <script src="src/flux-nucleus.js?v=47"></script>
-    <script src="src/flux-tests.js?v=331"></script>
+    <script src="src/flux-nucleus.js?v=49"></script>
+    <script src="src/flux-tests.js?v=333"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
@@ -737,6 +702,8 @@
         _updateBottomStatsPos();
     });
     _updateBottomStatsPos();
+    // Expose left-sidebar visibility so other modules can respect user's toggle
+    window._isLeftSidebarVisible = () => _leftVisible;
     </script>
 </body>
 </html>

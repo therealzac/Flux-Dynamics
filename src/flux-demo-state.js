@@ -388,7 +388,7 @@ let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain te
 let _ruleBareTetrahedra = true; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
-let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+let T79_MAX_FULL_TICKS = 12;      // T79: max consecutive ticks allowed with all 6 xons on oct nodes
 let _ruleT20StrictMode = true;   // When true, T20 has no mode-transition exemption
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.

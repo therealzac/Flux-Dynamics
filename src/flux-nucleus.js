@@ -213,9 +213,10 @@ const NucleusSimulator = (function(){
         // pause button visibility now managed by _setSimUIActive()
         const _pbCtrl = document.getElementById('playback-controls');
         if (_pbCtrl) _pbCtrl.style.display = '';
-        // Show the new deuteron panel (left side)
+        // Show the new deuteron panel (left side) — but respect user's sidebar toggle
         const dp = document.getElementById('deuteron-panel');
-        if(dp) dp.style.display = 'block';
+        const leftVis = typeof _isLeftSidebarVisible === 'function' ? _isLeftSidebarVisible() : true;
+        if(dp && leftVis) dp.style.display = 'block';
         // bottom-stats stays as fixed overlay — positioning handled by sidebar toggle logic
         // Populate quark color legend once on enter
         _populateDeuteronQuarkLegend();

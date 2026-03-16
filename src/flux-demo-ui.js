@@ -1252,8 +1252,10 @@ function _startMoviePlayback() {
     const val = document.getElementById('timeline-val');
     if (val) val.textContent = '0';
     // Show deuteron panel + populate legend (normally done by enterNucleusMode)
+    // Respect user's sidebar toggle
     const dp = document.getElementById('deuteron-panel');
-    if (dp) dp.style.display = 'block';
+    const leftVis = typeof _isLeftSidebarVisible === 'function' ? _isLeftSidebarVisible() : true;
+    if (dp && leftVis) dp.style.display = 'block';
     if (typeof _populateDeuteronQuarkLegend === 'function') _populateDeuteronQuarkLegend();
     // Reset visit tracking for sidebar
     _demoVisits = {};
@@ -1596,11 +1598,6 @@ window.addEventListener('DOMContentLoaded', () => {
         _projGuardEl.checked = _ruleProjectedGuards;
         _projGuardEl.addEventListener('change', e => { _ruleProjectedGuards = e.target.checked; _populateCouncilDropdown(); });
     }
-    const _idleOctEl = document.getElementById('rule-idle-oct-only-toggle');
-    if (_idleOctEl) {
-        _idleOctEl.checked = _ruleIdleOctOnly;
-        _idleOctEl.addEventListener('change', e => { _ruleIdleOctOnly = e.target.checked; _populateCouncilDropdown(); });
-    }
     const _t90TolEl = document.getElementById('rule-t90-tolerance-slider');
     if (_t90TolEl) {
         _t90TolEl.value = T90_TOLERANCE;
@@ -1654,8 +1651,6 @@ window.addEventListener('DOMContentLoaded', () => {
         if (gluEl) _ruleGluonMediatedSC = gluEl.checked;
         if (bareEl) _ruleBareTetrahedra = bareEl.checked;
         if (projEl) _ruleProjectedGuards = projEl.checked;
-        const idleOctEl = document.getElementById('rule-idle-oct-only-toggle');
-        if (idleOctEl) _ruleIdleOctOnly = idleOctEl.checked;
         if (octFullEl) T79_MAX_FULL_TICKS = parseInt(octFullEl.value, 10);
         if (octCapEl) OCT_CAPACITY_MAX = parseInt(octCapEl.value, 10);
         const t90TolEl = document.getElementById('rule-t90-tolerance-slider');
@@ -1679,7 +1674,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-idle-oct-only-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

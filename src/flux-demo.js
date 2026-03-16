@@ -1555,20 +1555,7 @@ function startDemoLoop() {
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     if (typeof _setSimUIActive === 'function') _setSimUIActive(true);
 
-    // Reset opacity sliders to HTML defaults (tournament/sweep may have overridden)
-    const _opDefaults = [
-        ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
-        ['graph-opacity-slider', 16], ['trail-opacity-slider', 100],
-        ['spark-opacity-slider', 100], ['weak-opacity-slider', 21],
-        ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
-        ['bg-gray-slider', 0],
-        ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
-        ['rule-t90-tolerance-slider', 12], ['rule-t91-tolerance-slider', 12], ['rule-t92-tolerance-slider', 12],
-    ];
-    for (const [id, val] of _opDefaults) {
-        const el = document.getElementById(id);
-        if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
-    }
+    // Opacity/visual sliders are NEVER reset between seeds — user's choices persist.
 
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();
