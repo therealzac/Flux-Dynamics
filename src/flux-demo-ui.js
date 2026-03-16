@@ -4,7 +4,7 @@
 // Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span>`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span><br><span style="font-size:0.55em; color:#556677; margin-top:-2px; display:block; line-height:1;">(Best ${_maxTickReached})</span>`;
     _updateTimelineScrubber();
 }
 
@@ -1139,7 +1139,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span>`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span><br><span style="font-size:0.55em; color:#556677; margin-top:-2px; display:block; line-height:1;">(Best ${_maxTickReached})</span>`;
     _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);

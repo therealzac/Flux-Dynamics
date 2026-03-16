@@ -153,7 +153,18 @@ function _btRestoreSnapshot(snap, reverse) {
                 x.trailColHistory.length = tLen;
                 if (x._trailRoleHistory) x._trailRoleHistory.length = tLen;
                 if (x._trailFrozenPos) x._trailFrozenPos.length = tLen;
-            } else if (x.trail.length < tLen) {
+            }
+            // Update last trail entry's role/color from snapshot — handles
+            // _trailRecolor that changed existing entries without a new push
+            // (e.g. oct→tet assignment without movement, or return-to-oct in place)
+            if (x.trail.length > 0 && x.trail.length === tLen && s._tRole != null) {
+                const tRole = s._tRole;
+                const tCol = s._tCol != null ? s._tCol : x.col;
+                const lastIdx = x.trail.length - 1;
+                if (x._trailRoleHistory) x._trailRoleHistory[lastIdx] = tRole;
+                if (x.trailColHistory) x.trailColHistory[lastIdx] = tCol;
+            }
+            if (x.trail.length < tLen) {
                 // Forward: replay stored trail entry — recorded at snapshot time,
                 // already reflects _trailRecolor wash. No inference needed.
                 const tRole = s._tRole || s._role || 'oct';

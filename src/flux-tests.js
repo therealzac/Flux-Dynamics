@@ -4128,8 +4128,8 @@ function _updateSweepPanel(message, sweepStartTime) {
     // Learnings stats
     html += `<div style="padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px; margin-bottom:6px;">`;
     html += `<div style="font-size:10px; color:#9abccc;">` +
-        `Learnings: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states` +
-        ` &middot; Applied: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed)</div>`;
+        `Learnings: <b>${_sweepTotalBlacklisted.toLocaleString()}</b>` +
+        ` &middot; Applied: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this take)</div>`;
     if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {
         // Build sorted entries: council members, marking the current round's seed with green *
         const hasRecentAutosave = _demoActive && _maxTickReached > 0
@@ -4147,7 +4147,7 @@ function _updateSweepPanel(message, sweepStartTime) {
             : 't' + e.peak);
         html += `<div style="font-size:10px; color:#ffcc66; margin-top:2px;">` +
             `Best Takes: ${peakStrs.join(', ')} &middot; ` +
-            `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this seed)</div>`;
+            `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this take)</div>`;
         if (hasRecentAutosave) {
             html += `<div style="font-size:9px; color:#80ff80; margin-top:1px;">* autosaved</div>`;
         }
@@ -4172,9 +4172,9 @@ function _updateSweepPanel(message, sweepStartTime) {
             sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
         }
         html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
-            + `<div style="font-size:16px; color:#667788; margin-bottom:2px;">Progress (last ${chartData.length})</div>`
-            + `<div style="font-size:44px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
-            + `<div style="display:flex; justify-content:space-between; font-size:14px; color:#445566; margin-top:2px;">`
+            + `<div style="font-size:12px; color:#667788; margin-bottom:2px;">Progress (last ${chartData.length})</div>`
+            + `<div style="font-size:33px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:11px; color:#445566; margin-top:2px;">`
             + `<span>t0</span><span>t${chartMax}</span></div>`
             + `</div>`;
     }
@@ -4194,9 +4194,9 @@ function _updateSweepPanel(message, sweepStartTime) {
             sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
         }
         html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
-            + `<div style="font-size:16px; color:#667788; margin-bottom:2px;">Learning Rate (last ${chartData.length})</div>`
-            + `<div style="font-size:44px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
-            + `<div style="display:flex; justify-content:space-between; font-size:14px; color:#445566; margin-top:2px;">`
+            + `<div style="font-size:12px; color:#667788; margin-bottom:2px;">Learning Rate (last ${chartData.length})</div>`
+            + `<div style="font-size:33px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:11px; color:#445566; margin-top:2px;">`
             + `<span>0</span><span>${chartMax.toLocaleString()}</span></div>`
             + `</div>`;
     }

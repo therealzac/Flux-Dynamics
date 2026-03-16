@@ -72,10 +72,13 @@ function _trailRecolor(xon) {
     if (xon._trailRoleHistory && xon._trailRoleHistory.length > 0) {
         xon._trailRoleHistory[xon._trailRoleHistory.length - 1] = newRole;
         // Wash recent oct entries when transitioning to weak/gluon
+        // Cap to visible trail window — don't corrupt ancient entries
         if (newRole === 'weak' || newRole === 'gluon') {
-            for (let i = xon._trailRoleHistory.length - 2; i >= 0; i--) {
-                if (xon._trailRoleHistory[i] !== 'oct') break;
-                xon._trailRoleHistory[i] = newRole;
+            const rh = xon._trailRoleHistory;
+            const minIdx = Math.max(0, rh.length - XON_TRAIL_LENGTH);
+            for (let i = rh.length - 2; i >= minIdx; i--) {
+                if (rh[i] !== 'oct') break;
+                rh[i] = newRole;
                 if (xon.trailColHistory) xon.trailColHistory[i] = xon.col;
             }
         }
