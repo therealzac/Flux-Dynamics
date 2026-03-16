@@ -437,6 +437,9 @@ const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB
 let _xonOpacity = new Float32Array(6).fill(1.0);   // Per-xon opacity multiplier (0–1)
 let _roleOpacity = { pu1:1, pu2:1, pd:1, nd1:1, nd2:1, nu:1, oct:1, gluon:1, weak:0.13 };
 
+// ── All-time role stats (ticks spent in each role across all xons) ──
+let _globalRoleStats = { pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0, oct:0, gluon:0, weak:0 };
+
 // ── Trail visual parameters ──
 let _trailFadeFloor = 0.15; // 0 = full fade (tail invisible), 1 = no fade (uniform brightness)
 // ── Trail curve parameters ──

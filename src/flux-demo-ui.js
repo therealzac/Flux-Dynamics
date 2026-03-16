@@ -554,11 +554,7 @@ const _XP_ROLE_INITIALS = {
     nd1: 'ND1', nd2: 'ND2', nu: 'NU',
     oct: 'Oct', gluon: 'Glu', weak: 'Wk',
 };
-const _XP_ROLE_PATTERNS = {
-    pu1: '(Fork)', pu2: '(Hook)', pd: '(Ham. CW)',
-    nd1: '(Fork)', nd2: '(Hook)', nu: '(Ham. CCW)',
-    oct: '', gluon: '', weak: '',
-};
+// _XP_ROLE_PATTERNS removed — traversal names no longer shown on cards
 
 function _xpRoleColor(key) {
     if (key === 'oct') return 0xffffff;
@@ -573,40 +569,65 @@ function _xpPicTextColor(c) {
 }
 
 function _buildXonPanel() {
+    const _STAT_LABELS = {
+        pu1:'Proton ▲1', pu2:'Proton ▲2', pd:'Proton ▼',
+        nd1:'Neutron ▼1', nd2:'Neutron ▼2', nu:'Neutron ▲',
+        oct:'Oct', gluon:'Gluon', weak:'Weak',
+    };
+    const _ALL_ROLES = ['pu1','pu2','pd','nd1','nd2','nu','oct','gluon','weak'];
+
+    // ── Build stats grid HTML (shared by both sections) ──
+    function _buildStatsGrid(idSuffix) {
+        let shtml = '';
+        for (const key of _ALL_ROLES) {
+            shtml += `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:4px;">`
+                + `<span style="font-size:10px;color:var(--text-3);font-family:var(--font-sans);">${_STAT_LABELS[key]}</span>`
+                + `<span id="role-stat-${key}${idSuffix}" style="font-size:10px;color:var(--text-2);font-family:var(--font-sans);font-weight:600;">0</span>`
+                + `</div>`;
+        }
+        return shtml;
+    }
+
     // ── Role cards (Quark Types section) ──
     const roleEl = document.getElementById('role-card-list');
     if (roleEl) {
-        const roles = ['pu1','pu2','pd','nd1','nd2','nu','oct','gluon','weak'];
         let rhtml = '';
-        for (const key of roles) {
+        for (const key of _ALL_ROLES) {
             const color = _xpRoleColor(key);
             const hex = _xpHex(color);
             const opVal = Math.round((_roleOpacity[key] != null ? _roleOpacity[key] : 1) * 100);
-            const pattern = _XP_ROLE_PATTERNS[key] || '';
-            const patternSpan = pattern ? `<span class="role-card-pattern">${pattern}</span>` : '';
             rhtml += `<div class="role-card" data-role="${key}">`
                 + `<div class="card-pic" style="background:${hex};color:${_xpPicTextColor(color)};">${_XP_ROLE_INITIALS[key]}</div>`
                 + `<span class="role-card-name">${_XP_ROLE_DISPLAY[key]}</span>`
-                + patternSpan
+                + `<button class="card-sm-btn" data-action="solo" title="Solo">S</button>`
+                + `<button class="card-sm-btn" data-action="mute" title="Mute">M</button>`
                 + `<input type="range" class="op-slider" id="role-opacity-${key}" min="0" max="100" value="${opVal}" step="1">`
-                + `<span class="op-val" id="role-opacity-val-${key}">${opVal}%</span>`
                 + `</div>`;
         }
         roleEl.innerHTML = rhtml;
 
-        // Delegate role slider events
+        // Delegate role slider + solo/mute events
         roleEl.addEventListener('input', (e) => {
             if (!e.target.classList.contains('op-slider')) return;
             const card = e.target.closest('.role-card');
             if (!card) return;
             const key = card.dataset.role;
+            if (key) _roleOpacity[key] = (+e.target.value) / 100;
+        });
+        roleEl.addEventListener('click', (e) => {
+            const btn = e.target.closest('.card-sm-btn');
+            if (!btn) return;
+            const card = btn.closest('.role-card');
+            if (!card) return;
+            const key = card.dataset.role;
             if (!key) return;
-            const val = +e.target.value;
-            _roleOpacity[key] = val / 100;
-            const valEl = document.getElementById(`role-opacity-val-${key}`);
-            if (valEl) valEl.textContent = val + '%';
+            _handleSoloMute('role', key, btn.dataset.action, _ALL_ROLES);
         });
     }
+
+    // ── Role stats grid (Quark Types totals) ──
+    const statsBar2 = document.getElementById('role-stats-bar-2');
+    if (statsBar2) statsBar2.innerHTML = _buildStatsGrid('-b');
 
     // ── Xon cards ──
     const listEl = document.getElementById('xon-card-list');
@@ -619,15 +640,16 @@ function _buildXonPanel() {
             + `<span class="xon-card-id">X${i}</span>`
             + `<div class="card-pic-sm" id="xon-node-pic-${i}">?</div>`
             + `<span class="xon-card-node-label" id="xon-node-lbl-${i}">Node ?</span>`
+            + `<button class="card-sm-btn" data-action="solo" title="Solo">S</button>`
+            + `<button class="card-sm-btn" data-action="mute" title="Mute">M</button>`
             + `<input type="range" class="op-slider" id="xon-opacity-${i}" min="0" max="100" value="100" step="1">`
-            + `<span class="op-val" id="xon-opacity-val-${i}">100%</span>`
             + `</div>`;
     }
     listEl.innerHTML = html;
 
-    // Click + opacity slider delegation
+    // Click + opacity slider + solo/mute delegation
     listEl.addEventListener('mousedown', (e) => {
-        if (e.target.classList.contains('op-slider')) return;
+        if (e.target.classList.contains('op-slider') || e.target.classList.contains('card-sm-btn')) return;
         const card = e.target.closest('.xon-card');
         if (!card) return;
         const idx = parseInt(card.dataset.xonIdx, 10);
@@ -638,14 +660,90 @@ function _buildXonPanel() {
         const card = e.target.closest('.xon-card');
         if (!card) return;
         const idx = parseInt(card.dataset.xonIdx, 10);
-        if (isNaN(idx)) return;
-        const val = +e.target.value;
-        _xonOpacity[idx] = val / 100;
-        const valEl = document.getElementById(`xon-opacity-val-${idx}`);
-        if (valEl) valEl.textContent = val + '%';
+        if (!isNaN(idx)) _xonOpacity[idx] = (+e.target.value) / 100;
+    });
+    listEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.card-sm-btn');
+        if (!btn) return;
+        const card = btn.closest('.xon-card');
+        if (!card) return;
+        const idx = parseInt(card.dataset.xonIdx, 10);
+        if (!isNaN(idx)) _handleSoloMute('xon', idx, btn.dataset.action, [0,1,2,3,4,5]);
     });
 
+    // ── Role stats grid (Xons totals) ──
+    const statsBar = document.getElementById('role-stats-bar');
+    if (statsBar) statsBar.innerHTML = _buildStatsGrid('');
+
     _xonPanelBuilt = true;
+}
+
+// ── Solo / Mute logic ──
+function _handleSoloMute(type, key, action, allKeys) {
+    if (type === 'role') {
+        if (action === 'solo') {
+            // If already solo'd on this key, un-solo (restore all to 100%)
+            const isSolo = allKeys.every(k => k === key ? _roleOpacity[k] === 1 : _roleOpacity[k] === 0);
+            for (const k of allKeys) {
+                _roleOpacity[k] = isSolo ? 1 : (k === key ? 1 : 0);
+                const sl = document.getElementById(`role-opacity-${k}`);
+                if (sl) sl.value = Math.round(_roleOpacity[k] * 100);
+            }
+        } else if (action === 'mute') {
+            _roleOpacity[key] = _roleOpacity[key] === 0 ? 1 : 0;
+            const sl = document.getElementById(`role-opacity-${key}`);
+            if (sl) sl.value = Math.round(_roleOpacity[key] * 100);
+        }
+        _refreshSoloMuteBtns('role', allKeys);
+    } else {
+        if (action === 'solo') {
+            const isSolo = allKeys.every(k => k === key ? _xonOpacity[k] === 1 : _xonOpacity[k] === 0);
+            for (const k of allKeys) {
+                _xonOpacity[k] = isSolo ? 1 : (k === key ? 1 : 0);
+                const sl = document.getElementById(`xon-opacity-${k}`);
+                if (sl) sl.value = Math.round(_xonOpacity[k] * 100);
+            }
+        } else if (action === 'mute') {
+            _xonOpacity[key] = _xonOpacity[key] === 0 ? 1 : 0;
+            const sl = document.getElementById(`xon-opacity-${key}`);
+            if (sl) sl.value = Math.round(_xonOpacity[key] * 100);
+        }
+        _refreshSoloMuteBtns('xon', allKeys);
+    }
+}
+
+function _refreshSoloMuteBtns(type, allKeys) {
+    if (type === 'role') {
+        const listEl = document.getElementById('role-card-list');
+        if (!listEl) return;
+        for (const card of listEl.children) {
+            const key = card.dataset.role;
+            if (!key) continue;
+            const btns = card.querySelectorAll('.card-sm-btn');
+            const muted = _roleOpacity[key] === 0;
+            const soloed = allKeys.filter(k => _roleOpacity[k] > 0).length === 1 && _roleOpacity[key] > 0;
+            for (const b of btns) {
+                b.classList.remove('active-solo', 'active-mute');
+                if (b.dataset.action === 'solo' && soloed) b.classList.add('active-solo');
+                if (b.dataset.action === 'mute' && muted) b.classList.add('active-mute');
+            }
+        }
+    } else {
+        const listEl = document.getElementById('xon-card-list');
+        if (!listEl) return;
+        for (const card of listEl.children) {
+            const idx = parseInt(card.dataset.xonIdx, 10);
+            if (isNaN(idx)) continue;
+            const btns = card.querySelectorAll('.card-sm-btn');
+            const muted = _xonOpacity[idx] === 0;
+            const soloed = allKeys.filter(k => _xonOpacity[k] > 0).length === 1 && _xonOpacity[idx] > 0;
+            for (const b of btns) {
+                b.classList.remove('active-solo', 'active-mute');
+                if (b.dataset.action === 'solo' && soloed) b.classList.add('active-solo');
+                if (b.dataset.action === 'mute' && muted) b.classList.add('active-mute');
+            }
+        }
+    }
 }
 
 function updateXonPanel() {
@@ -657,6 +755,17 @@ function updateXonPanel() {
 
     // Build structure once; after that only patch dynamic values
     if (!_xonPanelBuilt) _buildXonPanel();
+
+    // ── Update role stats bars in-place (both Xons and Quark Types totals) ──
+    const _roleKeys = ['pu1','pu2','pd','nd1','nd2','nu','oct','gluon','weak'];
+    for (const key of _roleKeys) {
+        const v = _globalRoleStats[key] || 0;
+        const t = v >= 1000 ? (v / 1000).toFixed(1) + 'k' : '' + v;
+        const el1 = document.getElementById(`role-stat-${key}`);
+        if (el1 && el1.textContent !== t) el1.textContent = t;
+        const el2 = document.getElementById(`role-stat-${key}-b`);
+        if (el2 && el2.textContent !== t) el2.textContent = t;
+    }
 
     // ── Update xon cards in-place (node, color, highlight) ──
     for (let i = 0; i < _demoXons.length; i++) {
@@ -1367,56 +1476,15 @@ function _playbackTrailLen() {
 }
 
 // Reconstruct xon trails from _btSnapshots history after a snapshot restore.
-// Snapshot trail data may be shorter than the slider requests (e.g. saved under
-// old 250 cap).  Walk backwards through _btSnapshots to build trails up to the
-// slider length.  Each snapshot stores xon[i].node — one node per tick.
+// Each snapshot stores the FULL trail for that tick (including multi-hop
+// movements within a single tick). The snapshot trail is already complete —
+// no augmentation needed. This function is now a no-op; kept as a stub so
+// call sites don't break.
 function _augmentTrailsFromSnapshots() {
-    const desired = _playbackTrailLen();
-    const snaps = _btSnapshots;
-    if (!snaps || snaps.length === 0) return;
-    for (let xi = 0; xi < _demoXons.length; xi++) {
-        const xon = _demoXons[xi];
-        const curLen = xon.trail ? xon.trail.length : 0;
-        if (curLen >= desired) continue; // already long enough
-        // Walk backwards through snapshot history to prepend trail entries
-        const need = desired - curLen;
-        const prependNodes = [];
-        const prependCols = [];
-        const prependRoles = [];
-        const prependPos = [];
-        // Start from most recent snapshot (end of array) and go backwards.
-        // _btSnapshots[last] = the snapshot BEFORE the current tick.
-        for (let si = snaps.length - 1; si >= 0 && prependNodes.length < need; si--) {
-            const sx = snaps[si].xons;
-            if (!sx || !sx[xi]) break;
-            const sxon = sx[xi];
-            // Skip if this node is already the first entry in our existing trail
-            if (prependNodes.length === 0 && curLen > 0 && sxon.node === xon.trail[0]) continue;
-            prependNodes.push(sxon.node);
-            const m = sxon._mode, q = sxon._quarkType;
-            prependCols.push(_modeColor(m, q));
-            const role = (m === 'tet' || m === 'idle_tet') ? (q || 'oct') :
-                         m === 'gluon' ? 'gluon' : m === 'weak' ? 'weak' : 'oct';
-            prependRoles.push(role);
-            // Use snapshot positions for frozen pos
-            const sp = snaps[si].pos;
-            const n = sxon.node;
-            prependPos.push(sp && sp[n] ? [sp[n][0], sp[n][1], sp[n][2]] : [0, 0, 0]);
-        }
-        if (prependNodes.length === 0) continue;
-        // Reverse — we walked backwards but trail is chronological
-        prependNodes.reverse();
-        prependCols.reverse();
-        prependRoles.reverse();
-        prependPos.reverse();
-        // Prepend to existing trail
-        xon.trail = prependNodes.concat(xon.trail || []);
-        xon.trailColHistory = prependCols.concat(xon.trailColHistory || []);
-        if (!xon._trailRoleHistory) xon._trailRoleHistory = [];
-        xon._trailRoleHistory = prependRoles.concat(xon._trailRoleHistory);
-        if (!xon._trailFrozenPos) xon._trailFrozenPos = [];
-        xon._trailFrozenPos = prependPos.concat(xon._trailFrozenPos);
-    }
+    // Snapshot trails are restored directly by _btRestoreSnapshot().
+    // Prepending from snapshot node positions created teleportation artifacts
+    // because snapshots store one node per tick while trails have multiple
+    // entries per tick from multi-hop movements (walkToFace, weak BFS, etc.).
 }
 
 // Incremental visit tracker for playback

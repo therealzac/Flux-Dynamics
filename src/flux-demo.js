@@ -830,7 +830,6 @@ function _tickDemoXons(dt) {
                     xon._dying = false;
                     xon._dyingStartTick = null; // reset for T14
                     if (xon.trailLine) xon.trailLine.visible = false;
-                    if (xon._weakTrailLine) xon._weakTrailLine.visible = false;
                 } else {
                     _finalCleanupXon(xon);
                     _demoXons.splice(xi, 1);
@@ -861,26 +860,6 @@ function _tickDemoXons(dt) {
 
         if (!xon.alive || !xon.group) continue;
 
-        // Lazy-create a second trail overlay for weak (near-black) segments.
-        // Main trail stays AdditiveBlending (normal glow); overlay uses NormalBlending
-        // so black pixels are visible against the grey background.
-        if (xon.trailLine && !xon._weakTrailLine) {
-            const wGeo = new THREE.BufferGeometry();
-            const wPos = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
-            const wCol = new Float32Array((XON_TRAIL_VERTS + 1) * 3);
-            wGeo.setAttribute('position', new THREE.BufferAttribute(wPos, 3));
-            wGeo.setAttribute('color', new THREE.BufferAttribute(wCol, 3));
-            const wMat = new THREE.LineBasicMaterial({
-                vertexColors: true, transparent: true, opacity: 1.0,
-                depthTest: false, blending: THREE.NormalBlending,
-            });
-            const wLine = new THREE.Line(wGeo, wMat);
-            wLine.renderOrder = 21; // between main trail (20) and spark (22)
-            scene.add(wLine);
-            xon._weakTrailLine = wLine;
-            xon._weakTrailPos = wPos;
-            xon._weakTrailCol = wCol;
-        }
         // Ensure main trail stays AdditiveBlending always
         if (xon.trailLine) {
             const mat = xon.trailLine.material;
@@ -975,18 +954,6 @@ function _tickDemoXons(dt) {
         if (xon._highlightT > 0) xon._highlightT = Math.max(0, xon._highlightT - dt);
         xon.sparkMat.rotation = Math.random() * Math.PI * 2;
 
-        // Role-based overlay routing: weak AND gluon segments go to
-        // NormalBlending overlay so they paint opaquely over additive trails.
-        const _rhArr = xon._trailRoleHistory;
-        const _isOverlayRole = (idx) => {
-            if (!_rhArr || !_rhArr[idx]) return false;
-            return _rhArr[idx] === 'weak' || _rhArr[idx] === 'gluon';
-        };
-        const _isGluonRole = (idx) => {
-            if (!_rhArr || !_rhArr[idx]) return false;
-            return _rhArr[idx] === 'gluon';
-        };
-
         // Trail: fading vertex-colored path
         // Trails knob controls how many trail points are visible (0-1000).
         // Always store full history; render only the last `visLen` points.
@@ -1016,9 +983,15 @@ function _tickDemoXons(dt) {
                 const cp1 = fp[i]     || pos[xon.trail[i]];
                 const cp2 = fp[i + 1] || pos[xon.trail[i + 1]];
                 if (!cp1 || !cp2) continue;
-                const cp0 = (i > 0 ? (fp[i - 1] || pos[xon.trail[i - 1]]) : null) || cp1;
-                const cp3 = (i + 2 < fullLen ? (fp[i + 2] || pos[xon.trail[i + 2]]) : null)
+                let cp0 = (i > 0 ? (fp[i - 1] || pos[xon.trail[i - 1]]) : null) || cp1;
+                let cp3 = (i + 2 < fullLen ? (fp[i + 2] || pos[xon.trail[i + 2]]) : null)
                     || [2*cp2[0]-cp1[0], 2*cp2[1]-cp1[1], 2*cp2[2]-cp1[2]];
+                // Clamp tangent control points: if cp0 or cp3 are far from their
+                // anchor (teleport in adjacent segment), collapse to prevent spline overshoot
+                { const d0x=cp0[0]-cp1[0],d0y=cp0[1]-cp1[1],d0z=cp0[2]-cp1[2];
+                  if(d0x*d0x+d0y*d0y+d0z*d0z>1.44) cp0=cp1; }
+                { const d3x=cp3[0]-cp2[0],d3y=cp3[1]-cp2[1],d3z=cp3[2]-cp2[2];
+                  if(d3x*d3x+d3y*d3y+d3z*d3z>1.44) cp3=cp2; }
                 // Teleport check between cp1 and cp2
                 const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
                 const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
@@ -1029,8 +1002,9 @@ function _tickDemoXons(dt) {
                 const scr = ((segCol >> 16) & 0xff) / 255;
                 const scg = ((segCol >> 8) & 0xff) / 255;
                 const scb = (segCol & 0xff) / 255;
-                const isOverlay = _isOverlayRole(i);
-                const isGluon = _isGluonRole(i);
+                // Per-segment role opacity (baked into vertex color alpha)
+                const segRole = (_rh && _rh[i]) ? _rh[i] : null;
+                const segRoleOp = (segRole && typeof _roleOpacity !== 'undefined' && _roleOpacity[segRole] != null) ? _roleOpacity[segRole] : 1;
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
@@ -1044,33 +1018,17 @@ function _tickDemoXons(dt) {
                     xon.trailPos[out * 3]     = px;
                     xon.trailPos[out * 3 + 1] = py;
                     xon.trailPos[out * 3 + 2] = pz;
-                    if (xon._weakTrailPos) {
-                        // Always write real position — NaN renders at origin in WebGL
-                        xon._weakTrailPos[out * 3]     = px;
-                        xon._weakTrailPos[out * 3 + 1] = py;
-                        xon._weakTrailPos[out * 3 + 2] = pz;
-                    }
                     // Progress through entire trail for alpha fade (0=tail, 1=head)
                     const progress = (vi + u) / Math.max(bodyLen - 1, 1);
                     // Gentle fade: linear with floor so long trails stay visible
                     const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
-                        if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
-                    } else if (isOverlay) {
-                        // Weak segments go on NormalBlending overlay (role-based routing)
-                        // Full brightness — no fadeCurve; material opacity (weakOp * sparkOp) handles brightness.
-                        xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
-                        if (xon._weakTrailCol) {
-                            xon._weakTrailCol[out*3] = scr; xon._weakTrailCol[out*3+1] = scg; xon._weakTrailCol[out*3+2] = scb;
-                        }
                     } else {
                         const flashBoost = xon.flashT * 0.4 * progress;
                         xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-                        const alpha = sparkOp * xonOp * Math.min(1, fadeCurve + flashBoost);
+                        const alpha = sparkOp * xonOp * segRoleOp * Math.min(1, fadeCurve + flashBoost);
                         xon.trailCol[out*3] = scr * alpha; xon.trailCol[out*3+1] = scg * alpha; xon.trailCol[out*3+2] = scb * alpha;
-                        // Zero overlay color for non-overlay segments (position already set above)
-                        if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
                     }
                     out++;
                 }
@@ -1089,7 +1047,7 @@ function _tickDemoXons(dt) {
                     const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
+                    const headRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[headRole] != null) ? _roleOpacity[headRole] : 1;
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
@@ -1101,20 +1059,8 @@ function _tickDemoXons(dt) {
                         if (teleport) { px = hp1[0]; py = hp1[1]; pz = hp1[2]; }
                         else { const bl = _fjBlend(hp0, hp1, hp2, _fjP3, s / headSubs * xon.tweenT); px = bl[0]; py = bl[1]; pz = bl[2]; }
                         xon.trailPos[out*3] = px; xon.trailPos[out*3+1] = py; xon.trailPos[out*3+2] = pz;
-                        if (xon._weakTrailPos) {
-                            xon._weakTrailPos[out*3] = px;
-                            xon._weakTrailPos[out*3+1] = py;
-                            xon._weakTrailPos[out*3+2] = pz;
-                        }
-                        if (headIsOverlay) {
-                            xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
-                            if (xon._weakTrailCol) {
-                                xon._weakTrailCol[out*3] = hcr; xon._weakTrailCol[out*3+1] = hcg; xon._weakTrailCol[out*3+2] = hcb;
-                            }
-                        } else {
-                            xon.trailCol[out*3] = hcr*sparkOp*xonOp; xon.trailCol[out*3+1] = hcg*sparkOp*xonOp; xon.trailCol[out*3+2] = hcb*sparkOp*xonOp;
-                            if (xon._weakTrailCol) { xon._weakTrailCol[out*3] = 0; xon._weakTrailCol[out*3+1] = 0; xon._weakTrailCol[out*3+2] = 0; }
-                        }
+                        const headAlpha = sparkOp * xonOp * headRoleOp;
+                        xon.trailCol[out*3] = hcr*headAlpha; xon.trailCol[out*3+1] = hcg*headAlpha; xon.trailCol[out*3+2] = hcb*headAlpha;
                         out++;
                     }
                 }
@@ -1122,12 +1068,6 @@ function _tickDemoXons(dt) {
             xon.trailGeo.setDrawRange(0, Math.min(out, XON_TRAIL_VERTS));
             xon.trailGeo.attributes.position.needsUpdate = true;
             xon.trailGeo.attributes.color.needsUpdate = true;
-            if (xon._weakTrailLine) {
-                xon._weakTrailLine.material.opacity = weakOp * sparkOp * xonOp;
-                xon._weakTrailLine.geometry.setDrawRange(0, Math.min(out, XON_TRAIL_VERTS));
-                xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
-                xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
-            }
         } else {
         // ── Normal straight-line trails ──
 
@@ -1152,15 +1092,6 @@ function _tickDemoXons(dt) {
                     xon.trailCol[vi * 3] = 0;
                     xon.trailCol[vi * 3 + 1] = 0;
                     xon.trailCol[vi * 3 + 2] = 0;
-                    // Also hide on overlay
-                    if (xon._weakTrailPos) {
-                        xon._weakTrailPos[vi * 3] = _spx;
-                        xon._weakTrailPos[vi * 3 + 1] = _spy;
-                        xon._weakTrailPos[vi * 3 + 2] = _spz;
-                        xon._weakTrailCol[vi * 3] = 0;
-                        xon._weakTrailCol[vi * 3 + 1] = 0;
-                        xon._weakTrailCol[vi * 3 + 2] = 0;
-                    }
                     continue;
                 }
             }
@@ -1174,39 +1105,15 @@ function _tickDemoXons(dt) {
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Weak + gluon segments: render on overlay line (NormalBlending) so they paint opaquely
-            if (_isOverlayRole(i)) {
-                xon.trailCol[vi * 3] = 0;
-                xon.trailCol[vi * 3 + 1] = 0;
-                xon.trailCol[vi * 3 + 2] = 0;
-                if (xon._weakTrailPos) {
-                    xon._weakTrailPos[vi * 3]     = np[0];
-                    xon._weakTrailPos[vi * 3 + 1] = np[1];
-                    xon._weakTrailPos[vi * 3 + 2] = np[2];
-                }
-                if (xon._weakTrailCol) {
-                    xon._weakTrailCol[vi * 3] = cr;
-                    xon._weakTrailCol[vi * 3 + 1] = cg;
-                    xon._weakTrailCol[vi * 3 + 2] = cb;
-                }
-                continue;
-            }
-            // Non-overlay segment: hide on overlay with zero color + real position
-            // (NaN positions render at origin in WebGL, causing phantom lines to node 0)
-            if (xon._weakTrailPos) {
-                xon._weakTrailPos[vi * 3] = np[0];
-                xon._weakTrailPos[vi * 3 + 1] = np[1];
-                xon._weakTrailPos[vi * 3 + 2] = np[2];
-                xon._weakTrailCol[vi * 3] = 0;
-                xon._weakTrailCol[vi * 3 + 1] = 0;
-                xon._weakTrailCol[vi * 3 + 2] = 0;
-            }
+            // Per-segment role opacity (baked into vertex color alpha)
+            const segRole = (_rh2 && _rh2[i]) ? _rh2[i] : null;
+            const segRoleOp = (segRole && typeof _roleOpacity !== 'undefined' && _roleOpacity[segRole] != null) ? _roleOpacity[segRole] : 1;
             // Gentle fade: linear with floor so long trails stay visible
             const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
             const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
             const flashBoost = xon.flashT * 0.4 * progress;
             xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
-            const alpha = sparkOp * xonOp * Math.min(1, fadeCurve + flashBoost);
+            const alpha = sparkOp * xonOp * segRoleOp * Math.min(1, fadeCurve + flashBoost);
             xon.trailCol[vi * 3] = cr * alpha;
             xon.trailCol[vi * 3 + 1] = cg * alpha;
             xon.trailCol[vi * 3 + 2] = cb * alpha;
@@ -1231,38 +1138,14 @@ function _tickDemoXons(dt) {
                     xon.trailPos[last * 3 + 2] = xon.group.position.z;
                     const headCol = xon.col;
                     const headRole = _xonRole(xon);
-                    const headIsOverlay = headRole === 'weak' || headRole === 'gluon';
+                    const headRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[headRole] != null) ? _roleOpacity[headRole] : 1;
                     const hcr = ((headCol >> 16) & 0xff) / 255;
                     const hcg = ((headCol >> 8) & 0xff) / 255;
                     const hcb = (headCol & 0xff) / 255;
-                    if (headIsOverlay) {
-                        // Weak/gluon head: hide on main, show on overlay
-                        xon.trailCol[last * 3] = 0;
-                        xon.trailCol[last * 3 + 1] = 0;
-                        xon.trailCol[last * 3 + 2] = 0;
-                    } else {
-                        xon.trailCol[last * 3] = hcr * sparkOp * xonOp;
-                        xon.trailCol[last * 3 + 1] = hcg * sparkOp * xonOp;
-                        xon.trailCol[last * 3 + 2] = hcb * sparkOp * xonOp;
-                    }
-                    // Mirror head to overlay
-                    if (xon._weakTrailPos) {
-                        if (headIsOverlay) {
-                            xon._weakTrailPos[last * 3] = xon.group.position.x;
-                            xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
-                            xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;
-                            xon._weakTrailCol[last * 3] = hcr;
-                            xon._weakTrailCol[last * 3 + 1] = hcg;
-                            xon._weakTrailCol[last * 3 + 2] = hcb;
-                        } else {
-                            xon._weakTrailPos[last * 3] = xon.group.position.x;
-                            xon._weakTrailPos[last * 3 + 1] = xon.group.position.y;
-                            xon._weakTrailPos[last * 3 + 2] = xon.group.position.z;
-                            xon._weakTrailCol[last * 3] = 0;
-                            xon._weakTrailCol[last * 3 + 1] = 0;
-                            xon._weakTrailCol[last * 3 + 2] = 0;
-                        }
-                    }
+                    const headAlpha = sparkOp * xonOp * headRoleOp;
+                    xon.trailCol[last * 3] = hcr * headAlpha;
+                    xon.trailCol[last * 3 + 1] = hcg * headAlpha;
+                    xon.trailCol[last * 3 + 2] = hcb * headAlpha;
                 }
             }
         }
@@ -1270,13 +1153,6 @@ function _tickDemoXons(dt) {
         xon.trailGeo.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
         xon.trailGeo.attributes.position.needsUpdate = true;
         xon.trailGeo.attributes.color.needsUpdate = true;
-        // Flush weak overlay geometry + drive opacity from slider
-        if (xon._weakTrailLine) {
-            xon._weakTrailLine.material.opacity = weakOp * sparkOp * xonOp;
-            xon._weakTrailLine.geometry.setDrawRange(0, Math.min(n, XON_TRAIL_LENGTH));
-            xon._weakTrailLine.geometry.attributes.position.needsUpdate = true;
-            xon._weakTrailLine.geometry.attributes.color.needsUpdate = true;
-        }
         } // end normal trail else-block
 
         // T37 fallback: if trail body was too short for the boost loop to execute
@@ -1491,6 +1367,7 @@ function startDemoLoop() {
     _demoTick = 0;
     _planckSeconds = 0;
     _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
+    _globalRoleStats = { pu1:0, pu2:0, pd:0, nd1:0, nd2:0, nu:0, oct:0, gluon:0, weak:0 };
     // Allow fixed seed via URL param (?seed=0xABCD1234) or global override for replay.
     const _urlSeed = new URLSearchParams(window.location.search).get('seed');
     if (typeof _forceSeed !== 'undefined' && _forceSeed !== null) {
@@ -1536,6 +1413,11 @@ function startDemoLoop() {
         if (xon.sparkMat) xon.sparkMat.dispose();
         if (xon.trailLine) scene.remove(xon.trailLine);
         if (xon.trailGeo) xon.trailGeo.dispose();
+        // Clean up weak overlay trail (NormalBlending mesh) — orphaned ones paint black
+        if (xon._weakTrailLine) { scene.remove(xon._weakTrailLine); }
+        if (xon._weakTrailLine && xon._weakTrailLine.geometry) xon._weakTrailLine.geometry.dispose();
+        if (xon._weakTrailLine && xon._weakTrailLine.material) xon._weakTrailLine.material.dispose();
+        xon._weakTrailLine = null; xon._weakTrailPos = null; xon._weakTrailCol = null;
     }
     _demoXons = [];
     _demoGluons = [];               // Demo 3.1: clear gluon pool
@@ -3481,6 +3363,20 @@ async function demoTick() {
         });
         stateVersion++;
         applyPositions(pSolved);
+        // Re-freeze any trail entries that were captured before the solver ran (stale [0,0,0])
+        for (const xon of _demoXons) {
+            if (!xon || !xon.alive || !xon._trailFrozenPos) continue;
+            for (let ti = 0; ti < xon._trailFrozenPos.length; ti++) {
+                const fp = xon._trailFrozenPos[ti];
+                if (fp[0] === 0 && fp[1] === 0 && fp[2] === 0) {
+                    const n = xon.trail[ti];
+                    const p = pos[n];
+                    if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+                        xon._trailFrozenPos[ti] = [p[0], p[1], p[2]];
+                    }
+                }
+            }
+        }
         updateVoidSpheres(); // evaluate with final solved positions
         updateSpheres();
     }
@@ -3654,7 +3550,8 @@ async function demoTick() {
             }
             const octOp = minOctXoi * _roleOpacity.oct * graphOp;
             for (const scId of _octSCIds) {
-                if (!_ruleAnnotations.scOpacity.has(scId)) _ruleAnnotations.scOpacity.set(scId, octOp);
+                const prev = _ruleAnnotations.scOpacity.get(scId);
+                _ruleAnnotations.scOpacity.set(scId, prev != null ? Math.min(prev, octOp) : octOp);
             }
         }
         _ruleAnnotations.dirty = true;
@@ -4168,13 +4065,19 @@ async function demoTick() {
         if (m === 'oct' || m === 'oct_formation') {
             x._modeStats.oct++;
             _globalModeStats.oct++;
+            _globalRoleStats.oct++;
             if (!x._octModeSince) x._octModeSince = _demoTick;
         } else {
             if (m === 'tet') { x._modeStats.tet++; _globalModeStats.tet++; }
             else if (m === 'idle_tet') { x._modeStats.idle_tet++; _globalModeStats.idle_tet++; }
-            else if (m === 'weak') { x._modeStats.weak++; _globalModeStats.weak++; }
-            else if (m === 'gluon') { x._modeStats.gluon++; _globalModeStats.gluon++; }
+            else if (m === 'weak') { x._modeStats.weak++; _globalModeStats.weak++; _globalRoleStats.weak++; }
+            else if (m === 'gluon') { x._modeStats.gluon++; _globalModeStats.gluon++; _globalRoleStats.gluon++; }
             x._octModeSince = 0;
+        }
+        // Per-role stats for tet/idle_tet (maps quarkType to specific role)
+        if (m === 'tet' || m === 'idle_tet') {
+            const role = x._quarkType || 'oct';
+            if (_globalRoleStats[role] != null) _globalRoleStats[role]++;
         }
     }
 

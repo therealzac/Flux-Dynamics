@@ -277,7 +277,7 @@ let _autoOrbit = false;
 // Called every frame from the render loop (dt in seconds).
 // Rotates theta at a speed derived from the orbit-speed-slider.
 function _tickAutoOrbit(dt) {
-    if (!_autoOrbit || isDrag) return;
+    if (!_autoOrbit || isDrag || (typeof _demoPaused !== 'undefined' && _demoPaused)) return;
     const slider = document.getElementById('orbit-speed-slider');
     const raw = slider ? +slider.value : 25; // 1-100
     const speed = raw * 0.004; // radians/sec: 0.004 (slow) to 0.4 (fast)

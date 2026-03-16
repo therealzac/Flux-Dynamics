@@ -3400,6 +3400,82 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl) + '|' + seed;
+
+    // ── Clean cold set: reconstruct trails to 1 entry per tick ──
+    // Hot set = last min(100, 50% of total) snapshots — left as-is for
+    // arbitrary traversal.  Cold set = everything before that — frozen
+    // into a single sane happy path with 1 trail node per snapshot.
+    const total = snapshots.length;
+    const hotSize = Math.min(100, Math.ceil(total * 0.5));
+    const coldEnd = Math.max(0, total - hotSize); // exclusive upper bound of cold set
+    if (coldEnd > 0) {
+        const numXons = snapshots[0].xons ? snapshots[0].xons.length : 0;
+        // Walk cold set sequentially: rebuild each xon's trail from per-snapshot node
+        for (let si = 0; si < coldEnd; si++) {
+            const snap = snapshots[si];
+            if (!snap.xons) continue;
+            for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
+                const xon = snap.xons[xi];
+                // Clean trail: just this snapshot's node (+ previous clean trail from prior snapshot)
+                if (si === 0) {
+                    // First snapshot: single entry
+                    xon.trail = [xon.node];
+                    xon.trailColHistory = [xon.col || 0xffffff];
+                    xon._trailRoleHistory = [xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct')];
+                    // Frozen pos from this snapshot's solver state
+                    const p = snap.pos && snap.pos[xon.node];
+                    xon._trailFrozenPos = [p ? [p[0], p[1], p[2]] : [0, 0, 0]];
+                } else {
+                    // Append this snapshot's node to previous snapshot's clean trail
+                    const prev = snapshots[si - 1].xons[xi];
+                    xon.trail = prev.trail.concat(xon.node);
+                    xon.trailColHistory = prev.trailColHistory.concat(xon.col || 0xffffff);
+                    const role = xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
+                    xon._trailRoleHistory = prev._trailRoleHistory.concat(role);
+                    const p = snap.pos && snap.pos[xon.node];
+                    xon._trailFrozenPos = prev._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
+                }
+            }
+        }
+        // Patch the first hot-set snapshot to inherit the clean cold trail
+        if (coldEnd < total) {
+            const firstHot = snapshots[coldEnd];
+            const lastCold = snapshots[coldEnd - 1];
+            if (firstHot.xons && lastCold.xons) {
+                for (let xi = 0; xi < numXons && xi < firstHot.xons.length; xi++) {
+                    const hx = firstHot.xons[xi];
+                    const cx = lastCold.xons[xi];
+                    // Replace bloated trail prefix with clean cold trail + this snapshot's node
+                    hx.trail = cx.trail.concat(hx.node);
+                    hx.trailColHistory = cx.trailColHistory.concat(hx.col || 0xffffff);
+                    const role = hx._quarkType || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : 'oct');
+                    hx._trailRoleHistory = cx._trailRoleHistory.concat(role);
+                    const p = firstHot.pos && firstHot.pos[hx.node];
+                    hx._trailFrozenPos = cx._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
+                }
+            }
+        }
+        const beforeLen = snapshots[Math.min(coldEnd, total - 1)].xons[0].trail.length;
+        console.log(`%c[Council IDB] Cold set cleaned: ${coldEnd} snapshots → 1 trail entry/tick (trail len ${beforeLen})`, 'color:#88cc88');
+    }
+
+    // ── GC blacklist entries for cold set ticks ──
+    // Cold set is frozen — backtracker will never revisit those ticks.
+    if (coldEnd > 0 && _sweepBlacklist && _sweepBlacklist.size > 0) {
+        const coldMaxTick = snapshots[coldEnd - 1].tick;
+        let gcCount = 0;
+        for (const [tick] of _sweepBlacklist) {
+            if (tick <= coldMaxTick) {
+                _sweepBlacklist.delete(tick);
+                gcCount++;
+            }
+        }
+        if (gcCount > 0) {
+            _sweepTotalBlacklisted = [..._sweepBlacklist.values()].reduce((s, set) => s + set.size, 0);
+            console.log(`%c[Council IDB] GC'd ${gcCount} blacklist tick entries (ticks ≤ ${coldMaxTick})`, 'color:#88cc88');
+        }
+    }
+
     const snapsArr = snapshots.map(_serializeSnapshot);
     const movesArr = [];
     for (const [tick, moveMap] of moves) {

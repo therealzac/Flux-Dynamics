@@ -487,6 +487,21 @@ PHASE 4 enforces Pauli exclusion absolutely:
 
 ---
 
+## 10.5. Known Bugs & Repro Steps
+
+### Laser Pointer Trail (node 0 → opposite oct axis)
+A long straight trail line extends from node 0 through the oct to the opposite axis.
+**Repro:**
+1. Refresh the page
+2. Select Rule 9 (Adaptive ejection √n)
+3. Select the t260 council run from dropdown
+4. Pause at the end of the run
+5. Observe: laser pointer trail visible from node 0 to opposite axis of oct
+
+**Root cause (under investigation):** Trail frozen positions contain a discontinuous jump — likely a backtracker snapshot restore that repositions xons without properly rewinding the trail history, creating a segment that spans the entire oct diameter.
+
+---
+
 ## 11. Development Conventions
 
 - **Cache busting**: After editing any `src/*.js` file, bump `?v=N` in `flux-v2.html` script tag
