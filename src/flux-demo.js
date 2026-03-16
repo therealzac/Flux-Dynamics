@@ -3726,7 +3726,9 @@ async function demoTick() {
         if (_maxTickReached >= nextMilestone) {
             _lastAutosavePeak = Math.floor(_maxTickReached / 10) * 10;
             _gc10();
-            if (typeof _isCouncilEligible === 'function' && _isCouncilEligible()
+            // Only autosave when we're AT the peak (not replaying old ground)
+            if (_demoTick >= _maxTickReached
+                && typeof _isCouncilEligible === 'function' && _isCouncilEligible()
                 && typeof _saveCurrentRunToCouncil === 'function') {
                 _saveCurrentRunToCouncil();
             }
