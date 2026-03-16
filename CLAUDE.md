@@ -89,6 +89,9 @@ Tests define the physics we are trying to satisfy. If a test fails, the fix is i
 
 **Zac has corrected this multiple times. There are NO exceptions. Period.**
 
+### Unit test IDs must be globally unique
+Every entry in `LIVE_GUARD_REGISTRY` is keyed by its `id` field (e.g. `'T90'`, `'T91'`, `'T92'`). The `_liveGuards` object is built by iterating the registry and assigning `_liveGuards[entry.id]`. **Duplicate IDs cause silent overwrites** — the later entry clobbers the earlier one, and the earlier guard never runs. This happened with T92 (hadron ejection was silently killed by a duplicate idle-oct guard). Always verify a new test ID is unique across the entire registry before adding it.
+
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
 

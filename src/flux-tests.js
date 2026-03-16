@@ -1361,10 +1361,36 @@ const LIVE_GUARD_REGISTRY = [
     // tet whose dominant quark is still underrepresented wastes progress.
     {
       id: 'T90', name: 'First-place quark ejection',
-      init: { _leaderTicks: null },
+      init: { _leaderTicks: null, _leaderValue: null },
+      projected(states) {
+        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
+        if (!_nucleusTetFaceData) return null;
+        const g = _liveGuards['T90'];
+        if (!g || !g._leaderTicks) return null;
+        // For each face at or past tolerance, reject moves that land on that face's nodes
+        // while the face remains fully actualized — the xon would be feeding the leader.
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1);
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (!allActive) continue;
+          const faceNodes = new Set(fd.allNodes || fd.cycle);
+          for (const s of states) {
+            if (faceNodes.has(s.futureNode) && !faceNodes.has(s.fromNode)) {
+              return `projected T90: move to node ${s.futureNode} feeds face ${fId} whose dominant quark is in 1st place for ${g._leaderTicks[fId]} ticks (tol=${tol})`;
+            }
+          }
+        }
+        return null;
+      },
       snapshot(g) {
         if (!_nucleusTetFaceData) return;
         if (!g._leaderTicks) g._leaderTicks = {};
+        if (!g._leaderValue) g._leaderValue = {};
         const types = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
@@ -1372,19 +1398,22 @@ const LIVE_GUARD_REGISTRY = [
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
           if (allActive && typeof _dominantQuarkForFace === 'function' && _actualizationVisits) {
             const dominant = _dominantQuarkForFace(fId);
-            if (!dominant) { g._leaderTicks[fId] = 0; continue; }
+            if (!dominant) { g._leaderTicks[fId] = 0; g._leaderValue[fId] = 0; continue; }
             const fv = _actualizationVisits[fId];
-            if (!fv) { g._leaderTicks[fId] = 0; continue; }
+            if (!fv) { g._leaderTicks[fId] = 0; g._leaderValue[fId] = 0; continue; }
             let maxCount = 0;
             for (const t of types) { if ((fv[t] || 0) > maxCount) maxCount = fv[t] || 0; }
             const dominantCount = fv[dominant] || 0;
             if (dominantCount === maxCount && maxCount > 0) {
               g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+              g._leaderValue[fId] = maxCount;
             } else {
               g._leaderTicks[fId] = 0;
+              g._leaderValue[fId] = 0;
             }
           } else {
             g._leaderTicks[fId] = 0;
+            g._leaderValue[fId] = 0;
           }
         }
       },
@@ -1392,9 +1421,11 @@ const LIVE_GUARD_REGISTRY = [
         if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._leaderTicks || !_nucleusTetFaceData) return null;
-        const tol = typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T90_TOLERANCE !== 'undefined' ? T90_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
@@ -1414,10 +1445,34 @@ const LIVE_GUARD_REGISTRY = [
     // Enforced via backtracker — no brute-force SC removal.
     {
       id: 'T91', name: 'First-place face ejection',
-      init: { _leaderTicks: null },
+      init: { _leaderTicks: null, _leaderValue: null },
+      projected(states) {
+        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
+        if (!_nucleusTetFaceData) return null;
+        const g = _liveGuards['T91'];
+        if (!g || !g._leaderTicks) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1);
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (!allActive) continue;
+          const faceNodes = new Set(fd.allNodes || fd.cycle);
+          for (const s of states) {
+            if (faceNodes.has(s.futureNode) && !faceNodes.has(s.fromNode)) {
+              return `projected T91: move to node ${s.futureNode} feeds face ${fId} which has most total visits for ${g._leaderTicks[fId]} ticks (tol=${tol})`;
+            }
+          }
+        }
+        return null;
+      },
       snapshot(g) {
         if (!_nucleusTetFaceData || !_actualizationVisits) return;
         if (!g._leaderTicks) g._leaderTicks = {};
+        if (!g._leaderValue) g._leaderValue = {};
         // Compute total visits per face
         const totals = {};
         let maxTotal = 0;
@@ -1437,8 +1492,10 @@ const LIVE_GUARD_REGISTRY = [
           const tiedCount = Object.values(totals).filter(v => v === maxTotal).length;
           if (allActive && isLeader && tiedCount < 8) {
             g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+            g._leaderValue[fId] = maxTotal;
           } else {
             g._leaderTicks[fId] = 0;
+            g._leaderValue[fId] = 0;
           }
         }
       },
@@ -1446,9 +1503,11 @@ const LIVE_GUARD_REGISTRY = [
         if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._leaderTicks || !_nucleusTetFaceData) return null;
-        const tol = typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T91_TOLERANCE !== 'undefined' ? T91_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
@@ -1466,17 +1525,45 @@ const LIVE_GUARD_REGISTRY = [
     // down. Keeps proton and neutron scores in lockstep.
     {
       id: 'T92', name: 'First-place hadron ejection',
-      init: { _leaderTicks: null },
+      init: { _leaderTicks: null, _leaderValue: null },
+      projected(states) {
+        if (!_nucleusTetFaceData) return null;
+        const g = _liveGuards['T92'];
+        if (!g || !g._leaderTicks) return null;
+        for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+          const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1);
+          if ((g._leaderTicks[fId] || 0) < tol) continue;
+          const allActive = fd.scIds.every(scId =>
+            activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+          if (!allActive) continue;
+          const faceNodes = new Set(fd.allNodes || fd.cycle);
+          for (const s of states) {
+            if (faceNodes.has(s.futureNode) && !faceNodes.has(s.fromNode)) {
+              return `projected T92: move to node ${s.futureNode} feeds face ${fId} whose leading hadron is in 1st place for ${g._leaderTicks[fId]} ticks (tol=${tol})`;
+            }
+          }
+        }
+        return null;
+      },
       snapshot(g) {
         if (!_nucleusTetFaceData || !_actualizationVisits) return;
         if (!g._leaderTicks) g._leaderTicks = {};
+        if (!g._leaderValue) g._leaderValue = {};
 
         // Compute per-hadron face-evenness from _actualizationVisits
         const protonPerFace = [], neutronPerFace = [];
+        let protonTotal = 0, neutronTotal = 0;
         for (let f = 1; f <= 8; f++) {
           const fv = _actualizationVisits[f];
-          protonPerFace.push(fv ? (fv.pu1 || 0) + (fv.pu2 || 0) + (fv.pd || 0) : 0);
-          neutronPerFace.push(fv ? (fv.nd1 || 0) + (fv.nd2 || 0) + (fv.nu || 0) : 0);
+          const p = fv ? (fv.pu1 || 0) + (fv.pu2 || 0) + (fv.pd || 0) : 0;
+          const n = fv ? (fv.nd1 || 0) + (fv.nd2 || 0) + (fv.nu || 0) : 0;
+          protonPerFace.push(p);
+          neutronPerFace.push(n);
+          protonTotal += p;
+          neutronTotal += n;
         }
         const calcEvenness = (arr) => {
           const m = arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -1492,6 +1579,7 @@ const LIVE_GUARD_REGISTRY = [
         const leader = (pEven > nEven + MARGIN) ? 'proton'
                      : (nEven > pEven + MARGIN) ? 'neutron'
                      : null;
+        const leaderTotal = leader === 'proton' ? protonTotal : leader === 'neutron' ? neutronTotal : 0;
 
         const protonTypes = new Set(['pu1', 'pu2', 'pd']);
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
@@ -1500,24 +1588,29 @@ const LIVE_GUARD_REGISTRY = [
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
           if (allActive && leader && typeof _dominantQuarkForFace === 'function') {
             const dominant = _dominantQuarkForFace(fId);
-            if (!dominant) { g._leaderTicks[fId] = 0; continue; }
+            if (!dominant) { g._leaderTicks[fId] = 0; g._leaderValue[fId] = 0; continue; }
             const domHadron = protonTypes.has(dominant) ? 'proton' : 'neutron';
             if (domHadron === leader) {
               g._leaderTicks[fId] = (g._leaderTicks[fId] || 0) + 1;
+              g._leaderValue[fId] = leaderTotal;
             } else {
               g._leaderTicks[fId] = 0;
+              g._leaderValue[fId] = 0;
             }
           } else {
             g._leaderTicks[fId] = 0;
+            g._leaderValue[fId] = 0;
           }
         }
       },
       check(tick, g) {
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._leaderTicks || !_nucleusTetFaceData) return null;
-        const tol = typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
           const fId = parseInt(fIdStr);
+          const tol = _ruleAdaptiveEjection
+            ? Math.max(1, Math.ceil(Math.sqrt(g._leaderValue[fId] || 1)))
+            : (typeof T92_TOLERANCE !== 'undefined' ? T92_TOLERANCE : 1);
           if ((g._leaderTicks[fId] || 0) < tol) continue;
           const nowActive = fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
@@ -1634,38 +1727,6 @@ const LIVE_GUARD_REGISTRY = [
         }
         g.ok = true; g.msg = `RL ok (${score.toFixed(2)})`;
         if (typeof _liveGuardRender === 'function') _liveGuardRender();
-        return null;
-      }
-    },
-    // ── T90: Idle xons must be on oct or actualized tet nodes ──
-    { id: 'T92', name: 'Idle on oct/tet nodes only',
-      check(tick, g) {
-        if (!_ruleIdleOctOnly) { g.ok = true; g.msg = 'rule off'; return null; }
-        if (!_octNodeSet || _octNodeSet.size === 0) return null; // skip before oct discovered
-        for (const xon of _demoXons) {
-          if (!xon.alive) continue;
-          if (xon._mode === 'tet') continue; // actively executing scheduled loop — exempt
-          if (xon._mode === 'oct_formation') continue; // building cage — exempt
-          if (xon._mode === 'weak') continue; // ejected away from cage by design — exempt
-          const node = xon.node;
-          if (_octNodeSet.has(node)) continue; // on oct cage — ok
-          if (_actualizedTetNodes && _actualizedTetNodes.has(node)) continue; // on actualized tet — ok
-          return `tick ${tick}: X${_demoXons.indexOf(xon)} mode=${xon._mode} at node ${node} (not oct or actualized tet)`;
-        }
-        return null;
-      },
-      projected(states) {
-        if (!_ruleIdleOctOnly) return null;
-        if (!_octNodeSet || _octNodeSet.size === 0) return null;
-        for (const s of states) {
-          const m = s.futureMode || s.mode;
-          if (m === 'tet') continue;
-          if (m === 'oct_formation') continue;
-          if (m === 'weak') continue;
-          if (_octNodeSet.has(s.futureNode)) continue;
-          if (_actualizedTetNodes && _actualizedTetNodes.has(s.futureNode)) continue;
-          return `X${_demoXons.indexOf(s.xon)} mode=${m} → node ${s.futureNode} (not oct or actualized tet)`;
-        }
         return null;
       }
     },
@@ -3007,10 +3068,13 @@ function _blacklistRuleKey(lvl) {
     if (_ruleGluonMediatedSC)   k += '|glu';
     if (_ruleBareTetrahedra)    k += '|bare';
     if (_ruleProjectedGuards)   k += '|proj';
-    if (_ruleIdleOctOnly)       k += '|idle';
-    if (T90_TOLERANCE > 1) k += `|eq${T90_TOLERANCE}`;
-    if (T91_TOLERANCE > 1) k += `|ef${T91_TOLERANCE}`;
-    if (T92_TOLERANCE > 1) k += `|eh${T92_TOLERANCE}`;
+    if (_ruleAdaptiveEjection) {
+        k += '|adpt';
+    } else {
+        if (T90_TOLERANCE > 1) k += `|eq${T90_TOLERANCE}`;
+        if (T91_TOLERANCE > 1) k += `|ef${T91_TOLERANCE}`;
+        if (T92_TOLERANCE > 1) k += `|eh${T92_TOLERANCE}`;
+    }
     return k;
 }
 

@@ -1631,6 +1631,31 @@ window.addEventListener('DOMContentLoaded', () => {
             _populateCouncilDropdown();
         });
     }
+    // Rule 9: adaptive ejection — mutually exclusive with rule 8 sliders
+    const _adaptEl = document.getElementById('rule-adaptive-ejection-toggle');
+    const _rule8Sliders = ['rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
+    function _syncRule8vs9() {
+        const on = _ruleAdaptiveEjection;
+        for (const id of _rule8Sliders) {
+            const sl = document.getElementById(id);
+            if (sl) { sl.disabled = on; sl.style.opacity = on ? '0.3' : '1'; }
+        }
+        // Also disable ticker buttons for rule 8 sliders
+        document.querySelectorAll('.tol-tick').forEach(btn => {
+            if (_rule8Sliders.includes(btn.dataset.slider)) {
+                btn.disabled = on; btn.style.opacity = on ? '0.3' : '1';
+            }
+        });
+    }
+    if (_adaptEl) {
+        _adaptEl.checked = _ruleAdaptiveEjection;
+        _adaptEl.addEventListener('change', e => {
+            _ruleAdaptiveEjection = e.target.checked;
+            _syncRule8vs9();
+            _populateCouncilDropdown();
+        });
+        _syncRule8vs9(); // apply initial state
+    }
     // Wire left/right ticker buttons for tolerance sliders
     document.querySelectorAll('.tol-tick').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -1662,6 +1687,8 @@ window.addEventListener('DOMContentLoaded', () => {
         if (t90TolEl) T90_TOLERANCE = parseInt(t90TolEl.value, 10);
         if (t91TolEl) T91_TOLERANCE = parseInt(t91TolEl.value, 10);
         if (t92TolEl) T92_TOLERANCE = parseInt(t92TolEl.value, 10);
+        const adaptEl = document.getElementById('rule-adaptive-ejection-toggle');
+        if (adaptEl) _ruleAdaptiveEjection = adaptEl.checked;
         _populateCouncilDropdown();
     };
     // Fire after load, pageshow, AND with escalating delays to catch late browser restoration
@@ -1677,7 +1704,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider', 'rule-adaptive-ejection-toggle'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

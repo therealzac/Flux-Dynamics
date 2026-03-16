@@ -414,6 +414,16 @@
                         T92: ticks a leading hadron face may stay actualized before ejection.
                     </div>
                 </div>
+                <div id="rule-adaptive-ejection-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
+                        <input type="checkbox" id="rule-adaptive-ejection-toggle" autocomplete="off" style="accent-color:#ff6644;">
+                        9. Adaptive ejection (&#8730;n)
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        Replaces fixed tolerances (8a-c) with dynamic &#8968;&#8730;(first-place value)&#8969;.
+                        Tight early (&#8730;1=1), relaxes as counts grow (&#8730;144=12). Mutually exclusive with rule 8.
+                    </div>
+                </div>
             </div>
 
             <!-- Action buttons: start row (shown when no sim active) -->
@@ -615,11 +625,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=100"></script>
+    <script src="src/flux-demo-state.js?v=101"></script>
     <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=116"></script>
+    <script src="src/flux-demo-ui.js?v=117"></script>
     <script src="src/flux-demo.js?v=475"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
@@ -628,7 +638,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=39"></script>
     <script src="src/flux-nucleus.js?v=49"></script>
-    <script src="src/flux-tests.js?v=334"></script>
+    <script src="src/flux-tests.js?v=336"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
