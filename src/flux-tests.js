@@ -3413,6 +3413,18 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl) + '|' + seed;
 
+    // ── Take only the last contiguous run (auto-retry may concatenate multiple t=0→t=x runs) ──
+    {
+        let lastStart = 0;
+        for (let i = 1; i < snapshots.length; i++) {
+            if (snapshots[i].tick <= snapshots[i - 1].tick) lastStart = i;
+        }
+        if (lastStart > 0) {
+            console.log(`%c[Council IDB] Trimmed ${lastStart} stale snapshots (kept last run: t${snapshots[lastStart].tick}→t${snapshots[snapshots.length-1].tick})`, 'color:#ffaa44');
+            snapshots = snapshots.slice(lastStart);
+        }
+    }
+
     // ── Append-only save when extending a replay ──
     // Keep ancestor's snapshots (perfect trail data), only append new ticks beyond ancestorPeak.
     if (ancestorPeak >= 0) {
@@ -3427,7 +3439,9 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
                 // Find where new data starts (ticks beyond ancestor's peak)
                 const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
                 if (newSnapshots.length > 0) {
-                    const combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
+                    let combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
+                    // Trim to last contiguous run (existing IDB may have stale multi-run data)
+                    { let ls = 0; for (let i = 1; i < combinedSnaps.length; i++) { if (combinedSnaps[i].tick <= combinedSnaps[i-1].tick) ls = i; } if (ls > 0) combinedSnaps = combinedSnaps.slice(ls); }
                     const movesArr = [];
                     for (const [tick, moveMap] of moves) {
                         movesArr.push([tick, [...moveMap.entries()]]);
