@@ -293,24 +293,31 @@ function _initPersistentXons() {
 
         const initDir = 0; // direction doesn't matter at center (opening choreography assigns)
 
+        // X0-X3 = oct (nucleus), X4-X5 = weak (ejected)
+        const isWeak = i >= 4;
+        const initMode = isWeak ? 'weak' : 'oct_formation';
+        const initRole = isWeak ? 'weak' : 'oct';
+        const initCol = isWeak ? WEAK_FORCE_COLOR : col;
+
         const xon = {
             prevNode: startNode, sign,
             _loopType: null,
             _loopSeq: null, _loopStep: 0,
             _assignedFace: null, _quarkType: null,
-            _mode: 'oct_formation',
+            _mode: initMode,
             _lastDir: initDir,
             _dirHistory: [],
             _dirBalance: new Array(10).fill(0),
             _modeStats: { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
             // gluon-class: binding to tet face SCs
             _gluonForFace: null, _gluonBoundSCs: null, _gluonClientXon: null,
-            col, group, spark, sparkMat,
+            col: initCol, group, spark, sparkMat,
             trailLine, trailGeo, trailPos, trailCol,
-            trail: [{ node: startNode, role: 'oct', pos: pos[startNode] ? [pos[startNode][0], pos[startNode][1], pos[startNode][2]] : [0,0,0] }],
+            trail: [{ node: startNode, role: initRole, pos: pos[startNode] ? [pos[startNode][0], pos[startNode][1], pos[startNode][2]] : [0,0,0] }],
             tweenT: 1, flashT: 1.0,
             _highlightT: 0,
             alive: true,
+            _t60Ejected: isWeak ? true : false,
         };
         // Interceptor: enforce single-hop-per-tick + validate each individual movement
         let _nodeVal = startNode;
