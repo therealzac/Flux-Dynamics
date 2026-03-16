@@ -3844,7 +3844,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _sweepResults.push(result);
         _sweepSeedIdx++;
 
-        // Clear replay mode after first seed — subsequent seeds run normally
+        // After each seed: decide next mode based on auto-retry-best checkbox
         if (_replayOnFirstSeed) {
             // Dehydrate: release snapshots from RAM, keep moves for golden boost
             if (!_replayOnFirstSeed._cold) {
@@ -3854,6 +3854,12 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             _replayOnFirstSeed = null;
             _sweepReplayActive = false;
             _sweepReplayMember = null;
+        }
+        // Auto-retry best: if checkbox checked and council has members,
+        // replay the best council member next (blacklist ensures divergence)
+        const _arbChk = document.getElementById('chk-auto-retry-best');
+        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
+            _replayOnFirstSeed = _sweepGoldenCouncil[0]; // best = highest peak (sorted)
         }
 
         // Golden council: insert this seed if it qualifies
