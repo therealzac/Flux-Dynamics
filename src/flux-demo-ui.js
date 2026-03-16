@@ -94,7 +94,7 @@ function _updateBottomStats() {
         const evenness = totals.length > 0 ? calcEvenness(totals) : 0;
         const pEven = protonPerFace.length > 0 ? calcEvenness(protonPerFace) : 0;
         const nEven = neutronPerFace.length > 0 ? calcEvenness(neutronPerFace) : 0;
-        const evColor = (e) => e > 0.99 ? '#66dd66' : e > 0.95 ? '#ccaa66' : '#ff6644';
+        const evColor = (e) => e === 0 ? '' : e > 0.99 ? '#66dd66' : e > 0.95 ? '#ccaa66' : '#ff6644';
         const oEl = document.getElementById('st-balance-overall');
         if (oEl) { oEl.textContent = (evenness * 100).toFixed(1) + '%'; oEl.style.color = evColor(evenness); }
         const pEl = document.getElementById('st-balance-proton');

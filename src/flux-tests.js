@@ -3427,29 +3427,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
                 // Find where new data starts (ticks beyond ancestor's peak)
                 const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
                 if (newSnapshots.length > 0) {
-                    // Reconstruct trail arrays for new snapshots, chaining from ancestor's last snapshot
-                    const existingLast = existingData.snapshots[existingData.snapshots.length - 1];
-                    const numXons = existingLast.xons ? existingLast.xons.length : 0;
-                    let prevXons = existingLast.xons;
-                    const serializedNew = newSnapshots.map(snap => {
-                        const s = _serializeSnapshot(snap);
-                        // Rebuild trail arrays from prev + this snapshot's node/_role
-                        s.xons = snap.xons.map((x, xi) => {
-                            const role = x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct');
-                            const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role) : x.col || 0xffffff;
-                            const px = prevXons && prevXons[xi];
-                            const trail = px && px.trail ? px.trail.concat(x.node) : [x.node];
-                            const trailColHistory = px && px.trailColHistory ? px.trailColHistory.concat(roleCol) : [roleCol];
-                            const _trailRoleHistory = px && px._trailRoleHistory ? px._trailRoleHistory.concat(role) : [role];
-                            const p = snap.pos && snap.pos[x.node];
-                            const fp = p ? [p[0], p[1], p[2]] : [0, 0, 0];
-                            const _trailFrozenPos = px && px._trailFrozenPos ? px._trailFrozenPos.concat([fp]) : [fp];
-                            return { ...x, _role: role, col: roleCol, trail, trailColHistory, _trailRoleHistory, _trailFrozenPos };
-                        });
-                        prevXons = s.xons;
-                        return s;
-                    });
-                    const combinedSnaps = existingData.snapshots.concat(serializedNew);
+                    const combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
                     const movesArr = [];
                     for (const [tick, moveMap] of moves) {
                         movesArr.push([tick, [...moveMap.entries()]]);
@@ -3471,62 +3449,13 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
         } catch (e) { console.warn('[Council IDB] Append-only read failed, falling back to full save:', e); }
     }
 
-    // ── Reconstruct trails for ALL snapshots ──
-    // Snapshots no longer store trail arrays (O(N²) → O(N) memory).
-    // Rebuild 1-entry-per-tick trails from per-snapshot node/_role/pos.
-    const total = snapshots.length;
-    if (total > 0) {
-        const numXons = snapshots[0].xons ? snapshots[0].xons.length : 0;
-        // Walk ALL snapshots sequentially: rebuild each xon's trail from per-snapshot node/_role/pos
-        for (let si = 0; si < total; si++) {
-            const snap = snapshots[si];
-            if (!snap.xons) continue;
-            for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
-                const xon = snap.xons[xi];
-                const role = xon._role || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : xon._quarkType || 'oct');
-                const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
-                    : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
-                    : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
-                    : xon.col || 0xffffff;
-                xon.col = roleCol;
-                if (si === 0) {
-                    xon.trail = [xon.node];
-                    xon.trailColHistory = [roleCol];
-                    xon._trailRoleHistory = [role];
-                    const p = snap.pos && snap.pos[xon.node];
-                    xon._trailFrozenPos = [p ? [p[0], p[1], p[2]] : [0, 0, 0]];
-                } else {
-                    const prev = snapshots[si - 1].xons[xi];
-                    xon.trail = prev.trail.concat(xon.node);
-                    xon.trailColHistory = prev.trailColHistory.concat(roleCol);
-                    xon._trailRoleHistory = prev._trailRoleHistory.concat(role);
-                    const p = snap.pos && snap.pos[xon.node];
-                    xon._trailFrozenPos = prev._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
-                }
-                // Wash: gluon/weak trails override recent oct entries
-                if (role === 'gluon' || role === 'weak') {
-                    const rh = xon._trailRoleHistory;
-                    const ch = xon.trailColHistory;
-                    for (let k = rh.length - 2; k >= 0; k--) {
-                        if (rh[k] !== 'oct') break;
-                        rh[k] = role;
-                        ch[k] = roleCol;
-                    }
-                }
-            }
-        }
-        console.log(`%c[Council IDB] Trails reconstructed for ${total} snapshots (trail len ${snapshots[total-1].xons[0].trail.length})`, 'color:#88cc88');
-    }
-
     // NOTE: blacklist is cross-seed — do NOT GC based on one member's cold set.
     // Fingerprints from seed A at tick N must still block seed B at tick N.
 
-    // Serialize for IDB — use _serializeSnapshot but override xons to keep reconstructed trails
-    const snapsArr = snapshots.map(snap => {
-        const s = _serializeSnapshot(snap);
-        s.xons = snap.xons; // preserve trail arrays reconstructed above (plain objects, IDB-safe)
-        return s;
-    });
+    // Serialize for IDB — no trail reconstruction needed.
+    // _serializeSnapshot strips trail arrays; _t* fields (per-tick trail entry)
+    // survive serialization and drive forward restore on replay load.
+    const snapsArr = snapshots.map(_serializeSnapshot);
     const movesArr = [];
     for (const [tick, moveMap] of moves) {
         movesArr.push([tick, [...moveMap.entries()]]);
