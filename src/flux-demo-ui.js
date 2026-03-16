@@ -1231,10 +1231,33 @@ function _updatePlaybackButtons() {
     }
 }
 
-// Export tick log as downloadable JSON.
+// Export tick log or council replay snapshots as downloadable JSON.
 function exportTickLog() {
+    // During council replay or paused demo, export full snapshots
+    if (_btSnapshots && _btSnapshots.length > 0 && typeof _serializeSnapshot === 'function') {
+        const snapData = _btSnapshots.map(s => _serializeSnapshot(s));
+        const seed = _forceSeed || _runSeed || 0;
+        const peak = _btSnapshots[_btSnapshots.length - 1].tick || 0;
+        const data = {
+            version: 2, type: 'council-replay',
+            exported: new Date().toISOString(),
+            seed: seed, peak: peak,
+            totalSnapshots: snapData.length,
+            snapshots: snapData
+        };
+        const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const seedHex = seed.toString(16).padStart(8, '0');
+        a.download = `flux-replay-0x${seedHex}-t${peak}-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        console.log(`[export] Downloaded ${snapData.length} snapshots (seed 0x${seedHex}, peak t${peak})`);
+        return;
+    }
     if (_tickLog.length === 0) {
-        console.warn('[export] No tick log data to export');
+        console.warn('[export] No data to export');
         return;
     }
     const data = {
@@ -1253,6 +1276,42 @@ function exportTickLog() {
     a.click();
     URL.revokeObjectURL(url);
     console.log(`[export] Downloaded ${_tickLog.length} tick log entries`);
+}
+
+// Import a previously exported council replay and play it back.
+function importReplay(file) {
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = JSON.parse(e.target.result);
+            if (data.type !== 'council-replay' || !data.snapshots || data.snapshots.length === 0) {
+                console.warn('[import] Not a valid council replay export');
+                alert('Not a valid council replay file.');
+                return;
+            }
+            // Deserialize snapshots
+            const snapshots = data.snapshots.map(s => _deserializeSnapshot(s));
+            // Inject as a temporary council member
+            const member = {
+                seed: data.seed || 1,
+                peak: data.peak || snapshots[snapshots.length - 1].tick || 0,
+                snapshots: snapshots,
+                _cold: false,
+                _imported: true,
+            };
+            // Add to front of council and trigger replay
+            _sweepGoldenCouncil.unshift(member);
+            console.log(`%c[import] Loaded replay: seed 0x${member.seed.toString(16).padStart(8,'0')}, peak t${member.peak}, ${snapshots.length} snapshots`, 'color:#66ccff;font-weight:bold');
+            // Start replay on the newly inserted member (index 0)
+            if (typeof startCouncilReplay === 'function') {
+                startCouncilReplay(0);
+            }
+        } catch (err) {
+            console.error('[import] Failed to parse replay file:', err);
+            alert('Failed to parse replay file: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
 }
 
 // ── Movie export ──

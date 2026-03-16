@@ -515,7 +515,11 @@
                         style="flex:0 0 auto; padding:6px 8px;" title="Fast-forward to latest">▶▶|</button>
                     <button class="btn-secondary" id="btn-export-log"
                         style="flex:1; padding:6px 8px;"
-                        title="Export tick log as JSON">Export</button>
+                        title="Export replay as JSON">Export</button>
+                    <button class="btn-secondary" id="btn-import-replay"
+                        style="flex:1; padding:6px 8px;"
+                        title="Import replay JSON">Import</button>
+                    <input type="file" id="replay-file-input" accept=".json" style="display:none;">
                 </div>
                 <div class="ctrl-row" style="margin-bottom:0;">
                     <span class="ctrl-label">t</span>
@@ -704,7 +708,7 @@
     <script src="src/flux-demo-xon.js?v=18"></script>
     <script src="src/flux-demo-backtrack.js?v=41"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=131"></script>
+    <script src="src/flux-demo-ui.js?v=133"></script>
     <script src="src/flux-demo.js?v=490"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
@@ -713,7 +717,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=341"></script>
+    <script src="src/flux-tests.js?v=342"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
