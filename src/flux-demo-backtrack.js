@@ -119,7 +119,9 @@ function _btRestoreSnapshot(snap, reverse) {
         x._quarkType = s._quarkType;
         x._loopSeq = s._loopSeq ? s._loopSeq.slice() : null;
         x._loopStep = s._loopStep;
-        x.col = s.col;
+        // Derive col from role (s.col may be stale white from legacy snapshots)
+        const _restoreRole = s._role || (s._mode === 'gluon' ? 'gluon' : s._mode === 'weak' ? 'weak' : s._quarkType || 'oct');
+        x.col = (typeof _xpRoleColor === 'function') ? _xpRoleColor(_restoreRole) : s.col;
         x._movedThisTick = s._movedThisTick;
         x._evictedThisTick = s._evictedThisTick;
         x._lastDir = s._lastDir;
