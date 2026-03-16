@@ -135,10 +135,14 @@
             border: 1px solid transparent; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
         .btn-ghost:hover { background: rgba(255,255,255,0.06); color: var(--text-2); border-color: var(--border); }
 
+        /* ── Panel boxes ── */
+        .panel-box {
+            background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 10px; padding: 12px; margin-bottom: 10px; }
         /* ── Xon & role cards (iPad-friendly) ── */
         .xon-card, .role-card {
-            display: flex; align-items: center; gap: 10px;
-            padding: 10px 14px; border-radius: 10px;
+            display: flex; align-items: center; gap: 8px;
+            padding: 8px 10px; border-radius: 8px;
             background: rgba(255,255,255,0.04);
             transition: background 0.15s; position: relative;
             font-family: var(--font-sans); color: var(--text-1); }
@@ -146,32 +150,45 @@
         .xon-card.highlighted { background: rgba(255,255,255,0.10); }
         .xon-card { cursor: pointer; }
         /* Profile pic: colored circle with initials */
-        .card-pic { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+        .card-pic { width: 12.5%; min-width: 28px; max-width: 40px; aspect-ratio: 1; border-radius: 50%; flex-shrink: 0;
             display: flex; align-items: center; justify-content: center;
             font-family: var(--font-sans); font-weight: 700; font-size: 10px; color: rgba(255,255,255,0.65); }
         .card-pic-sm { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
             display: flex; align-items: center; justify-content: center;
             font-family: var(--font-sans); font-weight: 600; font-size: 8.5px; color: rgba(255,255,255,0.55);
             background: rgba(255,255,255,0.08); }
-        .xon-card-id { font-weight: 600; font-size: 14px; color: var(--text-2); }
-        .xon-card-node-label { font-size: 12px; color: var(--text-3); }
-        .role-card-name { font-weight: 600; font-size: 14px; color: var(--text-2); }
-        .role-card-pattern { font-size: 12px; color: var(--text-3); }
-        .op-slider { width: 112px; margin-left: auto; height: 6px; appearance: none; -webkit-appearance: none;
-            background: rgba(255,255,255,0.12); border-radius: 3px; cursor: pointer; outline: none; flex-shrink: 0; }
+        .xon-card-id { font-weight: 600; font-size: 14px; color: var(--text-2); white-space: nowrap;
+            width: 25%; min-width: 60px; flex-shrink: 0; }
+        .xon-card-node-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+        .role-card-name { font-weight: 600; font-size: 13px; color: var(--text-2); white-space: nowrap;
+            width: 25%; min-width: 60px; flex-shrink: 0; }
+        .op-slider { flex: 1; min-width: 0; height: 6px; appearance: none; -webkit-appearance: none;
+            background: rgba(255,255,255,0.12); border-radius: 3px; cursor: pointer; outline: none; }
         .op-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px;
             border-radius: 50%; background: var(--blue); border: 2px solid rgba(255,255,255,0.3);
             cursor: pointer; transition: all 0.12s; }
         .op-slider::-webkit-slider-thumb:hover { background: var(--blue-bright); transform: scale(1.1); }
-        .op-val { font-family: var(--font-sans); font-size: 11px; color: var(--text-3);
-            min-width: 30px; text-align: right; flex-shrink: 0; }
         .section-label { font-family: var(--font-sans); font-size: 11px; font-weight: 600;
             color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em;
             margin-bottom: 6px; padding-left: 2px; }
         /* Tap hint on xon pics */
         .card-pic-xon { cursor: pointer; position: relative; }
-        .card-pic-xon::after { content: '\u261B'; position: absolute; bottom: -2px; right: -4px;
-            font-size: 10px; opacity: 0.4; pointer-events: none; }
+        .card-pic-xon::after {
+            content: ''; position: absolute; bottom: -4px; left: -6px;
+            width: 16px; height: 16px; opacity: 1; pointer-events: none;
+            background: #1a1e2e;
+            -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6a1 1 0 0 0-2 0v8.61l-4.14-.79c-.09-.02-.18-.02-.27 0-.33.06-.57.33-.57.66 0 .22.11.43.29.56l5.33 3.67c.33.23.72.35 1.12.35h5.23c.73 0 1.38-.49 1.57-1.2l.92-3.32c.07-.24.04-.48-.08-.7-.12-.21-.31-.37-.55-.45z'/%3E%3C/svg%3E");
+            -webkit-mask-size: contain; -webkit-mask-repeat: no-repeat;
+            mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63l-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6a1 1 0 0 0-2 0v8.61l-4.14-.79c-.09-.02-.18-.02-.27 0-.33.06-.57.33-.57.66 0 .22.11.43.29.56l5.33 3.67c.33.23.72.35 1.12.35h5.23c.73 0 1.38-.49 1.57-1.2l.92-3.32c.07-.24.04-.48-.08-.7-.12-.21-.31-.37-.55-.45z'/%3E%3C/svg%3E");
+            mask-size: contain; mask-repeat: no-repeat; }
+        /* Solo / Mute buttons */
+        .card-sm-btn { width: 18px; height: 18px; border-radius: 4px; border: none;
+            font-size: 9px; font-weight: 700; font-family: var(--font-sans);
+            cursor: pointer; flex-shrink: 0; padding: 0; line-height: 18px; text-align: center;
+            background: rgba(255,255,255,0.08); color: var(--text-3); transition: all 0.12s; }
+        .card-sm-btn:hover { background: rgba(255,255,255,0.15); }
+        .card-sm-btn.active-solo { background: #2563eb; color: #fff; }
+        .card-sm-btn.active-mute { background: #dc2626; color: #fff; }
 
         #btn-add-excitation.placing { border-color: var(--warning); color: var(--warning);
             animation: pulse-placing 0.8s infinite alternate; }
@@ -522,12 +539,24 @@
                         <input type="range" id="color-phase-slider" class="ctrl-slider" min="0" max="360" value="0" step="1">
                         <span id="color-phase-val" class="ctrl-val" style="font-size:12px;">0°</span>
                     </div>
-                    <!-- Quark Types subsection -->
-                    <div class="section-label">Quark Types</div>
-                    <div id="role-card-list" style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px;"></div>
                     <!-- Xons subsection -->
-                    <div class="section-label">Xons</div>
-                    <div id="xon-card-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+                    <div class="panel-box">
+                        <div class="section-label">Xons</div>
+                        <div id="xon-card-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+                        <div style="margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+                            <div class="section-label" style="margin-bottom:4px;">Totals</div>
+                            <div id="role-stats-bar" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 12px;"></div>
+                        </div>
+                    </div>
+                    <!-- Quark Types subsection -->
+                    <div class="panel-box">
+                        <div class="section-label">Quark Types</div>
+                        <div id="role-card-list" style="display:flex; flex-direction:column; gap:6px;"></div>
+                        <div style="margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.06);">
+                            <div class="section-label" style="margin-bottom:4px;">Totals</div>
+                            <div id="role-stats-bar-2" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:2px 12px;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div id="nucleus-metrics"></div>
@@ -671,20 +700,20 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=104"></script>
-    <script src="src/flux-demo-xon.js?v=14"></script>
-    <script src="src/flux-demo-backtrack.js?v=38"></script>
+    <script src="src/flux-demo-state.js?v=105"></script>
+    <script src="src/flux-demo-xon.js?v=18"></script>
+    <script src="src/flux-demo-backtrack.js?v=41"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=123"></script>
-    <script src="src/flux-demo.js?v=479"></script>
+    <script src="src/flux-demo-ui.js?v=131"></script>
+    <script src="src/flux-demo.js?v=489"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
-    <script src="src/flux-ui.js?v=19"></script>
+    <script src="src/flux-ui.js?v=20"></script>
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=337"></script>
+    <script src="src/flux-tests.js?v=341"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

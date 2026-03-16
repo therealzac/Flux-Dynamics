@@ -43,7 +43,14 @@ function _btCreateSnapshot() {
             trail: x.trail.slice(),
             trailColHistory: x.trailColHistory.slice(),
             _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
-            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
+            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map((p, ti) => {
+                // Fix stale [0,0,0] from pre-solver init
+                if (p[0] === 0 && p[1] === 0 && p[2] === 0 && typeof pos !== 'undefined') {
+                    const rp = pos[x.trail[ti]];
+                    if (rp && (rp[0] !== 0 || rp[1] !== 0 || rp[2] !== 0)) return [rp[0], rp[1], rp[2]];
+                }
+                return [p[0], p[1], p[2]];
+            }) : [],
         })),
         // Global SC sets (shallow copy — Set of primitive IDs)
         activeSet: new Set(activeSet),
@@ -71,6 +78,7 @@ function _btCreateSnapshot() {
         planckSeconds: _planckSeconds,
         // Global mode stats (running totals)
         globalModeStats: { ..._globalModeStats },
+        globalRoleStats: { ..._globalRoleStats },
         // Nucleus topology (needed for save-game restore)
         octNodeSet: _octNodeSet ? new Set(_octNodeSet) : null,
         octSCIds: _octSCIds ? _octSCIds.slice() : null,
@@ -135,6 +143,8 @@ function _btRestoreSnapshot(snap, reverse) {
         x.trailColHistory = s.trailColHistory.slice();
         x._trailRoleHistory = s._trailRoleHistory ? s._trailRoleHistory.slice() : [];
         x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
+        // NOTE: Re-freeze of stale [0,0,0] entries moved AFTER pos[] restore (below)
+        // so it uses the snapshot's own solver positions, not the previous frame's.
         // Pop most recent trail entry on reverse — visually removes the last hop
         if (fjReverse && x.trail.length > 0) {
             x.trail.pop();
@@ -177,8 +187,30 @@ function _btRestoreSnapshot(snap, reverse) {
         pos[i][1] = snap.pos[i][1];
         pos[i][2] = snap.pos[i][2];
     }
-    // Frozen trail positions are already restored from snapshot —
-    // do NOT re-derive from pos[] as that defeats the purpose of static trails.
+    // Re-freeze stale [0,0,0] entries NOW that pos[] has been restored from the
+    // snapshot — this uses the snapshot's own solver positions (correct), not the
+    // previous frame's (wrong). Also backfill missing frozen positions when the
+    // snapshot's _trailFrozenPos is shorter than trail (old IDB data).
+    for (let xi = 0; xi < _demoXons.length && xi < snap.xons.length; xi++) {
+        const x = _demoXons[xi];
+        if (!x._trailFrozenPos) x._trailFrozenPos = [];
+        // Backfill if frozen pos array is shorter than trail (legacy snapshots)
+        while (x._trailFrozenPos.length < x.trail.length) {
+            const n = x.trail[x._trailFrozenPos.length];
+            const p = pos[n];
+            x._trailFrozenPos.push(p ? [p[0], p[1], p[2]] : [0, 0, 0]);
+        }
+        // Patch [0,0,0] entries with the snapshot's restored pos[]
+        for (let ti = 0; ti < x._trailFrozenPos.length; ti++) {
+            const fp = x._trailFrozenPos[ti];
+            if (fp[0] === 0 && fp[1] === 0 && fp[2] === 0) {
+                const p = pos[x.trail[ti]];
+                if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+                    x._trailFrozenPos[ti] = [p[0], p[1], p[2]];
+                }
+            }
+        }
+    }
     // Restore opening phase flag
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;
     // Restore T79 state
@@ -199,6 +231,7 @@ function _btRestoreSnapshot(snap, reverse) {
     // Restore Planck second counter
     if ('planckSeconds' in snap) _planckSeconds = snap.planckSeconds;
     if (snap.globalModeStats) _globalModeStats = { ...snap.globalModeStats };
+    if (snap.globalRoleStats) _globalRoleStats = { ...snap.globalRoleStats };
     // Restore nucleus topology (save-game support)
     if (snap.octNodeSet) { _octNodeSet = new Set(snap.octNodeSet); }
     if (snap.octSCIds) { _octSCIds = snap.octSCIds.slice(); }

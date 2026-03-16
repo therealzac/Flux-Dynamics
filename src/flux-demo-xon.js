@@ -62,12 +62,23 @@ function _trailPush(xon, node, color) {
 }
 // Retroactively update the last trail segment color when a xon changes mode.
 // Called after setting xon.col so the transition segment shows the new color immediately.
+// When entering weak/gluon mode, wash all recent consecutive 'oct' trail entries
+// so the visual trail matches the xon's identity (no white oct segments lingering).
 function _trailRecolor(xon) {
+    const newRole = _xonRole(xon);
     if (xon.trailColHistory && xon.trailColHistory.length > 0) {
         xon.trailColHistory[xon.trailColHistory.length - 1] = xon.col;
     }
     if (xon._trailRoleHistory && xon._trailRoleHistory.length > 0) {
-        xon._trailRoleHistory[xon._trailRoleHistory.length - 1] = _xonRole(xon);
+        xon._trailRoleHistory[xon._trailRoleHistory.length - 1] = newRole;
+        // Wash recent oct entries when transitioning to weak/gluon
+        if (newRole === 'weak' || newRole === 'gluon') {
+            for (let i = xon._trailRoleHistory.length - 2; i >= 0; i--) {
+                if (xon._trailRoleHistory[i] !== 'oct') break;
+                xon._trailRoleHistory[i] = newRole;
+                if (xon.trailColHistory) xon.trailColHistory[i] = xon.col;
+            }
+        }
     }
 }
 
