@@ -3603,10 +3603,9 @@ async function demoTick() {
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
     const _tickerEl = document.getElementById('nucleus-status');
-    const _ml = typeof _tickerMetaLines === 'function' ? _tickerMetaLines() : '';
-    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.8em; color:#556677;">${_demoTick} Planck seconds</span>${_ml}`;
+    if (_tickerEl) _tickerEl.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.8em; color:#556677;">${_demoTick} Planck Seconds</span>`;
     const _dpTitle = document.getElementById('dp-title');
-    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_ml}`;
+    if (_dpTitle) _dpTitle.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span>`;
     // Top-center title is set once per trial by _runTournament — no per-tick update needed
 
     // Live guard checks (T19, T21, T26, T27) — after tick advances xons

@@ -81,7 +81,7 @@
             font-family: var(--font-sans); font-size: 11px; line-height: 1.9;
             color: var(--text-3); pointer-events: none; user-select: none;
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: 10px; padding: 7px 14px; backdrop-filter: blur(8px);
+            border-radius: 10px; padding: 9px 18px; backdrop-filter: blur(8px);
             transition: left 0.2s, right 0.2s, transform 0.2s; }
         #bottom-stats.center { left: 50%; right: auto; transform: translateX(-50%); }
         #bottom-stats.right { left: auto; right: 16px; transform: none; }
@@ -358,7 +358,7 @@
         <!-- BFS Exhaustiveness Test (results shown here during/after test) -->
         <div id="bfs-section" class="panel-section" style="padding:10px; display:none;">
             <div class="panel-section-header" style="margin-bottom:6px;">
-                <span>BFS EXHAUSTIVENESS</span>
+                <span>CHOREOGRAPHER</span>
             </div>
             <div id="bfs-test-results" style="font-size:30px; line-height:1.5; color:#6a8aaa;">
                 Press Test to run two BFS searches with different seeds.
@@ -695,11 +695,10 @@
     </div>
     <!-- Bottom-left stats overlay -->
     <div id="bottom-stats">
-        <div>flux: <span id="st-planck" style="color:var(--text-2)">0</span></div>
-        <div>ps: <span id="st-ticks" style="color:var(--text-2)">0</span></div>
-        <div>shortcuts: <span id="st-sc" style="color:var(--text-2)">0 / 18</span></div>
-        <div>highest ps: <span id="st-highest-ps" style="color:var(--text-2)">0</span></div>
-        <div>balance: <span id="st-balance-overall" style="color:var(--text-2)">—</span> · p <span id="st-balance-proton" style="color:var(--text-2)">—</span> · n <span id="st-balance-neutron" style="color:var(--text-2)">—</span></div>
+        <div>Flux Events: <span id="st-planck" style="color:var(--text-2)">0</span></div>
+        <div>Planck Seconds: <span id="st-ticks" style="color:var(--text-2)">0</span> (best <span id="st-highest-ps" style="color:var(--text-2)">0</span>)</div>
+        <div>Shortcuts: <span id="st-sc" style="color:var(--text-2)">0 / 18</span></div>
+        <div>Balance: <span id="st-balance-overall" style="color:var(--text-2)">—</span> · p <span id="st-balance-proton" style="color:var(--text-2)">—</span> · n <span id="st-balance-neutron" style="color:var(--text-2)">—</span></div>
         <div style="display:none">density: <span id="st-dens" style="color:var(--text-2)">—</span></div>
         <!-- Hidden but kept for compatibility -->
         <span id="st-state" style="display:none">FCC</span>
@@ -716,8 +715,8 @@
     <script src="src/flux-demo-xon.js?v=18"></script>
     <script src="src/flux-demo-backtrack.js?v=51"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=134"></script>
-    <script src="src/flux-demo.js?v=490"></script>
+    <script src="src/flux-demo-ui.js?v=135"></script>
+    <script src="src/flux-demo.js?v=491"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -725,7 +724,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=353"></script>
+    <script src="src/flux-tests.js?v=354"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

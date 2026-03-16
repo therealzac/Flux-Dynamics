@@ -4,7 +4,7 @@
 // Updates the timeline scrubber and left panel title.
 function _updateTickCounter() {
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span>`;
     _updateTimelineScrubber();
 }
 
@@ -94,13 +94,12 @@ function _updateBottomStats() {
         const evenness = totals.length > 0 ? calcEvenness(totals) : 0;
         const pEven = protonPerFace.length > 0 ? calcEvenness(protonPerFace) : 0;
         const nEven = neutronPerFace.length > 0 ? calcEvenness(neutronPerFace) : 0;
-        const evColor = (e) => e === 0 ? '' : e > 0.99 ? '#66dd66' : e > 0.95 ? '#ccaa66' : '#ff6644';
         const oEl = document.getElementById('st-balance-overall');
-        if (oEl) { oEl.textContent = (evenness * 100).toFixed(1) + '%'; oEl.style.color = evColor(evenness); }
+        if (oEl) oEl.textContent = (evenness * 100).toFixed(1) + '%';
         const pEl = document.getElementById('st-balance-proton');
-        if (pEl) { pEl.textContent = (pEven * 100).toFixed(1) + '%'; pEl.style.color = evColor(pEven); }
+        if (pEl) pEl.textContent = (pEven * 100).toFixed(1) + '%';
         const nEl = document.getElementById('st-balance-neutron');
-        if (nEl) { nEl.textContent = (nEven * 100).toFixed(1) + '%'; nEl.style.color = evColor(nEven); }
+        if (nEl) nEl.textContent = (nEven * 100).toFixed(1) + '%';
     }
 }
 
@@ -1140,7 +1139,7 @@ function stopReverse() {
 function _playbackUpdateDisplay() {
     // Tick counter
     const dpT = document.getElementById('dp-title');
-    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck seconds</span>${_tickerMetaLines()}`;
+    if (dpT) dpT.innerHTML = `${_planckSeconds} Flux Events<br><span style="font-size:0.7em; color:#8a9aaa; letter-spacing:0.05em;">${_demoTick} Planck Seconds</span>`;
     _updateTimelineScrubber();
     // Apply restored solver positions to the 3D scene (no re-solve needed)
     if (typeof applyPositions === 'function' && typeof pos !== 'undefined') applyPositions(pos);

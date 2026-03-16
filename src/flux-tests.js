@@ -4113,8 +4113,6 @@ function _updateSweepPanel(message, sweepStartTime) {
     const el = document.getElementById('bfs-test-results');
     if (!el) return;
 
-    const totalElapsed = sweepStartTime ? ((performance.now() - sweepStartTime) / 1000).toFixed(1) : '?';
-
     let html = '';
 
     // Header
@@ -4122,19 +4120,16 @@ function _updateSweepPanel(message, sweepStartTime) {
     if (message) {
         html += message;
     } else {
-        html += `Seed ${_sweepSeedIdx + 1} / \u221E &mdash; tick ${_demoTick}, retries ${_totalBacktrackRetries}, ` +
+        html += `Take ${_sweepSeedIdx + 1} &mdash; tick ${_demoTick}, retries ${_totalBacktrackRetries}, ` +
             `layer ${typeof _bfsLayer !== 'undefined' ? _bfsLayer : '?'}`;
     }
     html += `</div>`;
 
-    // Blacklist stats
+    // Learnings stats
     html += `<div style="padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px; margin-bottom:6px;">`;
     html += `<div style="font-size:10px; color:#9abccc;">` +
-        `Blacklisted: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states` +
-        (_blBucketVersion >= 1 ? ` (${_blLoadedBuckets.size}/${_blBucketCount} buckets)` : '') +
-        ` &middot; Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
-        `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
-        `Total: ${totalElapsed}s</div>`;
+        `Learnings: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states` +
+        ` &middot; Applied: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed)</div>`;
     if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {
         // Build sorted entries: council members, marking the current round's seed with green *
         const hasRecentAutosave = _demoActive && _maxTickReached > 0
@@ -4151,7 +4146,7 @@ function _updateSweepPanel(message, sweepStartTime) {
             ? `<span style="color:#80ff80;">t${e.peak}*</span>`
             : 't' + e.peak);
         html += `<div style="font-size:10px; color:#ffcc66; margin-top:2px;">` +
-            `Council [${_sweepGoldenCouncil.length}/${_goldenCouncilSize()}]: ${peakStrs.join(', ')} &middot; ` +
+            `Best Takes: ${peakStrs.join(', ')} &middot; ` +
             `Votes: <b>${_sweepGoldenHits.toLocaleString()}</b> (${_sweepGoldenHitsSeed} this seed)</div>`;
         if (hasRecentAutosave) {
             html += `<div style="font-size:9px; color:#80ff80; margin-top:1px;">* autosaved</div>`;
@@ -4177,9 +4172,9 @@ function _updateSweepPanel(message, sweepStartTime) {
             sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
         }
         html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
-            + `<div style="font-size:8px; color:#667788; margin-bottom:2px;">seed peak tick (last ${chartData.length})</div>`
-            + `<div style="font-size:22px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
-            + `<div style="display:flex; justify-content:space-between; font-size:7px; color:#445566; margin-top:2px;">`
+            + `<div style="font-size:16px; color:#667788; margin-bottom:2px;">Progress (last ${chartData.length})</div>`
+            + `<div style="font-size:44px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:14px; color:#445566; margin-top:2px;">`
             + `<span>t0</span><span>t${chartMax}</span></div>`
             + `</div>`;
     }
@@ -4199,9 +4194,9 @@ function _updateSweepPanel(message, sweepStartTime) {
             sparkline += `<span style="color:${c};">${SPARK[idx]}</span>`;
         }
         html += `<div style="margin-top:4px; overflow:hidden; width:100%;">`
-            + `<div style="font-size:8px; color:#667788; margin-bottom:2px;">blacklist contributions (last ${chartData.length})</div>`
-            + `<div style="font-size:22px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
-            + `<div style="display:flex; justify-content:space-between; font-size:7px; color:#445566; margin-top:2px;">`
+            + `<div style="font-size:16px; color:#667788; margin-bottom:2px;">Learning Rate (last ${chartData.length})</div>`
+            + `<div style="font-size:44px; letter-spacing:-1px; line-height:1; font-family:monospace; white-space:nowrap; overflow:hidden;">${sparkline}</div>`
+            + `<div style="display:flex; justify-content:space-between; font-size:14px; color:#445566; margin-top:2px;">`
             + `<span>0</span><span>${chartMax.toLocaleString()}</span></div>`
             + `</div>`;
     }
@@ -4224,7 +4219,7 @@ function _updateSweepPanel(message, sweepStartTime) {
     if (!clearBtn) {
         clearBtn = document.createElement('button');
         clearBtn.id = 'btn-clear-cache';
-        clearBtn.textContent = 'Clear Cache';
+        clearBtn.textContent = 'Clear Memory for Ruleset';
         clearBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
             'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
         clearBtn.addEventListener('click', _clearCacheConfirm);
