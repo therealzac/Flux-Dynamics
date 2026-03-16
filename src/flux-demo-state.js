@@ -414,6 +414,7 @@ let _flashEnabled = false;
 // collision bug is fixed.
 let _kuhnEnabled = false;
 let _ruleProjectedGuards = true; // When true, projected guards gate candidate moves pre-execution
+let _ruleIdleOctOnly = true; // When true, idle xons (non-tet) must be on oct nodes or actualized tet nodes
 const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
 
 // ── Trail visual parameters ──

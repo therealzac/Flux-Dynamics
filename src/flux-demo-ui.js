@@ -1596,6 +1596,11 @@ window.addEventListener('DOMContentLoaded', () => {
         _projGuardEl.checked = _ruleProjectedGuards;
         _projGuardEl.addEventListener('change', e => { _ruleProjectedGuards = e.target.checked; _populateCouncilDropdown(); });
     }
+    const _idleOctEl = document.getElementById('rule-idle-oct-only-toggle');
+    if (_idleOctEl) {
+        _idleOctEl.checked = _ruleIdleOctOnly;
+        _idleOctEl.addEventListener('change', e => { _ruleIdleOctOnly = e.target.checked; _populateCouncilDropdown(); });
+    }
     // Sync JS from DOM after browser form restoration.
     // Read DOM → JS so JS always matches what the user sees.
     const _syncJSFromDOM = () => {
@@ -1609,6 +1614,8 @@ window.addEventListener('DOMContentLoaded', () => {
         if (gluEl) _ruleGluonMediatedSC = gluEl.checked;
         if (bareEl) _ruleBareTetrahedra = bareEl.checked;
         if (projEl) _ruleProjectedGuards = projEl.checked;
+        const idleOctEl = document.getElementById('rule-idle-oct-only-toggle');
+        if (idleOctEl) _ruleIdleOctOnly = idleOctEl.checked;
         if (octFullEl) T79_MAX_FULL_TICKS = parseInt(octFullEl.value, 10);
         if (octCapEl) OCT_CAPACITY_MAX = parseInt(octCapEl.value, 10);
         _populateCouncilDropdown();
@@ -1626,7 +1633,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-idle-oct-only-toggle'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

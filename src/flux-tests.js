@@ -1637,6 +1637,38 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+    // ── T90: Idle xons must be on oct or actualized tet nodes ──
+    { id: 'T92', name: 'Idle on oct/tet nodes only',
+      check(tick, g) {
+        if (!_ruleIdleOctOnly) { g.ok = true; g.msg = 'rule off'; return null; }
+        if (!_octNodeSet || _octNodeSet.size === 0) return null; // skip before oct discovered
+        for (const xon of _demoXons) {
+          if (!xon.alive) continue;
+          if (xon._mode === 'tet') continue; // actively executing scheduled loop — exempt
+          if (xon._mode === 'oct_formation') continue; // building cage — exempt
+          if (xon._mode === 'weak') continue; // ejected away from cage by design — exempt
+          const node = xon.node;
+          if (_octNodeSet.has(node)) continue; // on oct cage — ok
+          if (_actualizedTetNodes && _actualizedTetNodes.has(node)) continue; // on actualized tet — ok
+          return `tick ${tick}: X${_demoXons.indexOf(xon)} mode=${xon._mode} at node ${node} (not oct or actualized tet)`;
+        }
+        return null;
+      },
+      projected(states) {
+        if (!_ruleIdleOctOnly) return null;
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        for (const s of states) {
+          const m = s.futureMode || s.mode;
+          if (m === 'tet') continue;
+          if (m === 'oct_formation') continue;
+          if (m === 'weak') continue;
+          if (_octNodeSet.has(s.futureNode)) continue;
+          if (_actualizedTetNodes && _actualizedTetNodes.has(s.futureNode)) continue;
+          return `X${_demoXons.indexOf(s.xon)} mode=${m} → node ${s.futureNode} (not oct or actualized tet)`;
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -2822,10 +2854,84 @@ function _blIDBOpen() {
                 if (!db.objectStoreNames.contains(_AS_IDB_STORE)) db.createObjectStore(_AS_IDB_STORE);
                 if (!db.objectStoreNames.contains(_CS_IDB_STORE)) db.createObjectStore(_CS_IDB_STORE);
             };
-            req.onsuccess = (e) => { _blIDB = e.target.result; _blIDBReady = true; resolve(); };
+            req.onsuccess = (e) => { _blIDB = e.target.result; _blIDBReady = true; _migrateOldKeys().then(resolve); };
             req.onerror = () => { console.warn('[Blacklist] IndexedDB unavailable'); resolve(); };
         } catch (e) { resolve(); }
     });
+}
+
+// One-time migration: old key format was `|name=value` for every rule.
+// New format: concat tag only when rule is active. Absent = OFF.
+// Example old: v2|L2|t20=1|oct=1|cap=6|glu=1|bare=1|proj=1|idleOct=0
+// Example new: v2|L2|t20|oct1|glu|bare|proj
+function _migrateOldKeyFormat(oldKey) {
+    // Only migrate keys matching old format (contain '=')
+    if (!oldKey.includes('=')) return null;
+    // Split into base (v..|L..) and rule segments
+    const parts = oldKey.split('|');
+    // Find the base prefix (v...|L...) — everything before first '='
+    let base = '';
+    let ruleParts = [];
+    let seedSuffix = '';
+    for (const p of parts) {
+        if (p.includes('=')) {
+            ruleParts.push(p);
+        } else if (!base) {
+            base = p;
+        } else if (base && !base.includes('|L')) {
+            base += '|' + p;
+        } else {
+            // Seed suffix (numeric after rule parts)
+            seedSuffix = '|' + p;
+        }
+    }
+    // Rebuild: base + only-when-active tags
+    let k = base;
+    for (const rp of ruleParts) {
+        const [name, val] = rp.split('=');
+        if (name === 't20' && val === '1')       k += '|t20';
+        else if (name === 'oct' && +val > 0)     k += `|oct${val}`;
+        else if (name === 'cap' && +val < 6)     k += `|cap${val}`;
+        else if (name === 'glu' && val === '1')   k += '|glu';
+        else if (name === 'bare' && val === '1')  k += '|bare';
+        else if (name === 'proj' && val === '1')  k += '|proj';
+        else if (name === 'idleOct' && val === '1') k += '|idle';
+        // OFF rules: omitted entirely
+    }
+    return k + seedSuffix;
+}
+
+async function _migrateOldKeys() {
+    if (!_blIDB) return;
+    if (localStorage.getItem('_idbKeyMigrated_v1')) return; // already done
+    let migrated = 0;
+    for (const storeName of [_BL_IDB_STORE, _AS_IDB_STORE, _CS_IDB_STORE]) {
+        try {
+            const tx = _blIDB.transaction(storeName, 'readwrite');
+            const store = tx.objectStore(storeName);
+            const allKeys = await new Promise((res, rej) => {
+                const r = store.getAllKeys(); r.onsuccess = () => res(r.result); r.onerror = rej;
+            });
+            for (const key of allKeys) {
+                if (typeof key !== 'string') continue;
+                const newKey = _migrateOldKeyFormat(key);
+                if (!newKey || newKey === key) continue;
+                const val = await new Promise((res, rej) => {
+                    const r = store.get(key); r.onsuccess = () => res(r.result); r.onerror = rej;
+                });
+                // If new key already has data, keep the newer one
+                const existing = await new Promise((res, rej) => {
+                    const r = store.get(newKey); r.onsuccess = () => res(r.result); r.onerror = rej;
+                });
+                if (!existing) store.put(val, newKey);
+                store.delete(key);
+                migrated++;
+            }
+            await new Promise((res) => { tx.oncomplete = res; });
+        } catch (e) { console.warn('[IDB migrate]', storeName, e); }
+    }
+    localStorage.setItem('_idbKeyMigrated_v1', '1');
+    if (migrated > 0) console.log(`[IDB] Migrated ${migrated} keys to new format`);
 }
 
 // ── Autosave helpers (council-eligible crash recovery) ──
@@ -2892,13 +2998,17 @@ async function _autosaveIDBClear(lvl) {
 // Canonical rule key: deterministic fingerprint of the ENTIRE rule config + snapshot version.
 // If ANY config value differs, data goes into a separate IDB bucket.
 function _blacklistRuleKey(lvl) {
-    return `v${_SNAPSHOT_VERSION}|L${lvl}` +
-        `|t20=${_ruleT20StrictMode ? 1 : 0}` +
-        `|oct=${T79_MAX_FULL_TICKS}` +
-        `|cap=${OCT_CAPACITY_MAX}` +
-        `|glu=${_ruleGluonMediatedSC ? 1 : 0}` +
-        `|bare=${_ruleBareTetrahedra ? 1 : 0}` +
-        `|proj=${_ruleProjectedGuards ? 1 : 0}`;
+    // Concat-only-when-active: each rule appends a tag only when ON.
+    // OFF rules are absent → key is identical to before that rule existed.
+    let k = `v${_SNAPSHOT_VERSION}|L${lvl}`;
+    if (_ruleT20StrictMode)     k += '|t20';
+    if (T79_MAX_FULL_TICKS > 0) k += `|oct${T79_MAX_FULL_TICKS}`;
+    if (OCT_CAPACITY_MAX < 6)   k += `|cap${OCT_CAPACITY_MAX}`;
+    if (_ruleGluonMediatedSC)   k += '|glu';
+    if (_ruleBareTetrahedra)    k += '|bare';
+    if (_ruleProjectedGuards)   k += '|proj';
+    if (_ruleIdleOctOnly)       k += '|idle';
+    return k;
 }
 
 // Load blacklist from IndexedDB for current rules

@@ -483,6 +483,14 @@ When changing a default, decide: should it apply on load, on play, or both? Upda
 
 Camera defaults live in `flux-ui.js` (`sph={theta, phi, r}` and `panTarget`).
 
+### IDB Key Convention (`_blacklistRuleKey`)
+Keys for IndexedDB storage (blacklist, autosave, council) are built by **concatenating only active rules** in order. A rule that is OFF simply doesn't appear in the key. This means:
+- Enabling a new rule appends a new tag → fresh keyspace (no stale data).
+- Disabling it removes the tag → key matches what it was before the rule existed.
+- Adding a new rule to the codebase doesn't break existing keys (OFF = absent = same key as before).
+
+Pattern: `let k = base; if (rule) k += '|tag'; return k;`
+
 ---
 
 ## 12. Roadmap

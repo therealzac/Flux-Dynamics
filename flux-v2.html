@@ -404,6 +404,15 @@
                         Prevents violations before they happen. May reduce throughput.
                     </div>
                 </div>
+                <div id="rule-idle-oct-only-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); cursor:pointer; user-select:none;">
+                        <input type="checkbox" id="rule-idle-oct-only-toggle" checked autocomplete="off" style="accent-color:#ff9944;">
+                        7. Idle on oct/tet nodes only
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        When ON, idle xons must remain on oct cage nodes. No idle_tet loitering allowed.
+                    </div>
+                </div>
             </div>
 
             <!-- Action buttons: start row (shown when no sim active) -->
@@ -605,12 +614,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=87"></script>
+    <script src="src/flux-demo-state.js?v=90"></script>
     <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=109"></script>
-    <script src="src/flux-demo.js?v=465"></script>
+    <script src="src/flux-demo-ui.js?v=110"></script>
+    <script src="src/flux-demo.js?v=467"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -618,7 +627,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=39"></script>
     <script src="src/flux-nucleus.js?v=47"></script>
-    <script src="src/flux-tests.js?v=318"></script>
+    <script src="src/flux-tests.js?v=325"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
