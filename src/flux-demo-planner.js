@@ -1030,7 +1030,7 @@ function _releaseGluon(face) {
     gluonXon._gluonClientXon = null;
     gluonXon._mode = 'oct';
     gluonXon.col = 0xffffff;
-    _trailRecolor(gluonXon);
+
     if (gluonXon.sparkMat) gluonXon.sparkMat.color.setHex(0xffffff);
 }
 
@@ -1082,7 +1082,7 @@ function _assignXonToTet(xon, face, quarkType) {
     xon._loopSeq = seq;
     xon._loopStep = 0;
     xon.col = col;
-    _trailRecolor(xon); // immediate trail color on mode change
+    // trail role captured at tick-end by _trailPush (T94: no retroactive edits)
 
     // Update spark color
     if (xon.sparkMat) xon.sparkMat.color.setHex(col);
@@ -1249,7 +1249,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
-        _trailRecolor(xon);
+    
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
 
@@ -1271,7 +1271,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
-        _trailRecolor(xon);
+    
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
     }
@@ -1337,7 +1337,7 @@ function _startIdleTetLoop(xon, occupied) {
                 xon._quarkType = qType;
                 xon._loopType = LOOP_TYPE_NAMES[qType];
                 xon.col = QUARK_COLORS[qType];
-                _trailRecolor(xon);
+            
                 if (_flashEnabled) xon.flashT = 1.0;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
                 // Gluon-mediated: assign companion gluon for idle_tet face
@@ -1366,7 +1366,7 @@ function _startIdleTetLoop(xon, occupied) {
             xon._quarkType = bestType;
             xon._loopType = bestType ? LOOP_TYPE_NAMES[bestType] : null;
             xon.col = bestType ? QUARK_COLORS[bestType] : 0x888888;
-            _trailRecolor(xon);
+        
             if (_flashEnabled) xon.flashT = 1.0;
             if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
             // Gluon-mediated: assign companion gluon for idle_tet face

@@ -1745,14 +1745,12 @@ function _executeOpeningTick(occupied) {
                 _clearModeProps(xon);
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             } else {
                 // Not on oct node → weak, navigate back via PHASE 0.5
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
         }
@@ -1974,7 +1972,6 @@ async function demoTick() {
             xon._loopSeq = null;
             xon._loopStep = 0;
             xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         }
     }
@@ -2029,7 +2026,6 @@ async function demoTick() {
                         xon._loopSeq = null;
                         xon._loopStep = 0;
                         xon.col = 0xffffff;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                         if (_flashEnabled) xon.flashT = 1.0;
                     } else {
@@ -2042,7 +2038,6 @@ async function demoTick() {
                         xon._tetActualized = false;
                         xon._t60Ejected = true;
                         xon.col = WEAK_FORCE_COLOR;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                         _weakLifecycleEnter(xon, 'non_actualized_tet');
                     }
@@ -2135,7 +2130,6 @@ async function demoTick() {
                 xon._loopStep = 0;
                 xon._tetActualized = false;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'phase0_eviction');
                 xon._evictedThisTick = true;
@@ -2162,7 +2156,6 @@ async function demoTick() {
                 xon._mode = 'oct';
                 if (_flashEnabled) xon.flashT = 1.0;
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 continue;
             }
@@ -2254,7 +2247,6 @@ async function demoTick() {
                     xon._mode = 'oct';
                     if (_flashEnabled) xon.flashT = 1.0;
                     xon.col = 0xffffff;
-                    _trailRecolor(xon);
                     if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 }
             }
@@ -2312,7 +2304,6 @@ async function demoTick() {
                         xon._mode = 'oct';
                         if (_flashEnabled) xon.flashT = 1.0;
                         xon.col = 0xffffff;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                     }
                 }
@@ -2463,7 +2454,6 @@ async function demoTick() {
                 xon._tetActualized = false;
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'non_actualized_tet');
                 continue; // PHASE 0.5 will move it; skip normal return-to-oct
@@ -2528,7 +2518,6 @@ async function demoTick() {
             if (_octNodeSet && _octNodeSet.has(xon.node)) {
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 octIdle.push(xon);
                 _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} returned to oct cage → oct mode`);
@@ -3069,7 +3058,6 @@ async function demoTick() {
             plan.xon._mode = 'weak';
             plan.xon._t60Ejected = true;
             plan.xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(plan.xon);
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
             // Find a neighbor node to escape to
@@ -3145,7 +3133,6 @@ async function demoTick() {
                 if (_cageCriticalXons.has(plan.xon) && _octNodeSet && !_octNodeSet.has(plan.xon.node)) {
                     plan.xon._mode = 'gluon';
                     plan.xon.col = GLUON_COLOR;
-                    _trailRecolor(plan.xon);
                     if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
                     _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
                 }
@@ -3231,7 +3218,6 @@ async function demoTick() {
         plan.xon._loopStep = 0;
         plan.xon._quarkType = null;
         plan.xon.col = WEAK_FORCE_COLOR;
-        _trailRecolor(plan.xon);
         if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         _weakLifecycleEnter(plan.xon, 'tet_stuck_ejection');
         // Try to move to a free neighbor so T20 doesn't fire
@@ -3276,7 +3262,6 @@ async function demoTick() {
             xon._mode = 'weak';
             xon._t60Ejected = true;
             xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(xon, 'pending_ejection_offcage');
         }
@@ -3545,12 +3530,12 @@ async function demoTick() {
     const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;
 
     // ── TRAIL: one entry per xon per tick (unified push) ──
-    // All movement is resolved. Record FINAL position only.
+    // All movement is resolved. Record FINAL position and role.
+    // Always push — even if xon didn't move — so the trail captures role changes.
+    // _trailRecolor is gone; this is the only place trail entries are created.
     for (const xon of _demoXons) {
         if (!xon.alive || xon._dying) continue;
-        if (xon.node !== xon.prevNode || xon._movedThisTick) {
-            _trailPush(xon, xon.node);
-        }
+        _trailPush(xon, xon.node);
     }
 
     // T79: track consecutive full-oct ticks (for next tick's overflow pressure)

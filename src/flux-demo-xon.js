@@ -57,15 +57,8 @@ function _trailPush(xon, node) {
     const p = pos[node];
     xon.trail.push({ node, role: _xonRole(xon), pos: p ? [p[0], p[1], p[2]] : [0, 0, 0] });
 }
-// Retroactively update the last trail segment's role when a xon changes mode.
-// When entering weak/gluon mode, wash all recent consecutive 'oct' trail entries.
-function _trailRecolor(xon) {
-    const t = xon.trail;
-    if (!t || t.length === 0) return;
-    const newRole = _xonRole(xon);
-    t[t.length - 1].role = newRole;
-    // Historical trail entries are immutable (T94). Only the head is updated.
-}
+// _trailRecolor REMOVED — historical trail entries are immutable (T94).
+// _trailPush at tick-end captures the xon's final role. No retroactive edits.
 
 // Spawn a xon at a node with spark, trail, and tween — mirrors excitation visuals.
 // Color by quark function: pu=yellow, pd=green, nu=blue, nd=red.

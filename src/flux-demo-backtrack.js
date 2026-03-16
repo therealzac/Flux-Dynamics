@@ -54,13 +54,7 @@ function _btCreateSnapshot() {
                 }
                 return delta;
             })(),
-            // Recolor: if _trailRecolor changed last entry's role without a push
-            _tRecolor: (() => {
-                if (!x.trail || x.trail.length === 0) return null;
-                const startLen = x._trailLenAtTickStart || 0;
-                if (x.trail.length !== startLen || startLen === 0) return null;
-                return x.trail[x.trail.length - 1].role;
-            })(),
+            // _tRecolor removed — _trailRecolor no longer exists (T94)
         })),
         // Global SC sets (shallow copy — Set of primitive IDs)
         activeSet: new Set(activeSet),
@@ -166,11 +160,6 @@ function _btRestoreSnapshot(snap, reverse) {
             // Modern snapshot — delta-based restore
             // Rewind: truncate
             if (x.trail.length > tLen) x.trail.length = tLen;
-            // Recolor: role changed via wash without a push
-            // Recolor head only — historical entries are immutable (T94)
-            if (s._tRecolor && x.trail.length === tLen && x.trail.length > 0) {
-                x.trail[x.trail.length - 1].role = s._tRecolor;
-            }
             // Forward: push ALL delta entries (handles 0, 1, or 2 pushes per tick)
             if (x.trail.length < tLen && s._tDelta) {
                 for (const e of s._tDelta) {

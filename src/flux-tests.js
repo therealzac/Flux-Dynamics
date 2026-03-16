@@ -1621,22 +1621,21 @@ const LIVE_GUARD_REGISTRY = [
 
     // ── T94: Historical trail colors are immutable ──
     // Once a trail segment is recorded, its role (color) must never change.
-    // Only the most recent entry (head) may be updated by _trailRecolor.
-    // All older entries are frozen history.
+    // _trailRecolor is gone; _trailPush at tick-end is the only writer.
+    // All entries are frozen the moment they're pushed.
     {
       id: 'T94', name: 'Historical trail colors immutable',
       snapshot(g) {
-        // Capture role of every trail entry except the head (which T93 covers)
+        // Capture role of ALL trail entries (including head)
         g._t94Prev = [];
         for (let i = 0; i < _demoXons.length; i++) {
           const xon = _demoXons[i];
-          if (!xon.alive || !xon.trail || xon.trail.length < 2) {
+          if (!xon.alive || !xon.trail || xon.trail.length === 0) {
             g._t94Prev.push(null);
             continue;
           }
-          // Store roles of all entries except the last (head)
           const roles = [];
-          for (let j = 0; j < xon.trail.length - 1; j++) {
+          for (let j = 0; j < xon.trail.length; j++) {
             roles.push(xon.trail[j].role);
           }
           g._t94Prev.push(roles);
@@ -1649,34 +1648,15 @@ const LIVE_GUARD_REGISTRY = [
           if (!xon.alive || !xon.trail) continue;
           const prev = g._t94Prev[i];
           if (!prev) continue;
-          // Previous snapshot's historical entries should still be present
-          // and unchanged. They are now at the same indices (trail only grows
-          // or gets truncated from the front via shift).
-          // Trail may have shifted — compare from the end backwards.
-          // prev had trail.length-1 entries (all but head). Now trail may be longer.
-          // The entries that were historical last tick are still historical this tick
-          // (they can't become the head). Check that their roles haven't changed.
-          const curLen = xon.trail.length;
-          const prevHistLen = prev.length;
-          // If trail was truncated (shorter than prev history), skip — truncation is valid
-          if (curLen - 1 < prevHistLen) continue;
-          // The prev historical entries now start at offset (curLen - 1 - prevHistLen)
-          // because new entries may have been pushed, shifting the old ones leftward.
-          // Actually trail entries are pushed to end, so old entries stay at same index
-          // unless shifted out. Trail max length is 12, so oldest entries get shifted.
-          // Compare: prev[j] should match trail[j] for j < prevHistLen,
-          // BUT if trail shifted (grew past max), the indices shift.
-          // Simpler: compare from end. prev[prevHistLen-1] was second-to-last,
-          // now it's at trail[curLen - 2] if 1 new entry, trail[curLen-3] if 2, etc.
-          // Number of new entries pushed this tick:
-          const newEntries = curLen - 1 - prevHistLen;
-          if (newEntries < 0) continue; // trail shrunk, skip
-          for (let j = 0; j < prevHistLen; j++) {
-            const curIdx = j + newEntries;
-            if (curIdx >= curLen - 1) break; // don't check head
-            if (curIdx < 0) continue; // shifted out of trail buffer
-            if (xon.trail[curIdx].role !== prev[j]) {
-              return `tick ${tick}: X${i} trail[${curIdx}] role changed from ${prev[j]} to ${xon.trail[curIdx].role}`;
+          // If trail was truncated (backtracker rewind), the rewritten entries
+          // are legitimately different. Only check entries that survived.
+          // Entries 0..trail.length-1 that existed before the tick must match.
+          const checkLen = Math.min(prev.length, xon.trail.length);
+          // If trail shrank, the rewound entries are new — skip them
+          if (xon.trail.length < prev.length) continue;
+          for (let j = 0; j < checkLen; j++) {
+            if (xon.trail[j].role !== prev[j]) {
+              return `tick ${tick}: X${i} trail[${j}] role changed from ${prev[j]} to ${xon.trail[j].role}`;
             }
           }
         }
