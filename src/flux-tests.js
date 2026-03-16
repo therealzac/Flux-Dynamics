@@ -3420,8 +3420,9 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
             for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
                 const xon = snap.xons[xi];
                 // Clean trail: just this snapshot's node (+ previous clean trail from prior snapshot)
-                const role = xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
-                const roleCol = (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
+                const role = xon._role || xon._quarkType || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : 'oct');
+                const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
+                    : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                     : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
                     : xon.col || 0xffffff;
                 if (si === 0) {
@@ -3460,8 +3461,9 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
                     const cx = lastCold.xons[xi];
                     // Replace bloated trail prefix with clean cold trail + this snapshot's node
                     hx.trail = cx.trail.concat(hx.node);
-                    const role = hx._quarkType || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : 'oct');
-                    const roleCol = (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
+                    const role = hx._role || hx._quarkType || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : 'oct');
+                    const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
+                        : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                         : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
                         : hx.col || 0xffffff;
                     hx.trailColHistory = cx.trailColHistory.concat(roleCol);
