@@ -1386,7 +1386,7 @@ function startDemoLoop() {
     console.log(`%c[DEMO] seed=0x${_runSeed.toString(16).padStart(8,'0')}`, 'color:cyan;font-weight:bold');
     _balanceHistory = [];
     _bfsReset(); // fresh demo = clean BFS + ledger
-    _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 10
+    _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 100
     _btSnapshots.length = 0;
     _councilSnapArchive.length = 0;
     _tickLog.length = 0;
@@ -3654,13 +3654,13 @@ async function demoTick() {
         }
     }
 
-    // ── GC + Autosave on advancement milestones (every 10 NEW high-water ticks) ──
-    // Fires when _maxTickReached crosses a new 10-tick boundary since last milestone.
+    // ── GC + Autosave on advancement milestones (every 100 NEW high-water ticks) ──
+    // Fires when _maxTickReached crosses a new 100-tick boundary since last milestone.
     // GC always runs; autosave saves to council if eligible.
     {
-        const nextMilestone = _lastAutosavePeak + 10;
+        const nextMilestone = _lastAutosavePeak + 100;
         if (_maxTickReached >= nextMilestone) {
-            _lastAutosavePeak = Math.floor(_maxTickReached / 10) * 10;
+            _lastAutosavePeak = Math.floor(_maxTickReached / 100) * 100;
             _gc10();
             // Only autosave when we're AT the peak (not replaying old ground)
             if (_demoTick >= _maxTickReached
