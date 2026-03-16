@@ -348,9 +348,9 @@
                     <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
                         <span style="white-space:nowrap;">2. Max full-oct ticks</span>
                         <button class="btn-ghost tol-tick" data-slider="rule-oct-full-slider" data-dir="-1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9664;</button>
-                        <input type="range" id="rule-oct-full-slider" min="1" max="16" value="12" autocomplete="off" style="flex:1; accent-color:#ff9944;">
+                        <input type="range" id="rule-oct-full-slider" min="1" max="16" value="1" autocomplete="off" style="flex:1; accent-color:#ff9944;">
                         <button class="btn-ghost tol-tick" data-slider="rule-oct-full-slider" data-dir="1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9654;</button>
-                        <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">12</span>
+                        <span id="rule-oct-full-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">1</span>
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         T79: max consecutive ticks with all 6 xons on oct nodes before forced tet assignment.
@@ -492,7 +492,7 @@
             <input type="range" id="spark-opacity-slider" style="display:none" min="0" max="100" value="100" step="1">
             <div class="ctrl-row">
                 <span class="ctrl-label">weak</span>
-                <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="34" step="1">
+                <input type="range" id="weak-opacity-slider" class="ctrl-slider" min="0" max="100" value="13" step="1">
                 <span id="weak-opacity-val" class="ctrl-val">34%</span>
             </div>
             <div class="ctrl-row" style="margin-bottom:0;">
@@ -526,7 +526,7 @@
             </div>
             <div class="ctrl-row">
                 <span class="ctrl-label">trails</span>
-                <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="1000" value="55" step="1">
+                <input type="range" id="tracer-lifespan-slider" class="ctrl-slider" min="0" max="1000" value="1000" step="1">
                 <span id="tracer-lifespan-val" class="ctrl-val">55</span>
             </div>
             <div class="ctrl-row">
@@ -615,12 +615,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=96"></script>
+    <script src="src/flux-demo-state.js?v=99"></script>
     <script src="src/flux-demo-xon.js?v=14"></script>
     <script src="src/flux-demo-backtrack.js?v=38"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=114"></script>
-    <script src="src/flux-demo.js?v=473"></script>
+    <script src="src/flux-demo-ui.js?v=116"></script>
+    <script src="src/flux-demo.js?v=475"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -628,7 +628,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=39"></script>
     <script src="src/flux-nucleus.js?v=49"></script>
-    <script src="src/flux-tests.js?v=333"></script>
+    <script src="src/flux-tests.js?v=334"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

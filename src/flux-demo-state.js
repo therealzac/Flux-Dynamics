@@ -1,7 +1,19 @@
 // flux-demo-state.js — Shared state, constants, and PRNG for the demo choreography system
 
+// ── Visual defaults (single source of truth) ────────────────────────────
+// Applied once when user clicks play, and for council replay init.
+const DEMO_VISUAL_DEFAULTS = [
+    ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
+    ['graph-opacity-slider', 16], ['trail-opacity-slider', 100],
+    ['spark-opacity-slider', 100], ['weak-opacity-slider', 13],
+    ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
+    ['bg-gray-slider', 0],
+    ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 1000],
+];
+
 // ── Core demo state ──────────────────────────────────────────────────────
 let _demoActive = false;
+let _demoOpDefaultsApplied = false; // true after first startDemoLoop() applies visual defaults
 let _demoInterval = null;
 let _demoPaused = false;  // true when user has paused via pause button
 let _demoReversing = false;    // true during reverse playback
@@ -388,7 +400,7 @@ let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain te
 let _ruleBareTetrahedra = true; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
-let T79_MAX_FULL_TICKS = 12;      // T79: max consecutive ticks allowed with all 6 xons on oct nodes
+let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
 let _ruleT20StrictMode = true;   // When true, T20 has no mode-transition exemption
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.

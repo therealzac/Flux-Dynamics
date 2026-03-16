@@ -1555,7 +1555,16 @@ function startDemoLoop() {
     if (typeof _updateLatticeSliderLock === 'function') _updateLatticeSliderLock();
     if (typeof _setSimUIActive === 'function') _setSimUIActive(true);
 
-    // Opacity/visual sliders are NEVER reset between seeds — user's choices persist.
+    // Apply demo-mode visual defaults only on the FIRST startDemoLoop() call
+    // (user clicked play). Subsequent seed restarts within a sweep preserve
+    // whatever the user has set. Source: DEMO_VISUAL_DEFAULTS in flux-demo-state.js
+    if (!_demoOpDefaultsApplied) {
+        _demoOpDefaultsApplied = true;
+        for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
+            const el = document.getElementById(id);
+            if (el && +el.value !== val) { el.value = val; el.dispatchEvent(new Event('input')); }
+        }
+    }
 
     // Stop excitation clock (we drive our own loop)
     if (typeof stopExcitationClock === 'function') stopExcitationClock();

@@ -1,5 +1,20 @@
 # Flux Dynamics — Claude Context Document
 
+# ⛔⛔⛔ ONLY WORK ON THE WORKTREE. PERIOD. ⛔⛔⛔
+# All file edits go to the WORKTREE, never the main repo.
+# The user will tell you EXPLICITLY when to push to GitHub.
+# Never implicitly push. Never edit files outside the worktree.
+
+# ⛔⛔⛔ ONLY WORK ON THE WORKTREE. PERIOD. ⛔⛔⛔
+# All file edits go to the WORKTREE, never the main repo.
+# The user will tell you EXPLICITLY when to push to GitHub.
+# Never implicitly push. Never edit files outside the worktree.
+
+# ⛔⛔⛔ ONLY WORK ON THE WORKTREE. PERIOD. ⛔⛔⛔
+# All file edits go to the WORKTREE, never the main repo.
+# The user will tell you EXPLICITLY when to push to GitHub.
+# Never implicitly push. Never edit files outside the worktree.
+
 # ⚠️⚠️⚠️ SCIENTIFIC SIMULATION — RESEARCHER APPROVAL REQUIRED ⚠️⚠️⚠️
 # This is a particle physics simulation. It is EXTREMELY SENSITIVE.
 # ALL code updates must be approved by researchers BEFORE implementation.
@@ -473,13 +488,13 @@ PHASE 4 enforces Pauli exclusion absolutely:
 - **_occAdd/_occDel**: Use these helpers for occupied map manipulation (count-based, not boolean)
 
 ### Slider Defaults & Play-Mode Overrides
-Visualization slider defaults exist in **three places** — all three must stay in sync:
+Visualization slider defaults now live in **one centralized constant**:
 
-1. **HTML defaults** (`flux-v2.html`): `value="..."` attributes on `<input>` sliders. These control what the user sees on page load (before pressing play).
-2. **Play-mode overrides** (`flux-demo.js`, `_opDefaults` array in `startDemoLoop()`): Force slider values when the demo starts. These can differ from HTML defaults (e.g., bg=20% on load → bg=0% on play).
-3. **Replay overrides** (`flux-tests.js`, `_replayOpDefaults` array in council replay init): Same as play-mode but for cold-storage council replays.
+- **`DEMO_VISUAL_DEFAULTS`** in `flux-demo-state.js`: Single source of truth for all visual slider overrides applied when the user clicks play (and for council replay init). Both `startDemoLoop()` in `flux-demo.js` and the replay init in `flux-tests.js` reference this constant.
+- **HTML defaults** (`flux-v2.html`): `value="..."` attributes on `<input>` sliders control what the user sees on page load (before pressing play). These can differ from `DEMO_VISUAL_DEFAULTS`.
+- **`_demoOpDefaultsApplied`** flag (in `flux-demo-state.js`): Ensures defaults are applied only on the FIRST `startDemoLoop()` call. Mid-sweep seed transitions do NOT reapply — user slider changes persist across seeds. The flag resets in `stopDemo()` only when `_sweepActive` is false.
 
-When changing a default, decide: should it apply on load, on play, or both? Update the appropriate locations. The `_opDefaults` arrays dispatch `input` events so listeners fire.
+When changing a default: update `DEMO_VISUAL_DEFAULTS` for play-mode, and the HTML `value=` for page-load. They are intentionally independent.
 
 Camera defaults live in `flux-ui.js` (`sph={theta, phi, r}` and `panTarget`).
 

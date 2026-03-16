@@ -787,6 +787,9 @@ function isDemoPaused() {
 function stopDemo() {
     _demoActive = false;
     _demoPaused = false;
+    // Only reset visual defaults flag when sweep is fully over —
+    // mid-sweep seed transitions must NOT reapply slider defaults.
+    if (!_sweepActive) _demoOpDefaultsApplied = false;
     // Clear council replay state if active
     _sweepReplayActive = false;
     _sweepReplayMember = null;

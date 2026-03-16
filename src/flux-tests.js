@@ -3604,19 +3604,8 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             pauseDemo();
             _testRunning = false; // enable rendering for entire replay seed
             // Ensure opacity defaults are applied for replay visuals
-            const _replayOpDefaults = [
-                ['sphere-opacity-slider', 3], ['void-opacity-slider', 21],
-                ['graph-opacity-slider', 16], ['trail-opacity-slider', 100],
-                ['spark-opacity-slider', 100], ['weak-opacity-slider', 21],
-                ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
-                ['bg-gray-slider', 0],
-                ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
-                ['rule-oct-full-slider', 12],
-                ['rule-t90-tolerance-slider', 12], ['rule-t91-tolerance-slider', 12], ['rule-t92-tolerance-slider', 12],
-            ];
-            // Always force-dispatch (don't skip same-value) — startDemoLoop
-            // may have already set different defaults before we got here.
-            for (const [id, val] of _replayOpDefaults) {
+            // Source: DEMO_VISUAL_DEFAULTS in flux-demo-state.js
+            for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
                 const el = document.getElementById(id);
                 if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
             }
