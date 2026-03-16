@@ -496,10 +496,16 @@
                 <select id="council-replay-select" style="flex:1; font-size:11px; padding:6px 8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#ccc; border-radius:4px;"></select>
                 <button class="btn-primary" id="btn-simulate-nucleus" style="flex:1;">&#9654;</button>
             </div>
+            <!-- Auto-retry best checkbox (always visible) -->
+            <label style="display:flex; align-items:center; gap:4px; font-size:10px; color:#9abccc; cursor:pointer; user-select:none; margin-top:4px;">
+                <input type="checkbox" id="chk-auto-retry-best" checked
+                    style="margin:0; cursor:pointer;">
+                Auto-retry best
+            </label>
             <!-- Action buttons: active row (shown when sim is running) -->
-            <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px;">
+            <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px; align-items:center;">
                 <button class="btn-secondary" id="btn-nucleus-pause"
-                    style="flex:1; padding:7px 12px;"
+                    style="flex:0 0 auto; padding:7px 12px;"
                     title="Pause/resume simulation">⏸</button>
             </div>
 
@@ -717,7 +723,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=343"></script>
+    <script src="src/flux-tests.js?v=344"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
