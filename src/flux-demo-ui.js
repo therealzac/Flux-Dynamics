@@ -912,7 +912,12 @@ function resumeDemo() {
                     simHalted = false;
                     // Guards always fire during replay — no exceptions.
                     if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
-                    if (simHalted) { _demoInterval = null; return; }
+                    if (simHalted) {
+                        _demoInterval = null;
+                        // Update display so user sees the failure tick state
+                        _playbackUpdateDisplay();
+                        return;
+                    }
                     // Throttle visual updates to ~30fps for buttery speed
                     const now = performance.now();
                     if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {

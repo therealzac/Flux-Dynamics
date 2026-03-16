@@ -1933,6 +1933,7 @@ function _liveGuardCheck() {
             }
             simHalted = true;
             _demoPaused = true;
+            _sweepActive = false; // kill sweep synchronously before polls see simHalted
             _liveGuardRender();
             return;
         } else {
@@ -3840,9 +3841,12 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                 }
             }, 100);
         });
-        if (typeof stopDemo === 'function') stopDemo();
+        // If sweep was killed (user stop or _replayTestFail), break BEFORE
+        // stopDemo so the user can scrub through the failed replay
+        // (stopDemo destroys xons & clears _demoActive).
+        if (!_sweepActive) break;
 
-        if (!_sweepActive) break; // user stopped
+        if (typeof stopDemo === 'function') stopDemo();
 
         // Capture result
         const result = _captureBfsRunResult();
@@ -4906,12 +4910,20 @@ function _replayTestFail(phase, tick, reason) {
     localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
     _replayTestLog(`FAILED: ${q.result}`);
     if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, reason);
-    // Kill the sweep so it doesn't death-loop through more seeds
+    // Kill the sweep so it doesn't death-loop through more seeds.
+    // Keep _demoActive = true so the timeline scrubber remains functional.
     simHalted = true;
     _demoPaused = true;
     _sweepActive = false;
+    _sweepReplayActive = false;
+    _sweepReplayMember = null;
     if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
     if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+    // Update scrubber so user can scrub through the failed replay
+    if (typeof _updateTimelineScrubber === 'function') _updateTimelineScrubber();
+    // Update pause button to show play icon
+    const pb = document.getElementById('btn-nucleus-pause');
+    if (pb) { pb.textContent = '\u25B6'; pb.title = 'Resume simulation'; }
 }
 
 function _replayTestPass() {
