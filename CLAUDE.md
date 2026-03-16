@@ -68,6 +68,18 @@ ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND
 ### Speed sanity check
 If a change causes the Planck-second counter to run ~25x faster than normal, **you probably broke the physics solver.** The solver is the bottleneck — if the simulation suddenly flies, it means constraints are no longer being enforced and the results are meaningless. Treat unexpected speedups as a regression, not an improvement.
 
+### ⛔⛔⛔ NEVER suppress guards to make replay work ⛔⛔⛔
+**Guards exist to detect corruption. If guards fail during replay, THE REPLAY IS CORRUPT — fix the replay pipeline, not the guards.** This includes:
+- ❌ NEVER add `if (replaying) skip guards` or `if (redoDrain) return` conditions
+- ❌ NEVER silently reset failed guards during replay to let corrupt data pass
+- ❌ NEVER argue "guards don't make sense during replay" — they absolutely do; they validate that saved data is physically correct
+- ❌ NEVER disable movement guards (T20, T26, T27) because "snapshot restores aren't incremental" — the fix is proper prev-state tracking, not guard suppression
+- ✅ If guards fail during redo drain, the snapshot data or restore logic is broken — FIX THAT
+- ✅ Guards during replay are the ONLY defense against saving and replaying corrupt garbage
+- ✅ The replay pipeline must produce tick-to-tick state that is indistinguishable from live play
+
+**This is the same principle as "never modify tests." Suppressing guards during replay IS modifying tests — it's just doing it at the call site instead of the test definition.**
+
 ### NEVER gut the framework to bypass tests
 **We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
 

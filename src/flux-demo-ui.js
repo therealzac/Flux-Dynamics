@@ -900,14 +900,19 @@ function resumeDemo() {
                     // Safety: skip any undefined/null entries (stale IDB data)
                     while (!snap && _redoStack.length > 0) snap = _redoStack.pop();
                     if (!snap) { _demoInterval = null; return; }
+                    // Guard snapshot BEFORE restore — captures previous tick's state
+                    // as "pre-move" analog. Mirrors live play: snapshot → moves → check.
+                    if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
                     _btRestoreSnapshot(snap);
-                    simHalted = false;
-                    // Fire guards during replay if replay guard mode is active
-                    if (_replayGuardMode) {
-                        if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
-                        if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
-                        if (simHalted) { _demoInterval = null; return; }
+                    // Archive replayed snapshots so _councilSnapArchive has full t=0→t=N
+                    // when auto-retry-best extends a replay run and saves back to IDB.
+                    if (_sweepReplayActive && typeof _serializeSnapshot === 'function') {
+                        _councilSnapArchive.push(_serializeSnapshot(snap));
                     }
+                    simHalted = false;
+                    // Guards always fire during replay — no exceptions.
+                    if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
+                    if (simHalted) { _demoInterval = null; return; }
                     // Throttle visual updates to ~30fps for buttery speed
                     const now = performance.now();
                     if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {

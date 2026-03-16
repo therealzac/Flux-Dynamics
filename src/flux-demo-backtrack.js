@@ -110,6 +110,15 @@ function _btSaveSnapshot() {
 // Restore choreography state from a snapshot.
 function _btRestoreSnapshot(snap, reverse) {
     _demoTick = snap.tick;
+    // Truncate archive when backtracker rewinds — corrupt ticks beyond
+    // snap.tick must be removed so the retried tick gets properly archived.
+    // Archive index 0 = tick 1, so length = snap.tick keeps ticks 1..snap.tick.
+    if (typeof _maxTickReached !== 'undefined' && snap.tick < _maxTickReached) {
+        _maxTickReached = snap.tick;
+        if (typeof _councilSnapArchive !== 'undefined') {
+            _councilSnapArchive.length = snap.tick;
+        }
+    }
     // Curved reverse: capture current sprite positions BEFORE any state changes
     const fjReverse = _fjCurvature > 0 && reverse;
     const savedPositions = fjReverse ? _demoXons.map(x =>

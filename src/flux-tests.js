@@ -1802,7 +1802,7 @@ function _liveGuardResetForRewind() {
 // ══════════════════════════════════════════════════════════════════
 let _liveGuardActivated = false;
 function _liveGuardCheck() {
-    if (!_demoActive || !_liveGuardsActive || _testRunning) return;
+    if (!_demoActive || !_liveGuardsActive) return;
     const tick = _demoTick;
 
     // ── During grace: stay null ──
@@ -1923,26 +1923,18 @@ function _liveGuardCheck() {
         // The recorded moves are known-good; guard failures are transient and the
         // original run resolved them via backtracking. We replay the happy path only.
         if (_sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak) {
+            // Replay corruption: halt unconditionally. Never silently reset guards.
+            const failMsgs = Object.entries(_liveGuards)
+                .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; ');
+            console.error(`[REPLAY GUARD] Corruption at tick ${tick}: ${failMsgs}`);
             if (_replayGuardMode) {
-                // Replay guard mode: DON'T suppress — halt and show corruption
-                _replayGuardMode = false;  // prevent re-triggering from other call sites
-                simHalted = true;
-                _demoPaused = true;
-                _liveGuardRender();
-                const failMsgs = Object.entries(_liveGuards)
-                    .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; ');
+                _replayGuardMode = false;
                 if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, failMsgs);
-                console.error(`[REPLAY GUARD] Corruption at tick ${tick}: ${failMsgs}`);
-                return;
             }
-            // Reset failed guards silently — replay continues
-            for (const entry of LIVE_GUARD_REGISTRY) {
-                const g = _liveGuards[entry.id];
-                if (g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
-            }
-            _liveGuardFailTick = null;
-            _liveGuardDumped = false;
-            // Don't request rewind or halt — just continue
+            simHalted = true;
+            _demoPaused = true;
+            _liveGuardRender();
+            return;
         } else {
         if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
             _liveGuardFailTick = tick; // record first failure tick
@@ -1984,7 +1976,7 @@ function _liveGuardCheck() {
 // Snapshot xon positions BEFORE demoTick advances them (called from demoTick)
 let _liveGuardPrev = null;
 function _liveGuardSnapshot() {
-    if (!_liveGuardsActive || _testRunning) { _liveGuardPrev = null; return; }
+    if (!_liveGuardsActive) { _liveGuardPrev = null; return; }
     _liveGuardPrev = _demoXons.filter(x => x.alive).map(x => ({
         xon: x, node: x.node, mode: x._mode
     }));
@@ -3894,7 +3886,8 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         // Auto-retry best: if checkbox checked and council has members,
         // replay the best council member next (blacklist ensures divergence)
         const _arbChk = document.getElementById('chk-auto-retry-best');
-        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
+        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0
+            && _sweepGoldenCouncil[0].peak >= 30) {
             _replayOnFirstSeed = _sweepGoldenCouncil[0]; // best = highest peak (sorted)
         }
 
@@ -4848,18 +4841,24 @@ function _exportBfsTestResults() {
     if (_rTestQ) {
         try {
             const q = JSON.parse(_rTestQ);
-            if (q && q.phase === 'done' && q.result) {
-                // Show previous test result
+            if (q && q.phase === 'done' && q.result && q.result.startsWith('FAIL')) {
+                // Test fixture: re-run the replay phase on every reload.
+                // The IDB data is our fixture. Replay it, hit the failure, stop.
+                // localStorage is NOT cleared — this is the persistent fixture.
                 setTimeout(() => {
-                    if (q.result.startsWith('FAIL')) {
-                        const match = q.result.match(/t=(\d+)/);
-                        const tick = match ? parseInt(match[1]) : 0;
-                        if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, q.result);
-                    }
+                    _replayTestLog(`Re-running test fixture (previous: ${q.result})`);
+                    // Reset phase to replay so _runReplayTestPhase picks it up
+                    const replayQ = { phase: 'replay', targetPS: q.targetPS || 100,
+                        seed: q.seed, startedAt: q.startedAt };
+                    _runReplayTestPhase(replayQ);
+                }, 1500);
+            } else if (q && q.phase === 'done' && q.result) {
+                // PASS result — show static message
+                setTimeout(() => {
                     _replayTestLog(`Previous test result: ${q.result}`);
                 }, 1000);
             } else if (q && q.phase && q.phase !== 'done') {
-                // Resume valid pipeline phases after reload
+                // Interrupted mid-pipeline — resume the phase
                 setTimeout(() => _runReplayTestPhase(q), 1500);
             }
         } catch (e) { localStorage.removeItem('flux_replay_test'); }
@@ -4907,6 +4906,12 @@ function _replayTestFail(phase, tick, reason) {
     localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
     _replayTestLog(`FAILED: ${q.result}`);
     if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, reason);
+    // Kill the sweep so it doesn't death-loop through more seeds
+    simHalted = true;
+    _demoPaused = true;
+    _sweepActive = false;
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+    if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
 }
 
 function _replayTestPass() {
