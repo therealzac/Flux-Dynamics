@@ -77,11 +77,11 @@
         #deuteron-panel.collapsed, #side-panel.collapsed { display: none !important; }
 
         /* ── Stats block ── */
-        #bottom-stats { position: fixed; bottom: 16px; left: 16px; z-index: 1;
-            font-family: var(--font-mono); font-size: 11px; line-height: 1.9;
+        #bottom-stats { position: fixed; bottom: 20px; left: 20px; z-index: 1;
+            font-family: var(--font-sans); font-size: 11px; line-height: 1.9;
             color: var(--text-3); pointer-events: none; user-select: none;
             background: var(--surface); border: 1px solid var(--border);
-            border-radius: var(--radius); padding: 6px 10px; backdrop-filter: blur(8px);
+            border-radius: 10px; padding: 7px 14px; backdrop-filter: blur(8px);
             transition: left 0.2s, right 0.2s, transform 0.2s; }
         #bottom-stats.center { left: 50%; right: auto; transform: translateX(-50%); }
         #bottom-stats.right { left: auto; right: 16px; transform: none; }
@@ -698,6 +698,8 @@
         <div>flux: <span id="st-planck" style="color:var(--text-2)">0</span></div>
         <div>ps: <span id="st-ticks" style="color:var(--text-2)">0</span></div>
         <div>shortcuts: <span id="st-sc" style="color:var(--text-2)">0 / 18</span></div>
+        <div>highest ps: <span id="st-highest-ps" style="color:var(--text-2)">0</span></div>
+        <div>balance: <span id="st-balance-overall" style="color:var(--text-2)">—</span> · p <span id="st-balance-proton" style="color:var(--text-2)">—</span> · n <span id="st-balance-neutron" style="color:var(--text-2)">—</span></div>
         <div style="display:none">density: <span id="st-dens" style="color:var(--text-2)">—</span></div>
         <!-- Hidden but kept for compatibility -->
         <span id="st-state" style="display:none">FCC</span>
@@ -712,9 +714,9 @@
     <script src="src/flux-solver-proxy.js?v=2"></script>
     <script src="src/flux-demo-state.js?v=107"></script>
     <script src="src/flux-demo-xon.js?v=18"></script>
-    <script src="src/flux-demo-backtrack.js?v=43"></script>
+    <script src="src/flux-demo-backtrack.js?v=51"></script>
     <script src="src/flux-demo-planner.js?v=38"></script>
-    <script src="src/flux-demo-ui.js?v=133"></script>
+    <script src="src/flux-demo-ui.js?v=134"></script>
     <script src="src/flux-demo.js?v=490"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
@@ -723,7 +725,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=40"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=350"></script>
+    <script src="src/flux-tests.js?v=351"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

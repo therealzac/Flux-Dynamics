@@ -68,6 +68,40 @@ function _updateBottomStats() {
         densEl.textContent = actual + '%';
         densEl.style.color = dev < 0.001 ? '#6a8aaa' : dev < 0.01 ? '#ffaa44' : '#ff4444';
     }
+    // Highest ps
+    const hpEl = document.getElementById('st-highest-ps');
+    if (hpEl) hpEl.textContent = _maxTickReached || 0;
+    // Quark balance scores
+    const visits = _actualizationVisits || _demoVisits;
+    if (visits) {
+        const types6 = ['pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu'];
+        const calcEvenness = (arr) => {
+            const m = arr.reduce((a, b) => a + b, 0) / arr.length;
+            if (m === 0) return 0;
+            const sd = Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
+            return Math.max(0, 1 - sd / m);
+        };
+        const totals = [], protonPerFace = [], neutronPerFace = [];
+        for (let f = 1; f <= 8; f++) {
+            const v = visits[f];
+            if (!v) continue;
+            let ft = 0;
+            for (const t of types6) ft += v[t] || 0;
+            totals.push(ft);
+            protonPerFace.push((v.pu1 || 0) + (v.pu2 || 0) + (v.pd || 0));
+            neutronPerFace.push((v.nd1 || 0) + (v.nd2 || 0) + (v.nu || 0));
+        }
+        const evenness = totals.length > 0 ? calcEvenness(totals) : 0;
+        const pEven = protonPerFace.length > 0 ? calcEvenness(protonPerFace) : 0;
+        const nEven = neutronPerFace.length > 0 ? calcEvenness(neutronPerFace) : 0;
+        const evColor = (e) => e > 0.99 ? '#66dd66' : e > 0.95 ? '#ccaa66' : '#ff6644';
+        const oEl = document.getElementById('st-balance-overall');
+        if (oEl) { oEl.textContent = (evenness * 100).toFixed(1) + '%'; oEl.style.color = evColor(evenness); }
+        const pEl = document.getElementById('st-balance-proton');
+        if (pEl) { pEl.textContent = (pEven * 100).toFixed(1) + '%'; pEl.style.color = evColor(pEven); }
+        const nEl = document.getElementById('st-balance-neutron');
+        if (nEl) { nEl.textContent = (nEven * 100).toFixed(1) + '%'; nEl.style.color = evColor(nEven); }
+    }
 }
 
 function dumpProfile() {
@@ -1235,7 +1269,34 @@ function _updatePlaybackButtons() {
 function exportTickLog() {
     // During council replay or paused demo, export full snapshots
     if (_btSnapshots && _btSnapshots.length > 0 && typeof _serializeSnapshot === 'function') {
+        // Serialize then reconstruct trails for export (modern snapshots use trailLen only)
         const snapData = _btSnapshots.map(s => _serializeSnapshot(s));
+        // Reconstruct trail arrays so exported file is self-contained for replay
+        const numXons = snapData[0] && snapData[0].xons ? snapData[0].xons.length : 0;
+        for (let si = 0; si < snapData.length; si++) {
+            const snap = snapData[si];
+            if (!snap.xons) continue;
+            for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
+                const xon = snap.xons[xi];
+                const role = xon._role || 'oct';
+                const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role) : xon.col || 0xffffff;
+                xon.col = roleCol;
+                if (si === 0) {
+                    xon.trail = [xon.node];
+                    xon.trailColHistory = [roleCol];
+                    xon._trailRoleHistory = [role];
+                    const p = snap.pos && snap.pos[xon.node];
+                    xon._trailFrozenPos = [p ? [p[0], p[1], p[2]] : [0, 0, 0]];
+                } else {
+                    const prev = snapData[si - 1].xons[xi];
+                    xon.trail = prev.trail.concat(xon.node);
+                    xon.trailColHistory = prev.trailColHistory.concat(roleCol);
+                    xon._trailRoleHistory = prev._trailRoleHistory.concat(role);
+                    const p = snap.pos && snap.pos[xon.node];
+                    xon._trailFrozenPos = prev._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
+                }
+            }
+        }
         const seed = _forceSeed || _runSeed || 0;
         const peak = _btSnapshots[_btSnapshots.length - 1].tick || 0;
         const data = {

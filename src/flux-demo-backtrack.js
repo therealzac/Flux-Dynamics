@@ -41,17 +41,12 @@ function _btCreateSnapshot() {
             _gluonForFace: x._gluonForFace, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
-            trail: x.trail.slice(),
-            trailColHistory: x.trailColHistory.slice(),
-            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
-            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map((p, ti) => {
-                // Fix stale [0,0,0] from pre-solver init
-                if (p[0] === 0 && p[1] === 0 && p[2] === 0 && typeof pos !== 'undefined') {
-                    const rp = pos[x.trail[ti]];
-                    if (rp && (rp[0] !== 0 || rp[1] !== 0 || rp[2] !== 0)) return [rp[0], rp[1], rp[2]];
-                }
-                return [p[0], p[1], p[2]];
-            }) : [],
+            trailLen: x.trail ? x.trail.length : 0, // O(1) — trails live on live xon, not snapshot
+            // Store most recent trail entry so forward restore is a direct read (no inference)
+            _tNode: x.trail && x.trail.length > 0 ? x.trail[x.trail.length - 1] : x.node,
+            _tCol: x.trailColHistory && x.trailColHistory.length > 0 ? x.trailColHistory[x.trailColHistory.length - 1] : x.col,
+            _tRole: x._trailRoleHistory && x._trailRoleHistory.length > 0 ? x._trailRoleHistory[x._trailRoleHistory.length - 1] : null,
+            _tPos: x._trailFrozenPos && x._trailFrozenPos.length > 0 ? x._trailFrozenPos[x._trailFrozenPos.length - 1] : null,
         })),
         // Global SC sets (shallow copy — Set of primitive IDs)
         activeSet: new Set(activeSet),
@@ -142,12 +137,48 @@ function _btRestoreSnapshot(snap, reverse) {
         }
         x._dirBalance = s._dirBalance ? s._dirBalance.slice() : new Array(10).fill(0);
         x._modeStats = x._modeStats ? { ...s._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 };
-        x.trail = s.trail.slice();
-        x.trailColHistory = s.trailColHistory.slice();
-        x._trailRoleHistory = s._trailRoleHistory ? s._trailRoleHistory.slice() : [];
-        x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
-        // NOTE: Re-freeze of stale [0,0,0] entries moved AFTER pos[] restore (below)
-        // so it uses the snapshot's own solver positions, not the previous frame's.
+        // Truncate live trails to snapshot length — O(1) instead of O(T) copy
+        const tLen = s.trailLen != null ? s.trailLen : (s.trail ? s.trail.length : 0); // fallback for legacy snapshots with full trail arrays
+        if (s.trail) {
+            // Legacy snapshot with full trail arrays (from IDB) — copy them
+            x.trail = s.trail.slice();
+            x.trailColHistory = s.trailColHistory ? s.trailColHistory.slice() : [];
+            x._trailRoleHistory = s._trailRoleHistory ? s._trailRoleHistory.slice() : [];
+            x._trailFrozenPos = s._trailFrozenPos ? s._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [];
+        } else {
+            // Modern snapshot — shrink or grow trail to match trailLen
+            if (x.trail.length > tLen) {
+                // Rewind: truncate
+                x.trail.length = tLen;
+                x.trailColHistory.length = tLen;
+                if (x._trailRoleHistory) x._trailRoleHistory.length = tLen;
+                if (x._trailFrozenPos) x._trailFrozenPos.length = tLen;
+            } else if (x.trail.length < tLen) {
+                // Forward: replay stored trail entry — recorded at snapshot time,
+                // already reflects _trailRecolor wash. No inference needed.
+                const tRole = s._tRole || s._role || 'oct';
+                const tCol = s._tCol != null ? s._tCol : (x.col || 0xffffff);
+                // Detect transition for wash: prev was 'oct', now gluon/weak
+                const wasOct = x._trailRoleHistory && x._trailRoleHistory.length > 0 &&
+                    x._trailRoleHistory[x._trailRoleHistory.length - 1] === 'oct';
+                x.trail.push(s._tNode != null ? s._tNode : s.node);
+                x.trailColHistory.push(tCol);
+                if (x._trailRoleHistory) x._trailRoleHistory.push(tRole);
+                if (x._trailFrozenPos) {
+                    x._trailFrozenPos.push(s._tPos ? [s._tPos[0], s._tPos[1], s._tPos[2]] : [0, 0, 0]);
+                }
+                // Wash once at transition — mirrors _trailRecolor in live play
+                if ((tRole === 'gluon' || tRole === 'weak') && wasOct && x._trailRoleHistory) {
+                    const rh = x._trailRoleHistory;
+                    const ch = x.trailColHistory;
+                    for (let k = rh.length - 2; k >= 0; k--) {
+                        if (rh[k] !== 'oct') break;
+                        rh[k] = tRole;
+                        ch[k] = tCol;
+                    }
+                }
+            }
+        }
         // Pop most recent trail entry on reverse — visually removes the last hop
         if (fjReverse && x.trail.length > 0) {
             x.trail.pop();

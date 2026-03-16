@@ -3270,7 +3270,12 @@ function _serializeSnapshot(snap) {
         _v: snap._v || 0,
         tick: snap.tick,
         openingPhase: snap.openingPhase,
-        xons: snap.xons.map(x => x._role ? x : { ...x, _role: x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct' }),
+        xons: snap.xons.map(x => {
+            const role = x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct');
+            // Strip trail arrays — only store trailLen. Trails reconstructed by cold-set cleaning.
+            const { trail, trailColHistory, _trailRoleHistory, _trailFrozenPos, ...rest } = x;
+            return { ...rest, _role: role, trailLen: x.trailLen != null ? x.trailLen : (trail ? trail.length : 0) };
+        }),
         activeSet: [...snap.activeSet],
         xonImpliedSet: [...snap.xonImpliedSet],
         impliedSet: [...snap.impliedSet],
@@ -3311,10 +3316,12 @@ function _deserializeSnapshot(s) {
             // Backfill _role for legacy IDB data (pre-_role snapshots)
             _role: x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct'),
             _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
-            trail: x.trail.slice(),
-            trailColHistory: x.trailColHistory.slice(),
-            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : [],
-            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : [],
+            // Trail arrays: legacy IDB data may have them, modern data uses trailLen only
+            trail: x.trail ? x.trail.slice() : null,
+            trailColHistory: x.trailColHistory ? x.trailColHistory.slice() : null,
+            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : null,
+            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : null,
+            trailLen: x.trailLen != null ? x.trailLen : (x.trail ? x.trail.length : 0),
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
             _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
@@ -3420,7 +3427,29 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
                 // Find where new data starts (ticks beyond ancestor's peak)
                 const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
                 if (newSnapshots.length > 0) {
-                    const combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
+                    // Reconstruct trail arrays for new snapshots, chaining from ancestor's last snapshot
+                    const existingLast = existingData.snapshots[existingData.snapshots.length - 1];
+                    const numXons = existingLast.xons ? existingLast.xons.length : 0;
+                    let prevXons = existingLast.xons;
+                    const serializedNew = newSnapshots.map(snap => {
+                        const s = _serializeSnapshot(snap);
+                        // Rebuild trail arrays from prev + this snapshot's node/_role
+                        s.xons = snap.xons.map((x, xi) => {
+                            const role = x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct');
+                            const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role) : x.col || 0xffffff;
+                            const px = prevXons && prevXons[xi];
+                            const trail = px && px.trail ? px.trail.concat(x.node) : [x.node];
+                            const trailColHistory = px && px.trailColHistory ? px.trailColHistory.concat(roleCol) : [roleCol];
+                            const _trailRoleHistory = px && px._trailRoleHistory ? px._trailRoleHistory.concat(role) : [role];
+                            const p = snap.pos && snap.pos[x.node];
+                            const fp = p ? [p[0], p[1], p[2]] : [0, 0, 0];
+                            const _trailFrozenPos = px && px._trailFrozenPos ? px._trailFrozenPos.concat([fp]) : [fp];
+                            return { ...x, _role: role, col: roleCol, trail, trailColHistory, _trailRoleHistory, _trailFrozenPos };
+                        });
+                        prevXons = s.xons;
+                        return s;
+                    });
+                    const combinedSnaps = existingData.snapshots.concat(serializedNew);
                     const movesArr = [];
                     for (const [tick, moveMap] of moves) {
                         movesArr.push([tick, [...moveMap.entries()]]);
@@ -3442,28 +3471,24 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
         } catch (e) { console.warn('[Council IDB] Append-only read failed, falling back to full save:', e); }
     }
 
-    // ── Clean cold set: reconstruct trails to 1 entry per tick ──
-    // Hot set = last min(100, 50% of total) snapshots — left as-is for
-    // arbitrary traversal.  Cold set = everything before that — frozen
-    // into a single sane happy path with 1 trail node per snapshot.
+    // ── Reconstruct trails for ALL snapshots ──
+    // Snapshots no longer store trail arrays (O(N²) → O(N) memory).
+    // Rebuild 1-entry-per-tick trails from per-snapshot node/_role/pos.
     const total = snapshots.length;
-    const hotSize = Math.min(100, Math.ceil(total * 0.5));
-    const coldEnd = Math.max(0, total - hotSize); // exclusive upper bound of cold set
-    if (coldEnd > 0) {
+    if (total > 0) {
         const numXons = snapshots[0].xons ? snapshots[0].xons.length : 0;
-        // Walk cold set sequentially: rebuild each xon's trail from per-snapshot node
-        for (let si = 0; si < coldEnd; si++) {
+        // Walk ALL snapshots sequentially: rebuild each xon's trail from per-snapshot node/_role/pos
+        for (let si = 0; si < total; si++) {
             const snap = snapshots[si];
             if (!snap.xons) continue;
             for (let xi = 0; xi < numXons && xi < snap.xons.length; xi++) {
                 const xon = snap.xons[xi];
-                // Clean trail: just this snapshot's node (+ previous clean trail from prior snapshot)
                 const role = xon._role || (xon._mode === 'gluon' ? 'gluon' : xon._mode === 'weak' ? 'weak' : xon._quarkType || 'oct');
                 const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
                     : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                     : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
                     : xon.col || 0xffffff;
-                xon.col = roleCol; // fix stale white — descendant inherits correct spark color
+                xon.col = roleCol;
                 if (si === 0) {
                     xon.trail = [xon.node];
                     xon.trailColHistory = [roleCol];
@@ -3478,7 +3503,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
                     const p = snap.pos && snap.pos[xon.node];
                     xon._trailFrozenPos = prev._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
                 }
-                // Wash: gluon/weak trails override recent oct entries (matches _trailRecolor)
+                // Wash: gluon/weak trails override recent oct entries
                 if (role === 'gluon' || role === 'weak') {
                     const rh = xon._trailRoleHistory;
                     const ch = xon.trailColHistory;
@@ -3490,47 +3515,18 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
                 }
             }
         }
-        // Patch the first hot-set snapshot to inherit the clean cold trail
-        if (coldEnd < total) {
-            const firstHot = snapshots[coldEnd];
-            const lastCold = snapshots[coldEnd - 1];
-            if (firstHot.xons && lastCold.xons) {
-                for (let xi = 0; xi < numXons && xi < firstHot.xons.length; xi++) {
-                    const hx = firstHot.xons[xi];
-                    const cx = lastCold.xons[xi];
-                    // Replace bloated trail prefix with clean cold trail + this snapshot's node
-                    hx.trail = cx.trail.concat(hx.node);
-                    const role = hx._role || (hx._mode === 'gluon' ? 'gluon' : hx._mode === 'weak' ? 'weak' : hx._quarkType || 'oct');
-                    const roleCol = (typeof _xpRoleColor === 'function') ? _xpRoleColor(role)
-                        : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
-                        : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
-                        : hx.col || 0xffffff;
-                    hx.col = roleCol; // fix stale white — descendant inherits correct spark color
-                    hx.trailColHistory = cx.trailColHistory.concat(roleCol);
-                    hx._trailRoleHistory = cx._trailRoleHistory.concat(role);
-                    const p = firstHot.pos && firstHot.pos[hx.node];
-                    hx._trailFrozenPos = cx._trailFrozenPos.concat([p ? [p[0], p[1], p[2]] : [0, 0, 0]]);
-                    // Wash: gluon/weak trails override recent oct entries (matches _trailRecolor)
-                    if (role === 'gluon' || role === 'weak') {
-                        const rh = hx._trailRoleHistory;
-                        const ch = hx.trailColHistory;
-                        for (let k = rh.length - 2; k >= 0; k--) {
-                            if (rh[k] !== 'oct') break;
-                            rh[k] = role;
-                            ch[k] = roleCol;
-                        }
-                    }
-                }
-            }
-        }
-        const beforeLen = snapshots[Math.min(coldEnd, total - 1)].xons[0].trail.length;
-        console.log(`%c[Council IDB] Cold set cleaned: ${coldEnd} snapshots → 1 trail entry/tick (trail len ${beforeLen})`, 'color:#88cc88');
+        console.log(`%c[Council IDB] Trails reconstructed for ${total} snapshots (trail len ${snapshots[total-1].xons[0].trail.length})`, 'color:#88cc88');
     }
 
     // NOTE: blacklist is cross-seed — do NOT GC based on one member's cold set.
     // Fingerprints from seed A at tick N must still block seed B at tick N.
 
-    const snapsArr = snapshots.map(_serializeSnapshot);
+    // Serialize for IDB — use _serializeSnapshot but override xons to keep reconstructed trails
+    const snapsArr = snapshots.map(snap => {
+        const s = _serializeSnapshot(snap);
+        s.xons = snap.xons; // preserve trail arrays reconstructed above (plain objects, IDB-safe)
+        return s;
+    });
     const movesArr = [];
     for (const [tick, moveMap] of moves) {
         movesArr.push([tick, [...moveMap.entries()]]);
