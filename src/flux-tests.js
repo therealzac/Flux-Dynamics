@@ -3401,10 +3401,46 @@ function _blIDBSaveBlacklist(lvl) {
     } catch (e) { console.warn('[BL] Save failed:', e); }
 }
 
-async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
+async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak) {
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl) + '|' + seed;
+
+    // ── Append-only save when extending a replay ──
+    // Keep ancestor's snapshots (perfect trail data), only append new ticks beyond ancestorPeak.
+    if (ancestorPeak >= 0) {
+        try {
+            const existingData = await new Promise((resolve) => {
+                const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
+                const req = tx.objectStore(_CS_IDB_STORE).get(key);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+            if (existingData && existingData.snapshots && existingData.snapshots.length > 0) {
+                // Find where new data starts (ticks beyond ancestor's peak)
+                const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
+                if (newSnapshots.length > 0) {
+                    const combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
+                    const movesArr = [];
+                    for (const [tick, moveMap] of moves) {
+                        movesArr.push([tick, [...moveMap.entries()]]);
+                    }
+                    const tx2 = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+                    const store = tx2.objectStore(_CS_IDB_STORE);
+                    store.put({
+                        seed, snapshots: combinedSnaps, moves: movesArr,
+                        snapshotVersion: _SNAPSHOT_VERSION,
+                        timestamp: new Date().toISOString(),
+                    }, key);
+                    store.put({ seed, moves: movesArr }, key + '|mv');
+                    console.log(`%c[Council IDB] Extended member seed 0x${seed.toString(16).padStart(8,'0')} — kept ${existingData.snapshots.length} ancestor snapshots, appended ${newSnapshots.length} new (total ${combinedSnaps.length})`, 'color:#66ccff');
+                } else {
+                    console.log(`%c[Council IDB] No new snapshots beyond ancestor peak t${ancestorPeak} — skip`, 'color:#cccc66');
+                }
+                return; // done — don't fall through to full overwrite
+            }
+        } catch (e) { console.warn('[Council IDB] Append-only read failed, falling back to full save:', e); }
+    }
 
     // ── Clean cold set: reconstruct trails to 1 entry per tick ──
     // Hot set = last min(100, 50% of total) snapshots — left as-is for
@@ -3427,6 +3463,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
                     : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                     : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
                     : xon.col || 0xffffff;
+                xon.col = roleCol; // fix stale white — descendant inherits correct spark color
                 if (si === 0) {
                     xon.trail = [xon.node];
                     xon.trailColHistory = [roleCol];
@@ -3468,6 +3505,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
                         : (role === 'gluon' && typeof GLUON_COLOR !== 'undefined') ? GLUON_COLOR
                         : (role === 'weak' && typeof WEAK_FORCE_COLOR !== 'undefined') ? WEAK_FORCE_COLOR
                         : hx.col || 0xffffff;
+                    hx.col = roleCol; // fix stale white — descendant inherits correct spark color
                     hx.trailColHistory = cx.trailColHistory.concat(roleCol);
                     hx._trailRoleHistory = cx._trailRoleHistory.concat(role);
                     const p = firstHot.pos && firstHot.pos[hx.node];
@@ -3703,10 +3741,12 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             seed = _replayOnFirstSeed.seed;
             _sweepReplayActive = true;
             _sweepReplayMember = _replayOnFirstSeed;
+            _replayAncestorPeak = _replayOnFirstSeed.peak; // preserve for append-only save
             console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${_replayOnFirstSeed.peak}`, 'color:#66ccff;font-weight:bold');
         } else {
             _sweepReplayActive = false;
             _sweepReplayMember = null;
+            _replayAncestorPeak = -1;
         }
 
         _forceSeed = seed;
@@ -3868,7 +3908,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     existingMember.peak = Math.max(existingMember.peak, peak);
                     if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
                     else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
+                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                 } else {
                     // Collect evicted seeds before trimming
@@ -4023,8 +4063,8 @@ function _saveCurrentRunToCouncil() {
             }
             existingMember.peak = peak;
             existingMember.moves = movesCopy;
-            // Overwrite cold storage with the more mature data
-            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
+            // Append-only: keep ancestor's IDB snapshots, add new ticks beyond ancestor peak
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
             _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
