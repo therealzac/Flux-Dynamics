@@ -520,6 +520,20 @@ A long straight trail line extends from node 0 through the oct to the opposite a
 
 ---
 
+## 10.6. Sweep Architecture Doctrine
+
+**Sweep mode is the ONLY execution mode. Period.**
+
+There is no separate "replay mode" or "test mode." The sweep (`_runTournament` is dead — use `startSweepTest` → `startDemoLoop` directly) is always running. The only difference between a fresh run and a council replay is that a council replay starts with pre-seeded moves (snapshots loaded from IDB onto the redo stack). That's it.
+
+**Council replay = sweep with pre-seeded redo stack.** The redo drain plays the saved snapshots, then live execution continues seamlessly. There is no mode transition, no separate controller.
+
+**The replay test pipeline (🧪 button) runs WITHIN the sweep**, not as a competing controller. It observes the sweep's behavior and validates guard integrity. The test infrastructure is temporary scaffolding that will be commented out once replay fidelity is proven.
+
+**NEVER create a parallel execution system that fights with the sweep for control of the demo.** One execution loop. One controller. One source of truth for what tick we're on.
+
+---
+
 ## 11. Development Conventions
 
 - **Cache busting**: After editing any `src/*.js` file, bump `?v=N` in `flux-v2.html` script tag

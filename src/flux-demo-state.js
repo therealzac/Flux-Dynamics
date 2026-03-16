@@ -397,7 +397,7 @@ let _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }; // ru
 // ── Rule switches (switchboard) ────────────────────────────────────────────
 let _ruleRelinquishSCs = false; // When true, SCs actively removed after loops. When false, persist until vacuum severs.
 let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain tet face SCs instead of code-based relinquishment.
-let _ruleBareTetrahedra = true; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
+let _ruleBareTetrahedra = false; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
 let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes

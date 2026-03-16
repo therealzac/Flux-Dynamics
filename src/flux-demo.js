@@ -3129,12 +3129,25 @@ async function demoTick() {
                 plan.xon._movedThisTick = true; // prevent double-move in PHASE 3.5/4
                 _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
                 _traceMove(plan.xon, fromNode, plan.xon.node, 'p3oct');
-                // Gluon activation: cage-critical xon moved to non-oct node → gluon mode
-                if (_cageCriticalXons.has(plan.xon) && _octNodeSet && !_octNodeSet.has(plan.xon.node)) {
-                    plan.xon._mode = 'gluon';
-                    plan.xon.col = GLUON_COLOR;
-                    if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
-                    _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
+                // Immediate mode transition for xons that moved off-oct.
+                // Mode must change in the SAME tick as the move (T95: oct mode on oct nodes only).
+                if (_octNodeSet && !_octNodeSet.has(plan.xon.node)) {
+                    if (_cageCriticalXons.has(plan.xon)) {
+                        // Gluon activation: cage-critical xon moved off-cage
+                        plan.xon._mode = 'gluon';
+                        plan.xon.col = GLUON_COLOR;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
+                        _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
+                    } else if (plan.xon._pendingWeakEjection) {
+                        // Pending-weak xon stepped off oct — transition immediately
+                        plan.xon._pendingWeakEjection = false;
+                        plan.xon._mode = 'weak';
+                        plan.xon._t60Ejected = true;
+                        plan.xon.col = WEAK_FORCE_COLOR;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                        _weakLifecycleEnter(plan.xon, 'pending_ejection_offcage');
+                        _logChoreo(`X${_demoXons.indexOf(plan.xon)} pending-weak → weak at node ${plan.xon.node} (off oct, immediate)`);
+                    }
                 }
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;

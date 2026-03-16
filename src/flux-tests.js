@@ -1772,6 +1772,25 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T95: Oct mode xons must be on oct nodes only ──
+    // Any xon in 'oct' or 'oct_formation' mode must have its .node in _octNodeSet.
+    {
+      id: 'T95', name: 'Oct mode xons on oct nodes only',
+      check(tick, g) {
+        if (tick < 12) return null; // grace period
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'oct' && x._mode !== 'oct_formation') continue;
+          if (!_octNodeSet.has(x.node)) {
+            return `tick ${tick}: X${i} mode=${x._mode} at node ${x.node} not in _octNodeSet`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -3664,6 +3683,92 @@ function _dehydrateCouncilMember(member) {
     member._cold = true;
 }
 
+// ── startSweepSeed: single-seed entry point ──
+// Initializes the demo for one seed and returns immediately.
+// If replayMember is provided, populates the redo stack from cold storage
+// (council replay = sweep with pre-seeded redo stack).
+// The caller polls for completion — this function does NOT loop.
+async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
+    if (!_startupLog) _startupLog = () => {};
+
+    // 1. Set sweep/replay flags
+    _forceSeed = seed;
+    _sweepReplayActive = !!replayMember;
+    _sweepReplayMember = replayMember || null;
+    _replayAncestorPeak = replayMember ? replayMember.peak : -1;
+
+    if (replayMember) {
+        console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${replayMember.peak}`, 'color:#66ccff;font-weight:bold');
+    }
+
+    // 2. Reset per-seed state
+    simHalted = false;
+    _btBadMoveLedger.clear();
+    _btTriedFingerprints.clear();
+    _sweepBlacklistHitsSeed = 0;
+    _sweepGoldenHitsSeed = 0;
+    _sweepSeedMoves = new Map();
+    _searchEventCounter = 0;
+    _searchPathStack = [];
+    _searchParentNodeId = null;
+    _searchLastCandidates = null;
+    _searchStartTime = performance.now();
+
+    // 3. Set up nucleus
+    if (typeof stopDemo === 'function' && _demoActive) stopDemo();
+    _startupLog('simulateNucleus() starting...');
+    NucleusSimulator.simulateNucleus();
+    _startupLog('simulateNucleus() done, yielding 100ms...');
+    await new Promise(r => setTimeout(r, 100));
+    _startupLog('yield done');
+    _bfsTestRandomChoreographer = false; // GC mode
+
+    // 4. Hydrate from cold storage BEFORE starting the demo loop.
+    //    The await yields to the event loop — if startDemoLoop() ran
+    //    first, the uncapped tick loop would execute live ticks during
+    //    the IDB read, corrupting the fresh state.
+    let replaySnapshots = null;
+    if (replayMember) {
+        if (replayMember._cold) {
+            _startupLog('Hydrating council member from cold storage...');
+            await _hydrateCouncilMember(lvl || 2, replayMember);
+            _startupLog('Council member hydrated');
+        }
+        if (replayMember.snapshots && replayMember.snapshots.length > 0) {
+            replaySnapshots = replayMember.snapshots;
+        }
+    }
+
+    // 5. Initialize simulation
+    _startupLog('startDemoLoop() starting...');
+    startDemoLoop();
+    _startupLog('startDemoLoop() done');
+
+    // 6. If replaying: populate redo stack, start redo drain
+    if (replaySnapshots) {
+        _redoStack.length = 0;
+        for (let i = replaySnapshots.length - 1; i >= 0; i--) {
+            _redoStack.push(replaySnapshots[i]);
+        }
+        console.log(`%c[REPLAY] Loaded ${replaySnapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
+        // Kill the live tick loop so resumeDemo() starts redo drain instead
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+        // Council-grade runs have already revealed the oct — force it so
+        // void spheres and shells render from the first replay frame.
+        _demoOctRevealed = true;
+        for (let f = 1; f <= 8; f++) _demoVisitedFaces.add(f);
+        pauseDemo();
+        _testRunning = false; // enable rendering for entire replay seed
+        // Ensure opacity defaults are applied for replay visuals
+        for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
+            const el = document.getElementById(id);
+            if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
+        }
+        resumeDemo();
+    }
+}
+
 async function startSweepTest(latticeLevel, replayMemberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const lvl = latticeLevel || 1;
@@ -3740,7 +3845,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     }
     _startupLog('Council moves hydrated');
 
-    // If replaying a council member, set up for the first seed
+    // ── Seed iteration loop ──
+    // Runs startSweepSeed() for each new seed (or council replay).
+    // startSweepSeed() initializes the demo and returns immediately;
+    // the sweep loop polls for completion before moving to the next seed.
     let _replayOnFirstSeed = (typeof replayMemberIdx === 'number' && replayMemberIdx >= 0
         && _sweepGoldenCouncil.length > replayMemberIdx) ? _sweepGoldenCouncil[replayMemberIdx] : null;
 
@@ -3750,91 +3858,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         do { seed = (Math.random() * 0xFFFFFFFF) >>> 0; } while (_sweepUsedSeeds.has(seed) || seed === 0);
         _sweepUsedSeeds.add(seed);
 
-        // Council replay: override first seed with the member's seed
-        if (_replayOnFirstSeed) {
-            seed = _replayOnFirstSeed.seed;
-            _sweepReplayActive = true;
-            _sweepReplayMember = _replayOnFirstSeed;
-            _replayAncestorPeak = _replayOnFirstSeed.peak; // preserve for append-only save
-            console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${_replayOnFirstSeed.peak}`, 'color:#66ccff;font-weight:bold');
-        } else {
-            _sweepReplayActive = false;
-            _sweepReplayMember = null;
-            _replayAncestorPeak = -1;
-        }
+        // Council replay: override seed with the member's seed
+        const replayMember = _replayOnFirstSeed || null;
+        if (replayMember) seed = replayMember.seed;
 
-        _forceSeed = seed;
-
-        // Reset per-seed state
-        simHalted = false;
-        _btBadMoveLedger.clear();
-        _btTriedFingerprints.clear();
-        _sweepBlacklistHitsSeed = 0;
-        _sweepGoldenHitsSeed = 0;
-        _sweepSeedMoves = new Map();
-        _searchEventCounter = 0;
-        _searchPathStack = [];
-        _searchParentNodeId = null;
-        _searchLastCandidates = null;
-        _searchStartTime = performance.now();
-
-        // Set up nucleus and run
-        if (typeof stopDemo === 'function' && _demoActive) stopDemo();
-        _startupLog('simulateNucleus() starting...');
-        NucleusSimulator.simulateNucleus();
-        _startupLog('simulateNucleus() done, yielding 100ms...');
-        await new Promise(r => setTimeout(r, 100));
-        _startupLog('yield done');
-        _bfsTestRandomChoreographer = false; // GC mode
-
-        // Council replay: hydrate from cold storage BEFORE starting the demo
-        // loop. The await yields to the event loop — if startDemoLoop() ran
-        // first, the uncapped tick loop would execute live ticks during the
-        // IDB read, corrupting the fresh state.
-        let _replaySnapshots = null;
-        if (_replayOnFirstSeed) {
-            if (_replayOnFirstSeed._cold) {
-                _startupLog('Hydrating council member from cold storage...');
-                await _hydrateCouncilMember(lvl, _replayOnFirstSeed);
-                _startupLog('Council member hydrated');
-            }
-            if (_replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
-                // Stash snapshots — startDemoLoop() clears _redoStack,
-                // so we populate it AFTER the loop initializes.
-                _replaySnapshots = _replayOnFirstSeed.snapshots;
-            }
-        }
-
-        _startupLog('startDemoLoop() starting...');
-        startDemoLoop();
-        _startupLog('startDemoLoop() done');
-
-        // Now that startDemoLoop has initialized everything (xons, lattice,
-        // seed, etc.) and cleared _redoStack, populate redo from the stashed
-        // snapshots and switch to redo-drain mode.
-        if (_replaySnapshots) {
-            _redoStack.length = 0;
-            for (let i = _replaySnapshots.length - 1; i >= 0; i--) {
-                _redoStack.push(_replaySnapshots[i]);
-            }
-            console.log(`%c[REPLAY] Loaded ${_replaySnapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
-            // Kill the live tick loop so resumeDemo() starts redo drain instead
-            if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
-            if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-            // Council-grade runs have already revealed the oct — force it so
-            // void spheres and shells render from the first replay frame.
-            _demoOctRevealed = true;
-            for (let f = 1; f <= 8; f++) _demoVisitedFaces.add(f);
-            pauseDemo();
-            _testRunning = false; // enable rendering for entire replay seed
-            // Ensure opacity defaults are applied for replay visuals
-            // Source: DEMO_VISUAL_DEFAULTS in flux-demo-state.js
-            for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
-                const el = document.getElementById(id);
-                if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
-            }
-            resumeDemo();
-        }
+        await startSweepSeed(seed, replayMember, lvl, _startupLog);
 
         // Poll for completion
         await new Promise(resolve => {
@@ -3926,7 +3954,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     existingMember.peak = Math.max(existingMember.peak, peak);
                     if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
                     else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
+                    // Full overwrite — the successor's _councilSnapArchive already has
+                    // the complete history (redo-drained ancestor ticks + live extension).
+                    // No append-only stitching needed.
+                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                 } else {
                     // Collect evicted seeds before trimming
@@ -4081,8 +4112,8 @@ function _saveCurrentRunToCouncil() {
             }
             existingMember.peak = peak;
             existingMember.moves = movesCopy;
-            // Append-only: keep ancestor's IDB snapshots, add new ticks beyond ancestor peak
-            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
+            // Full overwrite — successor's archive has complete history from redo drain + live extension
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
             _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
@@ -4105,11 +4136,14 @@ function _saveCurrentRunToCouncil() {
 // ── Council member replay — starts a sweep with the member's seed first ──
 // Replay phase uses forced moves + guard suppression up to peak,
 // then continues as a normal greedy sweep (blacklist, council, etc.)
-function startCouncilReplay(memberIdx) {
+async function startCouncilReplay(memberIdx) {
+    const member = _sweepGoldenCouncil[memberIdx];
+    if (!member) return;
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const slider = document.getElementById('lattice-slider');
     const lvl = slider ? +slider.value : 2;
-    startSweepTest(lvl, memberIdx);
+    _sweepActive = true;
+    await startSweepSeed(member.seed, member, lvl);
 }
 
 
@@ -5040,8 +5074,6 @@ async function _runReplayTestPhase(q) {
 
     if (q.phase === 'replay') {
         await _replayTestReplayPhase(q);
-    } else if (q.phase === 'scrub') {
-        await _replayTestScrubPhase(q);
     } else if (q.phase === 'extend') {
         await _replayTestExtendPhase(q);
     }
@@ -5079,15 +5111,17 @@ async function _replayTestReplayPhase(q) {
     _replayGuardMode = true;
     _liveGuardsActive = true;
 
-    // Start council replay
-    startCouncilReplay(memberIdx);
+    // Start council replay — this calls startSweepSeed directly
+    // (sweep is the only execution mode; replay = sweep with pre-seeded redo stack)
+    const member = _sweepGoldenCouncil[memberIdx];
+    _sweepActive = true;
+    await startSweepSeed(member.seed, member, lvl);
 
-    // Wait for replay to complete (redo drain exhausted or corruption detected)
+    // Poll for redo drain completion or corruption (observer only — no pause/resume)
     await new Promise(resolve => {
         const pollId = setInterval(() => {
             if (simHalted) {
                 clearInterval(pollId);
-                // Check if it was a guard failure
                 const failed = Object.entries(_liveGuards).filter(([, g]) => g.failed);
                 if (failed.length > 0) {
                     const msg = failed.map(([k, g]) => `${k}: ${g.msg}`).join('; ');
@@ -5098,67 +5132,10 @@ async function _replayTestReplayPhase(q) {
                 resolve();
                 return;
             }
-            // Check if redo drain is done and we're in live mode
+            // Redo drain done — replay passed, proceed to extend
             if (_demoActive && !_sweepReplayActive && _redoStack.length === 0) {
                 clearInterval(pollId);
                 _replayTestLog(`Replay phase passed — reached tick ${_demoTick}`);
-                // Move to scrub phase
-                if (typeof pauseDemo === 'function') pauseDemo();
-                _replayGuardMode = false;
-                const scrubQ = { ...q, phase: 'scrub' };
-                localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(scrubQ));
-                setTimeout(() => _replayTestScrubPhase(scrubQ), 500);
-                resolve();
-            }
-        }, 200);
-    });
-}
-
-// Phase: scrub — rewind to t=0, play forward with guards
-async function _replayTestScrubPhase(q) {
-    _replayTestLog('Scrub phase — rewinding to t=0...');
-
-    // Scrub to t=0
-    if (typeof _timelineScrubTo === 'function') {
-        _timelineScrubTo(0);
-    } else {
-        // Manual rewind
-        while (_btSnapshots.length > 1) {
-            _btRestoreSnapshot(_btSnapshots[0]);
-        }
-    }
-    await new Promise(r => setTimeout(r, 300));
-
-    _replayTestLog(`At tick ${_demoTick} — playing forward with guards...`);
-
-    // Enable replay guard mode and resume
-    _replayGuardMode = true;
-    _liveGuardsActive = true;
-
-    // Reset guards for clean check
-    if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
-
-    if (typeof resumeDemo === 'function') resumeDemo();
-
-    // Wait for redo drain to complete or corruption
-    await new Promise(resolve => {
-        const pollId = setInterval(() => {
-            if (simHalted) {
-                clearInterval(pollId);
-                const failed = Object.entries(_liveGuards).filter(([, g]) => g.failed);
-                if (failed.length > 0) {
-                    const msg = failed.map(([k, g]) => `${k}: ${g.msg}`).join('; ');
-                    _replayTestFail('scrub', _demoTick, msg);
-                } else {
-                    _replayTestFail('scrub', _demoTick, 'simHalted without guard failure');
-                }
-                resolve();
-                return;
-            }
-            // Redo exhausted = scrub replay done
-            if (_demoActive && _redoStack.length === 0 && !_demoPaused) {
-                clearInterval(pollId);
-                _replayTestLog(`Scrub phase passed — reached tick ${_demoTick}`);
                 _replayGuardMode = false;
 
                 // Determine next target
@@ -5166,18 +5143,16 @@ async function _replayTestScrubPhase(q) {
                 const nextIdx = _REPLAY_TEST_TARGETS.indexOf(currentTarget) + 1;
                 if (nextIdx >= _REPLAY_TEST_TARGETS.length) {
                     // All targets done!
-                    if (typeof pauseDemo === 'function') pauseDemo();
                     _replayTestPass();
                     resolve();
                     return;
                 }
 
-                // Move to extend phase
+                // Move to extend phase — demo keeps running live within sweep
                 const nextTarget = _REPLAY_TEST_TARGETS[nextIdx];
                 const extQ = { ...q, phase: 'extend', targetPS: nextTarget };
                 localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(extQ));
                 _replayTestLog(`Extending to ${nextTarget} planck-seconds...`);
-                // Let it continue running live (sweep is already going)
                 setTimeout(() => _replayTestExtendPhase(extQ), 500);
                 resolve();
             }

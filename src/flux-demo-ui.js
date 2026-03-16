@@ -1761,7 +1761,7 @@ function _stopMoviePlayback() {
 {
     const _t20El = document.getElementById('rule-t20-strict-toggle');
     if (_t20El) {
-        _t20El.checked = _ruleT20StrictMode; // sync to JS default
+        _ruleT20StrictMode = _t20El.checked; // HTML is source of truth
         _t20El.addEventListener('change', e => { _ruleT20StrictMode = e.target.checked; _populateCouncilDropdown(); });
     }
 }
@@ -1791,19 +1791,21 @@ window.addEventListener('DOMContentLoaded', () => {
             _populateCouncilDropdown();
         });
     }
+    // Rule toggle checkboxes: HTML checked attribute is the single source of truth.
+    // JS variables sync FROM the DOM at init, not the other way around.
     const _gluonEl = document.getElementById('rule-gluon-mediated-toggle');
     if (_gluonEl) {
-        _gluonEl.checked = _ruleGluonMediatedSC;
+        _ruleGluonMediatedSC = _gluonEl.checked;
         _gluonEl.addEventListener('change', e => { _ruleGluonMediatedSC = e.target.checked; _populateCouncilDropdown(); });
     }
     const _bareEl = document.getElementById('rule-bare-tet-toggle');
     if (_bareEl) {
-        _bareEl.checked = _ruleBareTetrahedra;
+        _ruleBareTetrahedra = _bareEl.checked;
         _bareEl.addEventListener('change', e => { _ruleBareTetrahedra = e.target.checked; _populateCouncilDropdown(); });
     }
     const _projGuardEl = document.getElementById('rule-projected-guards-toggle');
     if (_projGuardEl) {
-        _projGuardEl.checked = _ruleProjectedGuards;
+        _ruleProjectedGuards = _projGuardEl.checked;
         _projGuardEl.addEventListener('change', e => { _ruleProjectedGuards = e.target.checked; _populateCouncilDropdown(); });
     }
     const _t90TolEl = document.getElementById('rule-t90-tolerance-slider');
@@ -1857,7 +1859,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (_cubeEl) { _cubeEl.disabled = _ruleAdaptiveEjection; _cubeEl.parentElement.style.opacity = _ruleAdaptiveEjection ? '0.3' : '1'; }
     }
     if (_adaptEl) {
-        _adaptEl.checked = _ruleAdaptiveEjection;
+        _ruleAdaptiveEjection = _adaptEl.checked;
         _adaptEl.addEventListener('change', e => {
             _ruleAdaptiveEjection = e.target.checked;
             if (e.target.checked) { _ruleCubeRootEjection = false; if (_cubeEl) _cubeEl.checked = false; }
@@ -1866,7 +1868,7 @@ window.addEventListener('DOMContentLoaded', () => {
         });
     }
     if (_cubeEl) {
-        _cubeEl.checked = _ruleCubeRootEjection;
+        _ruleCubeRootEjection = _cubeEl.checked;
         _cubeEl.addEventListener('change', e => {
             _ruleCubeRootEjection = e.target.checked;
             if (e.target.checked) { _ruleAdaptiveEjection = false; if (_adaptEl) _adaptEl.checked = false; }
