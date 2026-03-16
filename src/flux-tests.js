@@ -1953,8 +1953,8 @@ function _liveGuardCheck() {
             const failMsgs = Object.entries(_liveGuards)
                 .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; ');
             console.error(`[REPLAY GUARD] Corruption at tick ${tick}: ${failMsgs}`);
-            if (_replayGuardMode) {
-                _replayGuardMode = false;
+            if (_guardHardStop) {
+                _guardHardStop = false;
                 if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, failMsgs);
             }
             simHalted = true;
@@ -4952,7 +4952,7 @@ function _replayTestLog(msg) {
 }
 
 function _replayTestFail(phase, tick, reason) {
-    _replayGuardMode = false;  // stop guards from re-triggering
+    _guardHardStop = false;  // stop guards from re-triggering
     const q = { phase: 'done', result: `FAIL @ ${phase} t=${tick}: ${reason}` };
     localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
     _replayTestLog(`FAILED: ${q.result}`);
@@ -5108,7 +5108,7 @@ async function _replayTestReplayPhase(q) {
     }
 
     // Set replay guard mode BEFORE starting replay
-    _replayGuardMode = true;
+    _guardHardStop = true;
     _liveGuardsActive = true;
 
     // Start council replay — this calls startSweepSeed directly
@@ -5136,7 +5136,7 @@ async function _replayTestReplayPhase(q) {
             if (_demoActive && !_sweepReplayActive && _redoStack.length === 0) {
                 clearInterval(pollId);
                 _replayTestLog(`Replay phase passed — reached tick ${_demoTick}`);
-                _replayGuardMode = false;
+                _guardHardStop = false;
 
                 // Determine next target
                 const currentTarget = q.targetPS;
@@ -5163,7 +5163,7 @@ async function _replayTestReplayPhase(q) {
 // Phase: extend — continue live until target planck-seconds, save, reload
 async function _replayTestExtendPhase(q) {
     _replayTestLog(`Extend phase — running live until ${q.targetPS} planck-seconds...`);
-    _replayGuardMode = false; // live play uses normal guards
+    _guardHardStop = false; // live play uses normal guards
 
     // Ensure demo is running
     if (_demoPaused && typeof resumeDemo === 'function') resumeDemo();

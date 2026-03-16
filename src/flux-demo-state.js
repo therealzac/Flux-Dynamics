@@ -604,7 +604,7 @@ let _sweepReplayActive = false;      // true during council member replay
 let _sweepReplayMember = null;       // council member being replayed {peak, seed, moves}
 let _replayAncestorPeak = -1;        // ancestor's peak tick when extending a replay (-1 = fresh run)
 let _councilReplayMode = false;      // true when replaying via snapshot playback (pause at end)
-let _replayGuardMode = false;        // when true, guards halt replay on failure instead of silent reset
+let _guardHardStop = false;        // when true, guards halt replay on failure instead of silent reset
 
 function _goldenCouncilSize() {
     return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));

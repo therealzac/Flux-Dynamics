@@ -860,7 +860,7 @@ function _showReplayCorruption(tick, msg) {
     document.getElementById('btn-clear-replay-test')?.addEventListener('click', function() {
         localStorage.removeItem('flux_replay_test');
         _clearReplayCorruption();
-        _replayGuardMode = false;
+        _guardHardStop = false;
     });
     console.error(`[REPLAY GUARD] Corruption detected at tick ${tick}: ${msg}`);
 }
@@ -895,6 +895,15 @@ function resumeDemo() {
                     return;
                 }
                 if (_redoStack.length > 0) {
+                    // Last redo entry: the state where the original run ended.
+                    // Switch to live mode BEFORE popping so guard failures on
+                    // this tick trigger backtracking, not corruption halt.
+                    if (_redoStack.length === 1 && _sweepReplayActive) {
+                        _sweepReplayActive = false;
+                        _sweepReplayMember = null;
+                        _guardHardStop = false;
+                        console.log(`%c[REPLAY] Final redo entry — replay validated, switching to live mode`, 'color:#66ccff;font-weight:bold');
+                    }
                     _btSaveSnapshot(); // save current state so rewind can reach it
                     let snap = _redoStack.pop();
                     // Safety: skip any undefined/null entries (stale IDB data)
@@ -938,6 +947,9 @@ function resumeDemo() {
                     if (_sweepActive && _sweepReplayActive) {
                         _sweepReplayActive = false;
                         _sweepReplayMember = null;
+                        // Replay validated — switch from corruption-detection (hard halt)
+                        // to normal guard mode (backtracker handles failures).
+                        _guardHardStop = false;
                         console.log('%c[REPLAY] Redo drain complete — continuing live from tick ' + _demoTick, 'color:#66ccff;font-weight:bold');
                     }
                     _maxTickReached = _demoTick;
