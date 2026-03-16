@@ -3611,6 +3611,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                 ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
                 ['bg-gray-slider', 0],
                 ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
+                ['rule-t90-tolerance-slider', 12], ['rule-t91-tolerance-slider', 12], ['rule-t92-tolerance-slider', 12],
             ];
             // Always force-dispatch (don't skip same-value) — startDemoLoop
             // may have already set different defaults before we got here.

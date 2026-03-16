@@ -1563,6 +1563,7 @@ function startDemoLoop() {
         ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
         ['bg-gray-slider', 0],
         ['orbit-speed-slider', 8], ['tracer-lifespan-slider', 250],
+        ['rule-t90-tolerance-slider', 12], ['rule-t91-tolerance-slider', 12], ['rule-t92-tolerance-slider', 12],
     ];
     for (const [id, val] of _opDefaults) {
         const el = document.getElementById(id);

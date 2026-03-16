@@ -415,9 +415,9 @@ let _flashEnabled = false;
 let _kuhnEnabled = false;
 let _ruleProjectedGuards = true; // When true, projected guards gate candidate moves pre-execution
 let _ruleIdleOctOnly = false; // When true, idle xons (non-tet) must be on oct nodes or actualized tet nodes
-let T90_TOLERANCE = 1; // T90: ticks a first-place quark may stay actualized before ejection
-let T91_TOLERANCE = 1; // T91: ticks a first-place face may stay actualized before ejection
-let T92_TOLERANCE = 1; // T92: ticks a leading hadron face may stay actualized before ejection
+let T90_TOLERANCE = 12; // T90: ticks a first-place quark may stay actualized before ejection
+let T91_TOLERANCE = 12; // T91: ticks a first-place face may stay actualized before ejection
+let T92_TOLERANCE = 12; // T92: ticks a leading hadron face may stay actualized before ejection
 const _SNAPSHOT_VERSION = 2; // Bump when snapshot format changes; separates IDB keyspaces
 
 // ── Trail visual parameters ──

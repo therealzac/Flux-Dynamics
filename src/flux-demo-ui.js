@@ -1631,6 +1631,16 @@ window.addEventListener('DOMContentLoaded', () => {
             _populateCouncilDropdown();
         });
     }
+    // Wire left/right ticker buttons for tolerance sliders
+    document.querySelectorAll('.tol-tick').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const sl = document.getElementById(btn.dataset.slider);
+            if (!sl) return;
+            const dir = parseInt(btn.dataset.dir, 10);
+            const nv = Math.max(+sl.min, Math.min(+sl.max, +sl.value + dir));
+            if (nv !== +sl.value) { sl.value = nv; sl.dispatchEvent(new Event('input')); }
+        });
+    });
     // Sync JS from DOM after browser form restoration.
     // Read DOM → JS so JS always matches what the user sees.
     const _syncJSFromDOM = () => {
