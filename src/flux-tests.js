@@ -4163,7 +4163,7 @@ function _updateSweepPanel(message, sweepStartTime) {
     if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {
         // Build sorted entries: council members, marking the current round's seed with green *
         const hasRecentAutosave = _demoActive && _maxTickReached > 0
-            && _lastAutosavePeak > 0 && (_maxTickReached - _lastAutosavePeak) < 10
+            && _lastAutosavePeak > 0 && (_maxTickReached - _lastAutosavePeak) < 100
             && typeof _isCouncilEligible === 'function' && _isCouncilEligible();
         const liveSeed = hasRecentAutosave ? (_forceSeed || _runSeed || 0) : null;
         const entries = _sweepGoldenCouncil.map(m => ({ peak: m.peak, live: liveSeed !== null && m.seed === liveSeed }));
