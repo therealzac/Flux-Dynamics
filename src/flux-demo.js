@@ -1952,6 +1952,19 @@ async function demoTick() {
     const _tickT0 = performance.now();
     try {
 
+    // ── Bucketed blacklist: ensure current tick's bucket is loaded ──
+    if (_sweepActive && _blBucketVersion >= 1 && typeof _blEnsureTick === 'function') {
+        const _lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
+        await _blEnsureTick(_lvl, _demoTick);
+        // Eager prefetch: when within 8 ticks of next bucket boundary, prefetch it
+        const nextBucket = Math.floor((_demoTick + 8) / _blBucketSize);
+        const curBucket = Math.floor(_demoTick / _blBucketSize);
+        if (nextBucket !== curBucket && !_blLoadedBuckets.has(nextBucket) && nextBucket < _blBucketCount) {
+            console.log(`[BL] Tick ${_demoTick} approaching boundary → prefetching bucket ${nextBucket}`);
+            _blPrefetchBucket(_lvl, nextBucket); // fire-and-forget
+        }
+    }
+
     // ── BACKTRACKING RETRY LOOP ──
     // Save state before tick, run choreography, check guards.
     // If T19/T20 violation → rewind, exclude offending moves, retry.
@@ -3825,6 +3838,13 @@ async function demoTick() {
             }
 
             const targetTick = _bfsFailTick - _bfsLayer;
+
+            // Eagerly prefetch blacklist buckets for the rewind range
+            if (_blBucketVersion >= 1 && typeof _blPrefetchRange === 'function') {
+                const _lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
+                console.log(`[BL] Layer escalation → prefetching ticks ${Math.max(0, targetTick)}-${_bfsFailTick}`);
+                _blPrefetchRange(_lvl, Math.max(0, targetTick), _bfsFailTick); // fire-and-forget
+            }
 
             // Log escalation event with tree structure
             if (_searchTraversalLog) {

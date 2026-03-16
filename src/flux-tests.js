@@ -3016,64 +3016,83 @@ async function _blIDBLoad(lvl) {
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return null;
     const key = _blacklistRuleKey(lvl);
+    const t0 = performance.now();
     return new Promise((resolve) => {
         try {
             const tx = _blIDB.transaction(_BL_IDB_STORE, 'readonly');
             const req = tx.objectStore(_BL_IDB_STORE).get(key);
             req.onsuccess = async () => {
                 const data = req.result;
-                if (data && data.entries) {
+                if (!data) { resolve(null); return; }
+
+                // ── Parse council index (shared by both formats) ──
+                let goldenCouncil = [];
+                if (data.councilIndex && Array.isArray(data.councilIndex)) {
+                    for (const stub of data.councilIndex) {
+                        goldenCouncil.push({ peak: stub.peak, seed: stub.seed, _cold: true });
+                    }
+                } else if (data.goldenCouncil && Array.isArray(data.goldenCouncil)) {
+                    // Old format (v2): migrate to cold storage
+                    console.log(`[BL] Migrating ${data.goldenCouncil.length} council members to cold storage...`);
+                    for (const member of data.goldenCouncil) {
+                        try {
+                            const cKey = key + '|' + member.seed;
+                            const migTx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+                            const migStore = migTx.objectStore(_CS_IDB_STORE);
+                            migStore.put({
+                                seed: member.seed, snapshots: member.snapshots, moves: member.moves,
+                                snapshotVersion: (member.snapshots && member.snapshots[0] && member.snapshots[0]._v) || 0,
+                                timestamp: new Date().toISOString(),
+                            }, cKey);
+                            // Also store moves separately for fast hydration
+                            if (member.moves) {
+                                const movesArr = [];
+                                for (const [tick, moveMap] of (member.moves instanceof Map ? member.moves : new Map(member.moves))) {
+                                    movesArr.push([tick, moveMap instanceof Map ? [...moveMap.entries()] : moveMap]);
+                                }
+                                migStore.put({ seed: member.seed, moves: movesArr }, cKey + '|mv');
+                            }
+                        } catch (e) { console.warn('[BL] Migration: failed to write member:', e); }
+                        goldenCouncil.push({ peak: member.peak, seed: member.seed, _cold: true });
+                    }
+                }
+                // Dedup: keep only the highest-peak entry per seed
+                const seedBest = new Map();
+                for (const m of goldenCouncil) {
+                    const existing = seedBest.get(m.seed);
+                    if (!existing || m.peak > existing.peak) seedBest.set(m.seed, m);
+                }
+                goldenCouncil = [...seedBest.values()].sort((a, b) => b.peak - a.peak);
+                const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
+
+                // ── Bucketed format: metadata only, fingerprints loaded on demand ──
+                if (data.bucketVersion >= 1) {
+                    _blBucketVersion = data.bucketVersion;
+                    _blBucketCount = data.bucketCount || 0;
+                    _blBucketSize = data.bucketSize || 64;
+                    _blLoadedBuckets = new Set();
+                    const ms = (performance.now() - t0).toFixed(1);
+                    console.log(`[BL] Loaded metadata: ${data.total} fps across ${_blBucketCount} buckets + council [${peaks}] in ${ms}ms`);
+                    resolve({ map: new Map(), total: data.total || 0, seedIdx: data.seedIdx || 0, goldenCouncil });
+                    return;
+                }
+
+                // ── Legacy single-blob format: deserialize all inline ──
+                if (data.entries) {
+                    _blBucketVersion = 0;
                     const map = new Map();
                     let total = 0;
                     for (const [tick, fps] of data.entries) {
                         map.set(tick, new Set(fps));
                         total += fps.length;
                     }
-                    let goldenCouncil = [];
-                    if (data.councilIndex && Array.isArray(data.councilIndex)) {
-                        // New format (v3): cold stubs only
-                        for (const stub of data.councilIndex) {
-                            goldenCouncil.push({ peak: stub.peak, seed: stub.seed, _cold: true });
-                        }
-                    } else if (data.goldenCouncil && Array.isArray(data.goldenCouncil)) {
-                        // Old format (v2): migrate to cold storage
-                        console.log(`[Blacklist] Migrating ${data.goldenCouncil.length} council members to cold storage...`);
-                        for (const member of data.goldenCouncil) {
-                            // Write full member data to council store
-                            try {
-                                const cKey = key + '|' + member.seed;
-                                const migTx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
-                                migTx.objectStore(_CS_IDB_STORE).put({
-                                    seed: member.seed, snapshots: member.snapshots, moves: member.moves,
-                                    snapshotVersion: (member.snapshots && member.snapshots[0] && member.snapshots[0]._v) || 0,
-                                    timestamp: new Date().toISOString(),
-                                }, cKey);
-                            } catch (e) { console.warn('[Migration] Failed to write member:', e); }
-                            goldenCouncil.push({ peak: member.peak, seed: member.seed, _cold: true });
-                        }
-                        // Re-save blacklists store with councilIndex format (no goldenCouncil)
-                        try {
-                            const councilIndex = goldenCouncil.map(m => ({ peak: m.peak, seed: m.seed, snapshotVersion: _SNAPSHOT_VERSION }));
-                            const saveTx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
-                            saveTx.objectStore(_BL_IDB_STORE).put({
-                                key, entries: data.entries,
-                                total: data.total || total,
-                                seedIdx: data.seedIdx || 0,
-                                councilIndex,
-                                timestamp: new Date().toISOString(),
-                            }, key);
-                            console.log(`[Blacklist] Migration complete — council data moved to cold storage`);
-                        } catch (e) { console.warn('[Migration] Failed to re-save blacklist:', e); }
+                    // Mark all covered buckets as loaded
+                    _blLoadedBuckets = new Set();
+                    for (const tick of map.keys()) {
+                        _blLoadedBuckets.add(Math.floor(tick / _blBucketSize));
                     }
-                    // Dedup: keep only the highest-peak entry per seed
-                    const seedBest = new Map();
-                    for (const m of goldenCouncil) {
-                        const existing = seedBest.get(m.seed);
-                        if (!existing || m.peak > existing.peak) seedBest.set(m.seed, m);
-                    }
-                    goldenCouncil = [...seedBest.values()].sort((a, b) => b.peak - a.peak);
-                    const peaks = goldenCouncil.map(m => 't' + m.peak).join(', ');
-                    console.log(`[Blacklist] Loaded ${total} fingerprints + council [${peaks}] from IndexedDB`);
+                    const ms = (performance.now() - t0).toFixed(1);
+                    console.log(`[BL] Loaded legacy blob: ${total} fps + council [${peaks}] in ${ms}ms (will migrate on next save)`);
                     resolve({ map, total, seedIdx: data.seedIdx || 0, goldenCouncil });
                 } else {
                     resolve(null);
@@ -3092,6 +3111,74 @@ function _blIDBSave(lvl) {
         _blIDBSaveTimer = null;
         _blIDBSaveBlacklist(lvl);
     }, 2000);
+}
+
+// ── Bucketed blacklist: on-demand loading ──
+
+// Load a single bucket from IDB into _sweepBlacklist. Returns a Promise.
+async function _blPrefetchBucket(lvl, bucketIdx) {
+    if (_blBucketVersion < 1) return;            // legacy format, already fully loaded
+    if (_blLoadedBuckets.has(bucketIdx)) return;  // already in memory
+    if (bucketIdx >= _blBucketCount) return;      // beyond stored range
+
+    const t0 = performance.now();
+    const baseKey = _blacklistRuleKey(lvl);
+    const bucketKey = baseKey + '|bl|' + bucketIdx;
+    const tickLo = bucketIdx * _blBucketSize;
+    const tickHi = tickLo + _blBucketSize - 1;
+    console.log(`[BL] Prefetching bucket ${bucketIdx} (ticks ${tickLo}-${tickHi})...`);
+
+    if (!_blIDBReady) await _blIDBOpen();
+    if (!_blIDB) { _blLoadedBuckets.add(bucketIdx); return; }
+
+    return new Promise((resolve) => {
+        try {
+            const tx = _blIDB.transaction(_BL_IDB_STORE, 'readonly');
+            const req = tx.objectStore(_BL_IDB_STORE).get(bucketKey);
+            req.onsuccess = () => {
+                const data = req.result;
+                let count = 0;
+                if (data && data.entries) {
+                    for (const [tick, fps] of data.entries) {
+                        if (!_sweepBlacklist.has(tick)) _sweepBlacklist.set(tick, new Set());
+                        const set = _sweepBlacklist.get(tick);
+                        for (const fp of fps) { set.add(fp); count++; }
+                    }
+                }
+                _blLoadedBuckets.add(bucketIdx);
+                const ms = (performance.now() - t0).toFixed(1);
+                console.log(`[BL] Bucket ${bucketIdx} loaded: ${count} fps in ${ms}ms`);
+                resolve();
+            };
+            req.onerror = () => { _blLoadedBuckets.add(bucketIdx); resolve(); };
+        } catch (e) { _blLoadedBuckets.add(bucketIdx); resolve(); }
+    });
+}
+
+// Prefetch all buckets covering a tick range. Parallel IDB reads.
+async function _blPrefetchRange(lvl, tickLow, tickHigh) {
+    if (_blBucketVersion < 1) return;
+    const lo = Math.floor(Math.max(0, tickLow) / _blBucketSize);
+    const hi = Math.floor(tickHigh / _blBucketSize);
+    const needed = [];
+    for (let bi = lo; bi <= hi; bi++) {
+        if (!_blLoadedBuckets.has(bi) && bi < _blBucketCount) needed.push(bi);
+    }
+    if (needed.length === 0) return;
+    console.log(`[BL] Range prefetch: buckets ${needed.join(',')} (ticks ${tickLow}-${tickHigh})`);
+    await Promise.all(needed.map(bi => _blPrefetchBucket(lvl, bi)));
+}
+
+// Ensure the bucket for a given tick is loaded. Blocks if needed.
+async function _blEnsureTick(lvl, tick) {
+    if (_blBucketVersion < 1) return;
+    const bi = Math.floor(tick / _blBucketSize);
+    if (_blLoadedBuckets.has(bi)) return;
+    const t0 = performance.now();
+    console.warn(`[BL] ⚠️ Tick ${tick} blocked — awaiting bucket ${bi}`);
+    await _blPrefetchBucket(lvl, bi);
+    const ms = (performance.now() - t0).toFixed(1);
+    console.warn(`[BL] ⚠️ Bucket ${bi} loaded after ${ms}ms block`);
 }
 
 // Serialize a single backtracker snapshot for IndexedDB storage.
@@ -3179,27 +3266,53 @@ function _deserializeSnapshot(s) {
 
 function _blIDBSaveBlacklist(lvl) {
     if (!_blIDB) return;
-    const key = _blacklistRuleKey(lvl);
-    const entries = [];
+    const t0 = performance.now();
+    const baseKey = _blacklistRuleKey(lvl);
+
+    // Group fingerprints by bucket index
+    const buckets = new Map(); // bucketIdx → [[tick, [fps...]], ...]
+    let maxBucket = -1;
     for (const [tick, fpSet] of _sweepBlacklist) {
-        entries.push([tick, [...fpSet]]);
+        const bi = Math.floor(tick / _blBucketSize);
+        if (bi > maxBucket) maxBucket = bi;
+        if (!buckets.has(bi)) buckets.set(bi, []);
+        buckets.get(bi).push([tick, [...fpSet]]);
     }
+    const bucketCount = maxBucket + 1;
+
     // Council index: lightweight stubs only (no snapshots, no moves)
     const councilIndex = _sweepGoldenCouncil.map(m => ({
         peak: m.peak, seed: m.seed, snapshotVersion: _SNAPSHOT_VERSION,
     }));
+
     try {
         const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
-        tx.objectStore(_BL_IDB_STORE).put({
-            key, entries,
+        const store = tx.objectStore(_BL_IDB_STORE);
+
+        // Write each bucket as a separate key
+        for (const [bi, entries] of buckets) {
+            const count = entries.reduce((s, [, fps]) => s + fps.length, 0);
+            store.put({ entries, count }, baseKey + '|bl|' + bi);
+        }
+
+        // Write metadata (no fingerprints — they're in buckets now)
+        store.put({
+            key: baseKey,
+            bucketVersion: 1,
+            bucketSize: _blBucketSize,
+            bucketCount,
             total: _sweepTotalBlacklisted,
             seedIdx: _sweepSeedIdx,
             councilIndex,
             timestamp: new Date().toISOString(),
-        }, key);
+        }, baseKey);
+
+        _blBucketVersion = 1;
+        _blBucketCount = bucketCount;
         const peaks = _sweepGoldenCouncil.map(m => 't' + m.peak).join(', ');
-        console.log(`[Blacklist] Saved ${_sweepTotalBlacklisted} fingerprints + council index [${peaks}] to IndexedDB`);
-    } catch (e) { console.warn('[Blacklist] Save failed:', e); }
+        const ms = (performance.now() - t0).toFixed(1);
+        console.log(`[BL] Saved ${buckets.size} buckets (${_sweepTotalBlacklisted} total fps) + council [${peaks}] in ${ms}ms`);
+    } catch (e) { console.warn('[BL] Save failed:', e); }
 }
 
 async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
@@ -3213,12 +3326,16 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
     }
     try {
         const tx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
-        tx.objectStore(_CS_IDB_STORE).put({
+        const store = tx.objectStore(_CS_IDB_STORE);
+        // Store snapshots+moves together (full blob for replay hydration)
+        store.put({
             seed, snapshots: snapsArr, moves: movesArr,
             snapshotVersion: _SNAPSHOT_VERSION,
             timestamp: new Date().toISOString(),
         }, key);
-        console.log(`%c[Council IDB] Saved member seed 0x${seed.toString(16).padStart(8,'0')} (${snapsArr.length} snapshots) to cold storage`, 'color:#66ccff');
+        // Store moves separately under key|mv (lightweight read for golden boost)
+        store.put({ seed, moves: movesArr }, key + '|mv');
+        console.log(`%c[Council IDB] Saved member seed 0x${seed.toString(16).padStart(8,'0')} (${snapsArr.length} snapshots + ${movesArr.length} moves) to cold storage`, 'color:#66ccff');
     } catch (e) { console.warn('[Council IDB] Save failed:', e); }
 }
 
@@ -3228,7 +3345,9 @@ async function _blIDBDeleteCouncilMember(lvl, seed) {
     const key = _blacklistRuleKey(lvl) + '|' + seed;
     try {
         const tx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
-        tx.objectStore(_CS_IDB_STORE).delete(key);
+        const store = tx.objectStore(_CS_IDB_STORE);
+        store.delete(key);
+        store.delete(key + '|mv');
         console.log(`[Council IDB] Deleted evicted member seed 0x${seed.toString(16).padStart(8,'0')} from cold storage`);
     } catch (e) { /* ignore */ }
 }
@@ -3237,6 +3356,7 @@ async function _hydrateCouncilMember(lvl, member) {
     if (!member._cold) return; // already hydrated
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
+    const t0 = performance.now();
     const key = _blacklistRuleKey(lvl) + '|' + member.seed;
     return new Promise((resolve) => {
         try {
@@ -3245,9 +3365,11 @@ async function _hydrateCouncilMember(lvl, member) {
             req.onsuccess = () => {
                 const data = req.result;
                 if (data) {
+                    const t1 = performance.now();
                     if (data.snapshots) {
                         member.snapshots = data.snapshots.map(_deserializeSnapshot);
                     }
+                    const t2 = performance.now();
                     if (data.moves) {
                         member.moves = new Map();
                         for (const [tick, pairs] of data.moves) {
@@ -3255,7 +3377,8 @@ async function _hydrateCouncilMember(lvl, member) {
                         }
                     }
                     member._cold = false;
-                    console.log(`%c[Council IDB] Hydrated member seed 0x${member.seed.toString(16).padStart(8,'0')} (${member.snapshots ? member.snapshots.length : 0} snapshots)`, 'color:#66ccff');
+                    const t3 = performance.now();
+                    console.log(`%c[Council IDB] Hydrated member seed 0x${member.seed.toString(16).padStart(8,'0')} — IDB read: ${(t1-t0).toFixed(1)}ms, ${member.snapshots ? member.snapshots.length : 0} snapshots deser: ${(t2-t1).toFixed(1)}ms, moves deser: ${(t3-t2).toFixed(1)}ms, total: ${(t3-t0).toFixed(1)}ms`, 'color:#66ccff');
                 }
                 resolve();
             };
@@ -3268,20 +3391,47 @@ async function _hydrateCouncilMoves(lvl, member) {
     if (member.moves) return; // already has moves
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
+    const t0 = performance.now();
     const key = _blacklistRuleKey(lvl) + '|' + member.seed;
+    // Try lightweight moves-only key first, fall back to full blob
+    const mvKey = key + '|mv';
     return new Promise((resolve) => {
         try {
             const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
-            const req = tx.objectStore(_CS_IDB_STORE).get(key);
+            const store = tx.objectStore(_CS_IDB_STORE);
+            const req = store.get(mvKey);
             req.onsuccess = () => {
                 const data = req.result;
                 if (data && data.moves) {
+                    // Fast path: moves-only record
                     member.moves = new Map();
                     for (const [tick, pairs] of data.moves) {
                         member.moves.set(tick, new Map(pairs));
                     }
+                    console.log(`[STARTUP] Hydrated moves (fast) for seed 0x${member.seed.toString(16).padStart(8,'0')}: ${member.moves.size} ticks in ${(performance.now()-t0).toFixed(1)}ms`);
+                    resolve();
+                } else {
+                    // Fallback: read full blob (legacy, no |mv key yet)
+                    const req2 = store.get(key);
+                    req2.onsuccess = () => {
+                        const full = req2.result;
+                        if (full && full.moves) {
+                            member.moves = new Map();
+                            for (const [tick, pairs] of full.moves) {
+                                member.moves.set(tick, new Map(pairs));
+                            }
+                            console.log(`[STARTUP] Hydrated moves (legacy fallback) for seed 0x${member.seed.toString(16).padStart(8,'0')}: ${member.moves.size} ticks in ${(performance.now()-t0).toFixed(1)}ms`);
+                            // Migrate: write |mv key so next load is fast
+                            try {
+                                const wTx = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
+                                wTx.objectStore(_CS_IDB_STORE).put({ seed: member.seed, moves: full.moves }, mvKey);
+                                console.log(`[STARTUP] Migrated |mv key for seed 0x${member.seed.toString(16).padStart(8,'0')}`);
+                            } catch (e) { /* best-effort */ }
+                        }
+                        resolve();
+                    };
+                    req2.onerror = () => resolve();
                 }
-                resolve();
             };
             req.onerror = () => resolve();
         } catch (e) { resolve(); }
@@ -3297,6 +3447,11 @@ function _dehydrateCouncilMember(member) {
 async function startSweepTest(latticeLevel, replayMemberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const lvl = latticeLevel || 1;
+    const _startupT0 = performance.now();
+    const _startupLog = (label) => {
+        const ms = (performance.now() - _startupT0).toFixed(1);
+        console.log(`[STARTUP] +${ms}ms — ${label}`);
+    };
 
     _sweepActive = true;
     _sweepSeedIdx = 0;
@@ -3327,9 +3482,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
     _setBfsTestPanelVisible(true);
     _updateSweepPanel('Loading blacklist...');
+    _startupLog('UI ready, loading blacklist...');
 
     // Load persisted blacklist from IndexedDB for this rule config
     const cached = await _blIDBLoad(lvl);
+    _startupLog('Blacklist loaded');
     if (cached) {
         _sweepBlacklist = cached.map;
         _sweepTotalBlacklisted = cached.total;
@@ -3340,6 +3497,10 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         const councilStr = _sweepGoldenCouncil.length > 0
             ? `council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]` : 'no council';
         _updateSweepPanel(`Resumed: ${cached.total} blacklisted, ${councilStr}, from ${cached.seedIdx} prior seeds`);
+        // Eagerly prefetch bucket 0 so first tick has blacklist data
+        if (_blBucketVersion >= 1) {
+            await _blPrefetchBucket(lvl, 0);
+        }
     } else {
         _updateSweepPanel('Starting sweep (fresh)...');
     }
@@ -3351,9 +3512,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     let _sweepPausedAt = 0;
 
     // Hydrate council member moves for golden boost scoring
+    _startupLog(`Hydrating moves for ${_sweepGoldenCouncil.length} council members...`);
     for (const member of _sweepGoldenCouncil) {
         if (!member.moves) await _hydrateCouncilMoves(lvl, member);
     }
+    _startupLog('Council moves hydrated');
 
     // If replaying a council member, set up for the first seed
     let _replayOnFirstSeed = (typeof replayMemberIdx === 'number' && replayMemberIdx >= 0
@@ -3390,8 +3553,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
         // Set up nucleus and run
         if (typeof stopDemo === 'function' && _demoActive) stopDemo();
+        _startupLog('simulateNucleus() starting...');
         NucleusSimulator.simulateNucleus();
+        _startupLog('simulateNucleus() done, yielding 100ms...');
         await new Promise(r => setTimeout(r, 100));
+        _startupLog('yield done');
         _bfsTestRandomChoreographer = false; // GC mode
 
         // Council replay: hydrate from cold storage BEFORE starting the demo
@@ -3401,7 +3567,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         let _replaySnapshots = null;
         if (_replayOnFirstSeed) {
             if (_replayOnFirstSeed._cold) {
+                _startupLog('Hydrating council member from cold storage...');
                 await _hydrateCouncilMember(lvl, _replayOnFirstSeed);
+                _startupLog('Council member hydrated');
             }
             if (_replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
                 // Stash snapshots — startDemoLoop() clears _redoStack,
@@ -3410,7 +3578,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             }
         }
 
+        _startupLog('startDemoLoop() starting...');
         startDemoLoop();
+        _startupLog('startDemoLoop() done');
 
         // Now that startDemoLoop has initialized everything (xons, lattice,
         // seed, etc.) and cleared _redoStack, populate redo from the stashed
@@ -3623,11 +3793,16 @@ async function _clearCacheExecute() {
     }
     _sweepGoldenCouncil = [];
 
-    // Delete blacklist + council index from IDB
+    // Delete blacklist metadata + all bucket keys from IDB
     if (_blIDB) {
         try {
             const tx = _blIDB.transaction(_BL_IDB_STORE, 'readwrite');
-            tx.objectStore(_BL_IDB_STORE).delete(key);
+            const store = tx.objectStore(_BL_IDB_STORE);
+            store.delete(key); // metadata
+            for (let bi = 0; bi < _blBucketCount; bi++) {
+                store.delete(key + '|bl|' + bi);
+            }
+            console.log(`[BL] Cleared ${_blBucketCount} bucket keys + metadata`);
         } catch (e) { console.warn('[Clear Cache] blacklist delete failed:', e); }
         // Delete autosave too
         try {
@@ -3635,6 +3810,9 @@ async function _clearCacheExecute() {
             tx.objectStore(_AS_IDB_STORE).delete(key);
         } catch (e) { /* ignore */ }
     }
+    _blLoadedBuckets = new Set();
+    _blBucketCount = 0;
+    _blBucketVersion = 0;
 
     console.log(`%c[Clear Cache] Cleared blacklist + council for key: ${key}`, 'color:#ff8866;font-weight:bold');
 
@@ -3801,8 +3979,9 @@ function _updateSweepPanel(message, sweepStartTime) {
     // Blacklist stats
     html += `<div style="padding:4px; background:rgba(100,180,255,0.06); border:1px solid rgba(100,180,255,0.15); border-radius:3px; margin-bottom:6px;">`;
     html += `<div style="font-size:10px; color:#9abccc;">` +
-        `Blacklisted: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states &middot; ` +
-        `Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
+        `Blacklisted: <b>${_sweepTotalBlacklisted.toLocaleString()}</b> states` +
+        (_blBucketVersion >= 1 ? ` (${_blLoadedBuckets.size}/${_blBucketCount} buckets)` : '') +
+        ` &middot; Hits: <b>${_sweepBlacklistHits.toLocaleString()}</b> (${_sweepBlacklistHitsSeed} this seed) &middot; ` +
         `Seeds: <b>${_sweepResults.length}</b> &middot; ` +
         `Total: ${totalElapsed}s</div>`;
     if (_sweepGoldenCouncil.length > 0 || (_demoActive && _lastAutosavePeak > 0)) {

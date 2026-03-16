@@ -562,6 +562,12 @@ let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprint
 let _sweepBlacklistHits = 0;         // how many times a blacklisted fingerprint was actually matched
 let _sweepBlacklistHitsSeed = 0;     // hits for current seed only
 
+// ── Bucketed blacklist IDB storage ──
+let _blBucketSize = 64;              // ticks per bucket (aligned with cycle length)
+let _blLoadedBuckets = new Set();    // Set<bucketIndex> — which buckets are in memory
+let _blBucketCount = 0;              // total bucket count from IDB metadata
+let _blBucketVersion = 0;            // 0 = legacy single-blob, 1 = bucketed
+
 // ── Golden council: move traces from the top-performing seeds ──
 // Council size scales with experience: min(10, max(1, floor(sqrt(totalSeeds))))
 let _sweepGoldenCouncil = [];        // Array of {peak, seed, moves: Map<tick, Map<xonIdx, toNode>>}, sorted by peak desc
