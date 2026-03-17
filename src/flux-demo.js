@@ -1582,7 +1582,7 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons: move to above-center neighbors
+        // Remaining 2 xons: move to above-center neighbors, become oct
         for (let i = 4; i < 6; i++) {
             const xon = _demoXons[i];
             if (xon._mode === 'oct_formation') {
@@ -1590,14 +1590,9 @@ function _executeOpeningTick(occupied) {
                 if (aboveIdx < aboveY.length) {
                     _executeOctMove(xon, { node: aboveY[aboveIdx].node, dirIdx: aboveY[aboveIdx].dirIdx, _needsMaterialise: false, _scId: undefined });
                 }
+                xon._mode = 'oct';
+                xon._pendingWeakEjection = true;
             }
-        }
-        // All 6 xons start as weak — they must enter oct via the merry-go-round
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            xon._mode = 'weak';
-            xon.col = WEAK_FORCE_COLOR;
-            if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         }
 
     } else if (_demoTick === 1) {
@@ -1997,1278 +1992,473 @@ async function demoTick() {
     if (_openingPhase) {
         if (_demoTick < 2) {
             _executeOpeningTick(occupied);
-            // Don't skip normal phases — free xons need coordinated movement
-            // Propagate per-xon _solverNeeded flags (set by _executeOctMove when SCs
-            // are actually materialized). Only set global _solverNeeded when real
-            // vacuum deformation occurred — tick 0 uses base edges only (no SCs).
+            // Opening phase moves x0-x3. CA engine handles x4-x5 (polar xons).
+            // _movedThisTick is set by opening; CA skips those xons.
             for (const xon of _demoXons) {
                 if (xon._solverNeeded) { _solverNeeded = true; xon._solverNeeded = false; }
             }
-            occupied = _occupiedNodes(); // refresh after opening moves
+            occupied = _occupiedNodes();
         } else {
             _openingPhase = false;
-            _demoOctRevealed = true; // Oct formed — enable oct-dependent guards (T96)
-            _ticksSinceLastQuark = 0; // Start the quark clock when oct forms, not at tick 0
+            _demoOctRevealed = true;
+            _ticksSinceLastQuark = 0;
         }
     }
 
     if (!_skipNormalPhases) {
     // ══════════════════════════════════════════════════════════════════
-    //  COORDINATED MOVE PLANNER
-    //  All moves are planned before execution to prevent Pauli violations.
-    //  Priority: tet/idle_tet (fixed path) > oct (flexible).
+    //  CELLULAR AUTOMATA ENGINE
+    //  Each xon follows local rules. No central planner. No phases.
+    //  Backtracker + guards enforce correctness.
     // ══════════════════════════════════════════════════════════════════
 
-    const planned = new Set();  // globally reserved destination nodes
+    const _pT = performance.now(); _profPhases.wb += _pT - _tickT0;
     let anyMoved = false;
-    const _pT = performance.now(); _profPhases.wb += _pT - _tickT0; // phase timer anchor (wb = window boundary + setup)
 
-    // T60 consistency: ensure ejected xons stay in weak mode.
-    // If any code path set mode='oct' while _t60Ejected > 0, correct it here.
+    // ── CELLULAR AUTOMATA: Plan moves for all xons ──
+    // Each xon independently picks its next move based on local rules.
+    // No central planner. Conflicts resolved after planning.
+    const moves = []; // {xon, target, scNeeded (SC ID or null)}
+
     for (const xon of _demoXons) {
         if (!xon.alive) continue;
-        if (xon._t60Ejected && xon._mode !== 'weak') {
-            xon._mode = 'weak';
-            xon._assignedFace = null;
-            xon._quarkType = null;
-            xon._loopSeq = null;
-            xon._loopStep = 0;
-            xon.col = WEAK_FORCE_COLOR;
-            if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-        }
-    }
+        if (xon._movedThisTick) continue; // already moved (e.g. by opening phase)
 
-    // ── PHASE 0: Pre-check tet/idle_tet xons with blocked next steps ──
-    // If a tet/idle_tet xon's next step is blocked by another tet/idle_tet xon
-    // (which the oct planner can't move), OR if N-depth lookahead shows the loop
-    // leads to a dead end, return the xon to oct mode NOW so PHASE 2's bipartite
-    // matching with full lookahead can find it an optimal move.
-    {
-        let phase0Changed = false;
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
-
-            // T60 check: face must be actualized — but allow step 0 (xon at pole,
-            // about to traverse the unique SC that activates the tet).
-            // If the vacuum withdrew support (severed a face SC mid-loop), switch to weak.
-            if (xon._assignedFace != null && _nucleusTetFaceData) {
-                // Skip T60 at step 0 — the xon hasn't traversed the unique SC yet
-                if (xon._loopStep === 0) continue;
+        if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+            // ── TET/IDLE_TET: follow loop sequence ──
+            // T60: check face actualization (skip step 0 — unique SC not yet traversed)
+            if (xon._loopStep > 0 && xon._assignedFace != null && _nucleusTetFaceData) {
                 const fd60 = _nucleusTetFaceData[xon._assignedFace];
                 const faceActualized = fd60 && fd60.scIds.every(scId =>
                     activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
                 if (!faceActualized) {
-                    // Trail segments keep their original recorded color.
-                    // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
-                    // Relinquish face SCs (tight space = delete, sticky space = no-op)
+                    // Face de-actualized mid-loop → abandon
                     _relinquishFaceSCs(xon);
-                    // If already on an oct node, go directly to oct mode (no weak ejection needed)
                     if (_octNodeSet && _octNodeSet.has(xon.node)) {
-                        _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → oct (already on cage)`);
                         _clearModeProps(xon);
                         xon._mode = 'oct';
-                        xon._assignedFace = null;
-                        xon._quarkType = null;
-                        xon._loopSeq = null;
-                        xon._loopStep = 0;
                         xon.col = 0xffffff;
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-                        if (_flashEnabled) xon.flashT = 1.0;
                     } else {
-                        _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → weak`);
+                        _clearModeProps(xon);
                         xon._mode = 'weak';
-                        xon._assignedFace = null;
-                        xon._quarkType = null;
-                        xon._loopSeq = null;
-                        xon._loopStep = 0;
-                        xon._tetActualized = false;
                         xon._t60Ejected = true;
                         xon.col = WEAK_FORCE_COLOR;
                         if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                        _weakLifecycleEnter(xon, 'non_actualized_tet');
+                        if (typeof _weakLifecycleEnter === 'function') _weakLifecycleEnter(xon, 'tet_deactualized');
                     }
-                    phase0Changed = true;
-                    continue;
+                    continue; // re-plan as new mode next iteration? No — will be handled below
                 }
             }
 
-            const effectiveStep = xon._loopStep >= 4 ? 0 : xon._loopStep;
-            const nextNode = xon._loopSeq[effectiveStep + 1];
+            // Get next node in loop
+            const nextStep = (xon._loopStep + 1) % 5;
+            const target = xon._loopSeq ? xon._loopSeq[nextStep] : null;
+            if (target == null) continue;
 
-            let shouldEvictSelf = false;
-
-            // Check 1: destination blocked by another xon
-            // idle_tet blocker → evict the BLOCKER (expendable), not the blocked xon.
-            // tet blocker → the blocked xon defers (tet has first-class priority).
-            //   Backtracker handles any resulting T20 violation.
-            // oct blocker → oct planner may vacate; don't evict.
-            if ((occupied.get(nextNode) || 0) > 0) {
-                const blocker = _demoXons.find(x => x.alive && x.node === nextNode &&
-                    x !== xon && (x._mode === 'tet' || x._mode === 'idle_tet'));
-                if (blocker && blocker._mode === 'idle_tet') {
-                    // Evict the BLOCKER (idle_tet is expendable, but protect cage SCs)
-                    _relinquishFaceSCs(blocker);
-                    _logChoreo(`X${_demoXons.indexOf(blocker)} idle_tet blocker at n${nextNode} → weak (evicted by X${_demoXons.indexOf(xon)})`);
-                    blocker._mode = 'weak';
-                    blocker._t60Ejected = true;
-                    blocker._assignedFace = null;
-                    blocker._quarkType = null;
-                    blocker._loopSeq = null;
-                    blocker._loopStep = 0;
-                    blocker._tetActualized = false;
-                    blocker.col = WEAK_FORCE_COLOR;
-                    if (blocker.sparkMat) blocker.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                    _weakLifecycleEnter(blocker, 'evicted_by_tet');
-                    blocker._evictedThisTick = true;
-                    phase0Changed = true;
-                } else if (blocker && blocker._mode === 'tet') {
-                    // Blocked by tet → defer. Backtracker handles T20 if needed.
-                    // Don't evict either xon.
-                } else if (xon._mode === 'idle_tet') {
-                    // idle_tet blocked by oct → evict SELF (expendable)
-                    shouldEvictSelf = true;
-                }
-                // tet blocked by oct → don't evict, oct planner may vacate
-            }
-
-            // Dead-end lookahead ejection removed — let tet xons attempt their loops.
-            // If they get stuck, PHASE 3 stuck-ejection handles it.
-
-            if (shouldEvictSelf) {
-                // Eviction is ALWAYS weak + _t60Ejected, NEVER _returnXonToOct
+            // Check occupancy — if next node is occupied, abandon loop
+            const occCount = occupied.get(target) || 0;
+            if (occCount > 0 && target !== xon.node) {
+                // Pauli block → abandon loop
                 _relinquishFaceSCs(xon);
-                _logChoreo(`X${_demoXons.indexOf(xon)} evicted (dead end/blocked) → weak`);
-                xon._mode = 'weak';
-                xon._t60Ejected = true;
-                xon._assignedFace = null;
-                xon._quarkType = null;
-                xon._loopSeq = null;
-                xon._loopStep = 0;
-                xon._tetActualized = false;
-                xon.col = WEAK_FORCE_COLOR;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                _weakLifecycleEnter(xon, 'phase0_eviction');
-                xon._evictedThisTick = true;
-                phase0Changed = true;
-            }
-        }
-        if (phase0Changed) occupied = _occupiedNodes();
-    }
-    const _pT0 = performance.now(); _profPhases.p0 += _pT0 - _pT;
-
-    // ── PHASE 0.5: Weak force xon movement ──
-    // Handles ALL weak xon movement. Weak xons BFS toward nearest oct node.
-    // May traverse any node that isn't hadron-occupied.
-    // On arrival at oct node → transition to oct mode immediately.
-    for (const xon of _demoXons) {
-        if (!xon.alive || xon._mode !== 'weak') continue;
-
-        // Already at oct node → becomes oct immediately, UNLESS just ejected
-        // (must leave oct cage first to prevent eject→return oscillation).
-        if (_octNodeSet && _octNodeSet.has(xon.node)) {
-            if (!xon._t60Ejected || xon._weakLeftOct) {
-                _weakLifecycleExit(xon, 'arrived_oct_immediate');
-                _clearModeProps(xon);
-                xon._mode = 'oct';
-                if (_flashEnabled) xon.flashT = 1.0;
-                xon.col = 0xffffff;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-                continue;
-            }
-            // Ejected and haven't left oct yet — must move off first.
-            // Fall through to BFS which will step toward ejection space.
-        }
-
-        // Log decision ledger for this weak xon (first attempt only)
-        _logWeakDecisionLedger(xon, occupied);
-
-        // BFS toward nearest oct node — collect ALL first-steps at optimal depth
-        // Post-_mayReturn: weak xons may enter non-actualized tet nodes (no SCs active
-        // = no geometry to disrupt) but NOT actualized tet nodes (active hadron space).
-        // This gives weak xons breathing room to navigate back to the oct cage.
-        // Avoid recent trail nodes to prevent cycling outside oct cage.
-        const recentTrail = new Set(xon.trail ? xon.trail.slice(-6) : []);
-        const visited = new Set([xon.node]);
-        const queue = [[xon.node, null, 0]]; // [node, firstStep, depth]
-        const bestSteps = []; // all first-steps reaching oct at same depth
-        let bestDepth = Infinity;
-        while (queue.length > 0) {
-            const [cur, step, depth] = queue.shift();
-            if (depth > bestDepth) break; // past optimal depth
-            const nbs = baseNeighbors[cur] || [];
-            for (const nb of nbs) {
-                if (visited.has(nb.node)) continue;
-                // Post-_mayReturn: may enter actualized tet nodes unless a hadron is there
-                if (_isHadronOccupied(nb.node)) continue;
-                visited.add(nb.node);
-                const nextStep = step || nb.node;
-                if (_octNodeSet && _octNodeSet.has(nb.node)) {
-                    if (depth + 1 <= bestDepth) {
-                        bestDepth = depth + 1;
-                        if (!bestSteps.includes(nextStep)) bestSteps.push(nextStep);
-                    }
-                } else if (depth + 1 < bestDepth) {
-                    queue.push([nb.node, nextStep, depth + 1]);
-                }
-            }
-        }
-        // Shuffle first for random tiebreaking, then stable-sort by priority.
-        // This avoids a non-transitive comparator (_sRng() - 0.5 violates contract).
-        // PRNG seed changes per retry, so shuffle produces different orderings.
-        _sRngShuffle(bestSteps);
-        bestSteps.sort((a, b) => {
-            const aInTrail = recentTrail.has(a) ? 1 : 0;
-            const bInTrail = recentTrail.has(b) ? 1 : 0;
-            if (aInTrail !== bInTrail) return aInTrail - bInTrail;
-            const aIsPrev = a === xon.prevNode ? 1 : 0;
-            const bIsPrev = b === xon.prevNode ? 1 : 0;
-            if (aIsPrev !== bIsPrev) return aIsPrev - bIsPrev;
-            return 0; // tied — shuffle already randomized order
-        });
-        // Try each first-step: first that passes guards + occupancy + swap wins
-        let bestStep = null;
-        for (const step of bestSteps) {
-            if (occupied.get(step) || 0) continue;
-            if (_swapBlocked(xon.node, step)) continue;
-            if (_moveViolatesGuards(xon, xon.node, step)) continue;
-            bestStep = step;
-            break;
-        }
-        if (bestStep !== null) {
-            const fromWk = xon.node;
-            // Track when ejected xon leaves oct cage (enables return)
-            if (xon._t60Ejected && _octNodeSet && _octNodeSet.has(fromWk) && !_octNodeSet.has(bestStep)) {
-                xon._weakLeftOct = true;
-            }
-            _occDel(occupied, xon.node);
-            xon.prevNode = xon.node;
-            xon.node = bestStep;
-            // Proxy may have blocked (already moved this tick) — verify
-            if (xon.node !== bestStep) { _occAdd(occupied, xon.node); continue; }
-            _occAdd(occupied, bestStep);
-            xon._movedThisTick = true;
-            _moveRecord.set(bestStep, fromWk);
-            _traceMove(xon, fromWk, bestStep, 'weakBFS');
-            _recordEjectionTraversal(fromWk, bestStep);
-            xon.tweenT = 0;
-            anyMoved = true;
-            _weakLifecycleStep(xon);
-            // Check if arrived at oct node — transition immediately (no _mayReturn gate).
-            // Weak xons that reach the oct cage have successfully returned.
-            if (_octNodeSet && _octNodeSet.has(bestStep)) {
-                const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
-                if (octCountNow < OCT_CAPACITY_MAX) {
-                    _weakLifecycleExit(xon, 'arrived_oct_bfs');
+                if (_octNodeSet && _octNodeSet.has(xon.node)) {
                     _clearModeProps(xon);
                     xon._mode = 'oct';
-                    if (_flashEnabled) xon.flashT = 1.0;
                     xon.col = 0xffffff;
                     if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                } else {
+                    _clearModeProps(xon);
+                    xon._mode = 'weak';
+                    xon._t60Ejected = true;
+                    xon.col = WEAK_FORCE_COLOR;
+                    if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                    if (typeof _weakLifecycleEnter === 'function') _weakLifecycleEnter(xon, 'pauli_block');
                 }
+                // Don't plan a move — mode changed, will be picked up as oct/weak
+                continue;
             }
-        } else {
-            // All BFS steps blocked — try free neighbor (avoiding hadron-occupied nodes)
-            // Use full baseNeighbors (not _localBaseNeighbors which restricts to nucleus)
-            // — weak xons have freedom to roam the full lattice.
-            // Shuffle to prevent lattice-order bias in fallback selection.
-            const allNbs = _sRngShuffle((baseNeighbors[xon.node] || []).slice());
-            const hadronFilter = nb => !_isHadronOccupied(nb.node);
-            // Tier 1: guard-safe, no hadron, not in recent trail, not prevNode
-            let freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                hadronFilter(nb) &&
-                !recentTrail.has(nb.node) && nb.node !== xon.prevNode &&
-                !_swapBlocked(xon.node, nb.node) &&
-                !_moveViolatesGuards(xon, xon.node, nb.node));
-            // Tier 2: guard-safe, no hadron, not prevNode
-            if (!freeNb) {
-                freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    hadronFilter(nb) &&
-                    nb.node !== xon.prevNode &&
-                    !_swapBlocked(xon.node, nb.node) &&
-                    !_moveViolatesGuards(xon, xon.node, nb.node));
-            }
-            // Tier 3: guard-safe, no hadron, allow prevNode
-            if (!freeNb) {
-                freeNb = allNbs.find(nb => !(occupied.get(nb.node) || 0) &&
-                    hadronFilter(nb) &&
-                    !_swapBlocked(xon.node, nb.node) &&
-                    !_moveViolatesGuards(xon, xon.node, nb.node));
-            }
-            // No guard bypass — if no guard-safe move exists, xon stays put
-            if (freeNb) {
-                const fromWk2 = xon.node;
-                if (xon._t60Ejected && _octNodeSet && _octNodeSet.has(fromWk2) && !_octNodeSet.has(freeNb.node)) {
-                    xon._weakLeftOct = true;
-                }
-                _occDel(occupied, xon.node);
-                xon.prevNode = xon.node;
-                xon.node = freeNb.node;
-                // Proxy may have blocked — verify
-                if (xon.node !== freeNb.node) { _occAdd(occupied, xon.node); continue; }
-                _occAdd(occupied, freeNb.node);
-                xon._movedThisTick = true;
-                _moveRecord.set(freeNb.node, fromWk2);
-                _traceMove(xon, fromWk2, freeNb.node, 'weakDetour');
-                xon.tweenT = 0;
-                anyMoved = true;
-                _weakLifecycleStep(xon);
-                if (_octNodeSet && _octNodeSet.has(freeNb.node)) {
-                    const octCountNow = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
-                    if (octCountNow < OCT_CAPACITY_MAX) {
-                        _weakLifecycleExit(xon, 'arrived_oct_detour');
-                        _clearModeProps(xon);
-                        xon._mode = 'oct';
-                        if (_flashEnabled) xon.flashT = 1.0;
-                        xon.col = 0xffffff;
-                        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+
+            // Check if edge requires SC materialization
+            let scNeeded = null;
+            const pid = pairId(xon.node, target);
+            const scId = scPairToId.get(pid);
+            if (scId != null) {
+                // There's an SC on this edge — check if it's activated
+                const isBase = baseNeighbors[xon.node] && baseNeighbors[xon.node].some(n => n.node === target);
+                if (!isBase) {
+                    // SC-only edge — must be activated
+                    if (!activeSet.has(scId) && !impliedSet.has(scId) && !xonImpliedSet.has(scId)) {
+                        scNeeded = scId;
                     }
                 }
             }
-        }
-    }
-    const _pT05 = performance.now(); _profPhases.p05 += _pT05 - _pT0;
 
-    // ── PHASE 1: Plan tet/idle_tet moves (fixed sequences) ──
-    const tetPlans = [];
-    const tetBlockedBy = new Map(); // toNode → xon (tet xons blocked by oct occupants)
-    for (const xon of _demoXons) {
-        if (!xon.alive) continue;
-        if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
-        // Wrap completed loops — xons cycle continuously in their tet
-        const effectiveStep = xon._loopStep >= 4 ? 0 : xon._loopStep;
-        const fromNode = xon._loopSeq[effectiveStep];
-        const toNode = xon._loopSeq[effectiveStep + 1];
-        tetPlans.push({ xon, fromNode, toNode, approved: false });
-    }
+            moves.push({ xon, target, scNeeded });
 
-    // Approve tet moves to free destinations; track oct-blocked ones
-    // Uses loop-shape-aware lookahead: checks the xon's actual loop path, not generic graph
-    for (const plan of tetPlans) {
-        if (planned.has(plan.toNode)) continue; // another tet already claimed this
-        const occCount = occupied.get(plan.toNode) || 0;
-        if (occCount === 0) {
-            // Loop-shape-aware lookahead: verify the xon's specific loop path is viable
-            const tmpOcc = new Map(occupied);
-            _occDel(tmpOcc, plan.fromNode);
-            _occAdd(tmpOcc, plan.toNode);
-            const effectiveStep = plan.xon._loopStep >= 4 ? 0 : plan.xon._loopStep;
-            if (_lookaheadTetPath(plan.xon._loopSeq, effectiveStep + 1, tmpOcc, _choreoParams.lookahead, plan.xon)) {
-                plan.approved = true;
-                planned.add(plan.toNode);
-            }
-            // If lookahead fails, xon's escape hatch will return it to oct
-        } else {
-            // Blocked — check if blocker is an oct xon we can ask to move
-            const blocker = _demoXons.find(x => x.alive && x._mode === 'oct' && x.node === plan.toNode);
-            if (blocker) {
-                tetBlockedBy.set(plan.toNode, plan);
-                // Tentatively claim — oct planner will be forced to vacate this node
-                planned.add(plan.toNode);
-                plan.approved = true;
-                plan._needsOctVacate = blocker;
-            }
-            // If blocker is tet/idle_tet (or no oct blocker found), approve as annihilation.
-            // The cooperative lookahead treats collisions as annihilation opportunities.
-            // Skip when annihilation disabled — xon will escape via PHASE 3 hatch instead.
-            if (!plan.approved && _annihilationEnabled) {
-                plan.approved = true;
-                plan._annihilateMove = true;
-                planned.add(plan.toNode);
-            }
-        }
-    }
+        } else if (xon._mode === 'oct') {
+            // ── OCT: stochastic movement with direction balance ──
 
-    // Vacuum negotiation for approved tet moves — hard requirement.
-    // If ANY SC exists on this edge and isn't active, it must be materialised.
-    // If materialisation fails, the tet xon cannot traverse.
-    for (const plan of tetPlans) {
-        if (!plan.approved) continue;
-        const pid = pairId(plan.fromNode, plan.toNode);
-        const scId = scPairToId.get(pid);
-        if (scId === undefined) continue; // no SC on this edge, base edge only
-
-        // Check if edge also has a base connection — if so, xon uses base edge, no SC needed
-        const hasBaseEdge = (baseNeighbors[plan.fromNode] || []).some(nb => nb.node === plan.toNode);
-        if (hasBaseEdge) continue;
-
-        // Edge is SC-only — must be activated
-        if (!xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
-            let activated = false;
-            const xi = _demoXons.indexOf(plan.xon);
-            if (canMaterialiseQuick(scId)) {
-                xonImpliedSet.add(scId);
-                _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: xi, face: plan.xon._assignedFace, tick: _demoTick });
-                stateVersion++; // invalidate _getBasePairs cache for subsequent checks
-                _solverNeeded = true;
-                activated = true;
-            } else if (excitationSeverForRoom(scId)) {
-                if (canMaterialiseQuick(scId)) {
-                    xonImpliedSet.add(scId);
-                    _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: xi, face: plan.xon._assignedFace, tick: _demoTick });
-                    stateVersion++; // invalidate _getBasePairs cache
-                    _solverNeeded = true;
-                    activated = true;
-                }
-            }
-            if (!activated) {
-                // Vacuum rejected — revoke tet move
-                plan.approved = false;
-                planned.delete(plan.toNode);
-            }
-        }
-    }
-
-    const _pT1 = performance.now(); _profPhases.p1 += _pT1 - _pT05;
-
-    // ── PHASE 1.5: Natural loop completion — return xons that finished their loops ──
-    // Replaces forced window-boundary returns. Loops complete organically at step >= 4.
-    {
-        const locked15 = _traversalLockedSCs();
-        for (const xon of _demoXons) {
-            if (!xon.alive) continue;
-            if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
-            if (xon._loopStep < 4) continue; // still mid-loop — let it finish
-
-            // T60: non-actualized loop → eject as weak particle.
-            // Fresh check at completion: are all face SCs still present RIGHT NOW?
-            // If the vacuum severed one during the loop, the tet lost support → weak eject.
-            let _t60actualized = false;
-            if (xon._assignedFace != null && _nucleusTetFaceData) {
-                const fd60 = _nucleusTetFaceData[xon._assignedFace];
-                if (fd60 && fd60.scIds.every(scId =>
-                    activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId))) {
-                    _t60actualized = true;
-                }
-            }
-            if (!_t60actualized) {
-                // Trail segments keep their original recorded color.
-                // Relinquish face SCs (tight space = delete, sticky space = no-op)
-                _relinquishFaceSCs(xon);
-                _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} (completion) → weak`);
-                xon._mode = 'weak';
-                xon._assignedFace = null;
-                xon._quarkType = null;
-                xon._loopSeq = null;
-                xon._loopStep = 0;
-                xon._tetActualized = false;
-                xon._t60Ejected = true;
-                xon.col = WEAK_FORCE_COLOR;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                _weakLifecycleEnter(xon, 'non_actualized_tet');
-                continue; // PHASE 0.5 will move it; skip normal return-to-oct
-            }
-
-            // Loop complete + actualized — return to oct
-            _returnXonToOct(xon, occupied);
-            // Relinquish face SCs (tight space = delete, sticky space = no-op)
-            _relinquishFaceSCs(xon);
-        }
-        occupied = _occupiedNodes(); // refresh after returns
-    }
-
-    // ── PHASE 2a: Demand-driven face selection (decentralized, no order precedence) ──
-    // Each oct xon scores ALL reachable faces independently. Conflicts resolved by
-    // random shuffling — no xon gets order-precedence over another.
-    let _cageCriticalXons = new Set(); // hoisted for PHASE 3 gluon activation
-    {
-        _ratioTracker.sync();
-        let octIdle = _demoXons.filter(x => x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick);
-
-        // ── GLUON / CAGE CHECK: cage integrity takes priority over face assignment ──
-        // Gluon mode = xon that moved OFF the oct cage to preserve cage integrity.
-        // Oct→oct moves for cage maintenance stay in oct mode.
-        // Gluon mode activates ONLY when the xon actually moves to a non-oct node.
-        //
-        // Here we: (1) demote gluons back to oct if they've returned to the cage,
-        //          (2) exclude cage-critical oct xons from face assignment.
-        // ── Gluon-mediated orphan cleanup: release gluons whose client is no longer active ──
-        if (_ruleGluonMediatedSC) {
-            for (const xon of _demoXons) {
-                if (!xon.alive || xon._gluonForFace == null) continue;
-                const client = xon._gluonClientXon;
-                if (!client || !client.alive ||
-                    (client._mode !== 'tet' && client._mode !== 'idle_tet') ||
-                    client._assignedFace !== xon._gluonForFace) {
-                    _releaseGluon(xon._gluonForFace);
-                }
-            }
-        }
-        const gluonXons = _demoXons.filter(x => x.alive && x._mode === 'gluon' && !x._movedThisTick && !x._evictedThisTick);
-        for (const xon of gluonXons) {
-            // Face-bound gluons stay gluon until released — skip auto-demotion
-            if (xon._gluonForFace != null) continue;
-            // Legacy gluon (cage-critical) that returned to oct cage → demote to oct
-            if (_octNodeSet && _octNodeSet.has(xon.node)) {
-                xon._mode = 'oct';
-                xon.col = 0xffffff;
-                if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
-                octIdle.push(xon);
-                _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} returned to oct cage → oct mode`);
-            }
-            // Gluon still off-cage → stays gluon, excluded from face assignment
-        }
-        // Mark cage-critical oct xons — exclude from face assignment but keep oct mode
-        // (they'll become gluon only if their move takes them off the oct cage)
-        _cageCriticalXons = new Set();
-        for (const xon of octIdle) {
-            if (_cageWouldBreak(xon)) {
-                _cageCriticalXons.add(xon);
-                _logChoreo(`CAGE: X${_demoXons.indexOf(xon)} cage-critical (excluded from face assignment)`);
-            }
-        }
-        // Remove cage-critical xons from face assignment candidates (but NOT from oct movement)
-        octIdle = octIdle.filter(x => !_cageCriticalXons.has(x));
-        // Remove gluon-bound xons from face assignment (they're serving a tet face)
-        if (_ruleGluonMediatedSC) {
-            octIdle = octIdle.filter(x => x._gluonForFace == null);
-        }
-
-        if (octIdle.length > 0 && _nucleusTetFaceData) {
-            // ── FACE ASSIGNMENT: greedy + ranked enumeration ──
-            // During backtracking, enumerate ALL valid (xon, face, quarkType) combos
-            // and cycle through them ranked by aggregate score. Greedy = first combo.
-            let assignedCombo = null; // the combo that actually gets assigned
-
-            if (_btActive && typeof _enumerateAllFaceAssignments === 'function') {
-                // Build/refresh face assignment cache when ledger changes
-                const ledgerSize = (_btBadMoveLedger.get(_demoTick) || {size:0}).size || 0;
-                if (_btFaceAssignCache === null || _btFaceAssignLedgerSize !== ledgerSize) {
-                    // Collect ALL valid proposals across all xons, faces, quark types
-                    const allProposals = [];
-                    for (const xon of octIdle) {
-                        const opps = _allFaceOpportunities(xon, occupied);
-                        for (const opp of opps) allProposals.push(opp);
+            // Oct xon not on oct node → treat like weak (BFS toward oct)
+            if (_octNodeSet && _octNodeSet.size > 0 && !_octNodeSet.has(xon.node)) {
+                const visited = new Set([xon.node]);
+                const queue = [{ node: xon.node, firstStep: null }];
+                let bestStep = null;
+                while (queue.length > 0) {
+                    const cur = queue.shift();
+                    if (cur.node !== xon.node && _octNodeSet.has(cur.node)) { bestStep = cur.firstStep; break; }
+                    if (baseNeighbors[cur.node]) {
+                        for (const nb of baseNeighbors[cur.node]) {
+                            if (visited.has(nb.node)) continue;
+                            visited.add(nb.node);
+                            queue.push({ node: nb.node, firstStep: cur.firstStep || nb.node });
+                        }
                     }
-                    _btFaceAssignCache = _enumerateAllFaceAssignments(allProposals);
-                    _btFaceAssignIndex = 0;
-                    _btFaceAssignLedgerSize = ledgerSize;
-                    _logChoreo(`FACE ENUM: ${_btFaceAssignCache.length} valid combos for tick ${_demoTick}`);
+                }
+                if (bestStep != null && (occupied.get(bestStep) || 0) === 0) {
+                    moves.push({ xon, target: bestStep, scNeeded: null });
+                } else {
+                    // Fallback: any free base neighbor
+                    const fbs = baseNeighbors[xon.node] ? baseNeighbors[xon.node].filter(nb => (occupied.get(nb.node) || 0) === 0) : [];
+                    if (fbs.length > 0) moves.push({ xon, target: fbs[Math.floor(_sRng() * fbs.length)].node, scNeeded: null });
+                }
+                continue;
+            }
+
+            // Check overcrowding: fire tet from pole if needed
+            const octCount = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
+            const overcrowded = octCount > (typeof OCT_CAPACITY_MAX !== 'undefined' ? OCT_CAPACITY_MAX : 6)
+                || (_octFullConsecutive >= (typeof T79_MAX_FULL_TICKS !== 'undefined' ? T79_MAX_FULL_TICKS : Infinity));
+            const maxOctReached = typeof _ruleMaxOctPerXon !== 'undefined' && _ruleMaxOctPerXon !== Infinity
+                && (xon._octConsecutive || 0) >= _ruleMaxOctPerXon;
+
+            // Poles are cycle[0] for each face — node 0 (faces 1-4) and node 4 (faces 5-8)
+            const isPole = (xon.node === 0 || xon.node === 4);
+
+            if (isPole && (overcrowded || maxOctReached)) {
+                // Fire tet: pick best face for this pole based on demand
+                const pole = xon.node;
+                const facesForPole = [];
+                if (_nucleusTetFaceData) {
+                    for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
+                        const fId = +fIdStr;
+                        if (fd.cycle[0] !== pole) continue;
+                        facesForPole.push(fId);
+                    }
+                }
+                // Score faces by demand (least visited gets priority)
+                let bestFace = null, bestScore = -Infinity;
+                for (const fId of facesForPole) {
+                    // Demand = inverse of visit count (balance)
+                    const visits = _actualizationVisits ? (_actualizationVisits[fId] || 0) : 0;
+                    const score = -visits + _sRng() * 0.5; // slight randomness
+                    if (score > bestScore) { bestScore = score; bestFace = fId; }
                 }
 
-                // Try the next combo from the cache
-                if (_btFaceAssignCache.length > 0) {
-                    const idx = _btFaceAssignIndex % _btFaceAssignCache.length;
-                    _btFaceAssignIndex++;
-                    const combo = _btFaceAssignCache[idx];
-                    // Validate each proposal in the combo (vacuum + lookahead)
-                    const validatedCombo = [];
-                    const usedXons = new Set();
-                    const usedFaces = new Set();
-                    for (const prop of combo) {
-                        if (usedXons.has(prop.xon) || usedFaces.has(prop.face)) continue;
-                        // Vacuum feasibility
-                        const fd = _nucleusTetFaceData[prop.face];
-                        let canMaterialize = true;
-                        for (const scId of fd.scIds) {
-                            if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
-                            if (!canMaterialiseQuick(scId)) {
-                                if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
-                                    canMaterialize = false;
-                                    break;
-                                }
+                if (bestFace != null) {
+                    // Pick a random quark type for this face
+                    const quarkTypes = ['pu', 'pd', 'nd', 'nu'];
+                    const qt = quarkTypes[Math.floor(_sRng() * quarkTypes.length)];
+                    _assignXonToTet(xon, bestFace, qt, occupied);
+                    if (xon._mode === 'tet' && xon._loopSeq) {
+                        // _assignXonToTet does immediate advance (step 0→1) internally.
+                        // If it already moved, don't plan another move.
+                        if (xon._movedThisTick) {
+                            anyMoved = true;
+                            _solverNeeded = _solverNeeded || !!xon._solverNeeded;
+                            xon._solverNeeded = false;
+                            _moveTrace.push({ xonIdx: _demoXons.indexOf(xon), from: xon.prevNode, to: xon.node, mode: xon._mode });
+                            _moveRecord.set(xon.node, xon.prevNode);
+                            continue;
+                        }
+                        // Assignment succeeded but no immediate advance — plan first move
+                        const nextStep = (xon._loopStep + 1) % 5;
+                        const target = xon._loopSeq[nextStep];
+                        let scNeeded = null;
+                        const pid = pairId(xon.node, target);
+                        const scId = scPairToId.get(pid);
+                        if (scId != null) {
+                            const isBase = baseNeighbors[xon.node] && baseNeighbors[xon.node].some(n => n.node === target);
+                            if (!isBase && !activeSet.has(scId) && !impliedSet.has(scId) && !xonImpliedSet.has(scId)) {
+                                scNeeded = scId;
                             }
                         }
-                        if (!canMaterialize) continue;
-                        // Lookahead viability
-                        const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
-                        const tmpOcc = new Map(occupied);
-                        if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
-                        validatedCombo.push(prop);
-                        usedXons.add(prop.xon);
-                        usedFaces.add(prop.face);
+                        moves.push({ xon, target, scNeeded });
+                        continue;
                     }
-                    assignedCombo = validatedCombo;
+                    // Assignment failed — fall through to normal oct movement
                 }
+            }
+
+            // Normal oct movement: pick from cage neighbors
+            const candidates = [];
+            // Base edges
+            if (baseNeighbors[xon.node]) {
+                for (const nb of baseNeighbors[xon.node]) {
+                    if (!_octNodeSet || !_octNodeSet.has(nb.node)) continue;
+                    candidates.push({ node: nb.node, dirIdx: nb.dirIdx, scId: null });
+                }
+            }
+            // Cage SC edges
+            if (scByVert[xon.node] && _octSCIds) {
+                const cageSCSet = new Set(_octSCIds);
+                for (const sc of scByVert[xon.node]) {
+                    if (!cageSCSet.has(sc.id)) continue;
+                    const other = sc.a === xon.node ? sc.b : sc.a;
+                    if (!_octNodeSet || !_octNodeSet.has(other)) continue;
+                    // Don't duplicate base edges
+                    if (candidates.some(c => c.node === other)) continue;
+                    candidates.push({ node: other, dirIdx: sc.stype + 4, scId: sc.id });
+                }
+            }
+
+            // Filter out occupied nodes and bounces
+            const viable = candidates.filter(c => {
+                if ((occupied.get(c.node) || 0) > 0) return false;
+                if (c.node === xon.prevNode) return false; // T45 bounce
+                return true;
+            });
+
+            if (viable.length === 0) {
+                // Stuck — backtracker will handle via T20
+                continue;
+            }
+
+            // Score by direction balance (zero-sum bias) + random noise
+            for (const c of viable) {
+                const deficit = xon._dirBalance ? -xon._dirBalance[c.dirIdx] : 0;
+                c.score = deficit + _sRng() * 0.3;
+            }
+            viable.sort((a, b) => b.score - a.score);
+            const best = viable[0];
+            moves.push({ xon, target: best.node, scNeeded: best.scId });
+
+        } else if (xon._mode === 'weak') {
+            // ── WEAK: BFS toward nearest oct node via base edges ──
+            // If oct doesn't exist yet (tick 0), just move to any free base neighbor.
+
+            // BFS shortest path to any oct node (skip BFS if oct doesn't exist yet)
+            const visited = new Set([xon.node]);
+            const queue = [{ node: xon.node, firstStep: null }];
+            let bestStep = null;
+            if (_octNodeSet && _octNodeSet.size > 0) {
+            while (queue.length > 0) {
+                const cur = queue.shift();
+                if (cur.node !== xon.node && _octNodeSet.has(cur.node)) {
+                    bestStep = cur.firstStep;
+                    break;
+                }
+                if (baseNeighbors[cur.node]) {
+                    for (const nb of baseNeighbors[cur.node]) {
+                        if (visited.has(nb.node)) continue;
+                        visited.add(nb.node);
+                        queue.push({ node: nb.node, firstStep: cur.firstStep || nb.node });
+                    }
+                }
+            }
+            } // end if (_octNodeSet)
+
+            if (bestStep != null && (occupied.get(bestStep) || 0) === 0) {
+                moves.push({ xon, target: bestStep, scNeeded: null });
             } else {
-                // ── GREEDY PATH (normal, non-backtrack) ──
-                // Each xon picks its single best face
-                const proposals = [];
-                for (const xon of octIdle) {
-                    let bestOpp = null;
-                    for (let f = 1; f <= 8; f++) {
-                        const opp = _scoreFaceOpportunity(xon, f, occupied);
-                        if (opp && opp.score >= _choreoParams.assignmentThreshold) {
-                            if (!bestOpp || opp.score > bestOpp.score) bestOpp = { xon, ...opp };
-                        }
-                    }
-                    if (bestOpp) proposals.push(bestOpp);
+                // Can't reach oct — try any free base neighbor
+                const fallbacks = baseNeighbors[xon.node] ?
+                    baseNeighbors[xon.node].filter(nb => (occupied.get(nb.node) || 0) === 0 && nb.node !== xon.prevNode) : [];
+                if (fallbacks.length > 0) {
+                    const pick = fallbacks[Math.floor(_sRng() * fallbacks.length)];
+                    moves.push({ xon, target: pick.node, scNeeded: null });
                 }
-
-                // Shuffle proposals — no xon gets priority by index order
-                for (let i = proposals.length - 1; i > 0; i--) {
-                    const j = Math.floor(_sRng() * (i + 1));
-                    [proposals[i], proposals[j]] = [proposals[j], proposals[i]];
-                }
-
-                // Resolve conflicts: one xon per face, first-after-shuffle wins
-                const validatedCombo = [];
-                const usedXons = new Set();
-                const usedFaces = new Set();
-                for (const prop of proposals) {
-                    if (usedXons.has(prop.xon) || usedFaces.has(prop.face)) continue;
-                    if (prop.score < _choreoParams.assignmentThreshold) continue;
-                    // Vacuum feasibility
-                    const fd = _nucleusTetFaceData[prop.face];
-                    let canMaterialize = true;
-                    for (const scId of fd.scIds) {
-                        if (activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId)) continue;
-                        if (!canMaterialiseQuick(scId)) {
-                            if (!excitationSeverForRoom(scId) || !canMaterialiseQuick(scId)) {
-                                canMaterialize = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (!canMaterialize) continue;
-                    // Lookahead viability
-                    const seq = _selectBestPermutation(prop.xon, fd.cycle, prop.quarkType);
-                    const tmpOcc = new Map(occupied);
-                    if (!_lookaheadTetPath(seq, 0, tmpOcc, _choreoParams.lookahead, prop.xon)) continue;
-                    validatedCombo.push(prop);
-                    usedXons.add(prop.xon);
-                    usedFaces.add(prop.face);
-                }
-                assignedCombo = validatedCombo;
+                // else: stuck, T20 backtracker handles
             }
 
-            // ── Execute the chosen face assignment combo ──
-            const assignedXons = new Set();
-            const assignedFaces = new Set();
-            if (assignedCombo) {
-                for (const prop of assignedCombo) {
-                    _assignXonToTet(prop.xon, prop.face, prop.quarkType);
-                    _demoTetAssignments++;
-                    assignedXons.add(prop.xon);
-                    assignedFaces.add(prop.face);
-                    _demoVisitedFaces.add(prop.face);
-                    _solverNeeded = true;
-                }
-            }
-
-            // ── Immediate first step for newly-assigned tet xons ──
-            // Xons assigned in PHASE 2a missed PHASE 1's tet planning.
-            // If they haven't moved (already on face node), plan their first step
-            // so PHASE 3 can execute it (prevents standing still for 1 tick).
-            for (const xon of assignedXons) {
-                if (xon._movedThisTick) continue; // walked to face during assignment
-                if (!xon._loopSeq || xon._mode !== 'tet') continue;
-                const effectiveStep = xon._loopStep >= 4 ? 0 : xon._loopStep;
-                const fromNode = xon._loopSeq[effectiveStep];
-                const toNode = xon._loopSeq[effectiveStep + 1];
-                if (toNode === undefined) continue;
-                if (planned.has(toNode)) continue;
-                if ((occupied.get(toNode) || 0) > 0) continue;
-                // Vacuum negotiation for first hop
-                const pid = pairId(fromNode, toNode);
-                const scId = scPairToId.get(pid);
-                const hasBase = (baseNeighbors[fromNode] || []).some(nb => nb.node === toNode);
-                let scOk = hasBase;
-                if (!scOk && scId !== undefined) {
-                    scOk = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
-                    if (!scOk && canMaterialiseQuick(scId)) {
-                        const xi = _demoXons.indexOf(xon);
-                        xonImpliedSet.add(scId);
-                        _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: xi, face: xon._assignedFace, tick: _demoTick });
-                        stateVersion++;
-                        _solverNeeded = true;
-                        scOk = true;
-                    }
-                }
-                if (scOk || scId === undefined) {
-                    tetPlans.push({ xon, fromNode, toNode, approved: true });
-                    planned.add(toNode);
-                }
-            }
-
-            // ── BFS Test decision trace: capture face assignments ──
-            if (_bfsTestActive && assignedXons.size > 0) {
-                const faceAssignments = [];
-                if (assignedCombo) {
-                    for (const prop of assignedCombo) {
-                        faceAssignments.push({
-                            xonIdx: _demoXons.indexOf(prop.xon),
-                            face: prop.face,
-                            quarkType: prop.quarkType,
-                            score: +prop.score.toFixed(2),
-                        });
-                    }
-                }
-                if (!_bfsTestDecisionTrace) _bfsTestDecisionTrace = [];
-                let entry = _bfsTestDecisionTrace.find(e => e.tick === _demoTick && e.runIdx === _bfsTestRunIdx);
-                if (!entry) {
-                    entry = { tick: _demoTick, runIdx: _bfsTestRunIdx, btActive: _btActive, faceAssignments: [], octMatching: [] };
-                    _bfsTestDecisionTrace.push(entry);
-                }
-                entry.faceAssignments = faceAssignments;
+        } else if (xon._mode === 'gluon') {
+            // Gluons: for now, treat like weak (walk back to oct)
+            if (!_octNodeSet || _octNodeSet.size === 0) continue;
+            const gluonNbs = baseNeighbors[xon.node] ?
+                baseNeighbors[xon.node].filter(nb => (occupied.get(nb.node) || 0) === 0 && nb.node !== xon.prevNode) : [];
+            if (gluonNbs.length > 0) {
+                // Prefer oct nodes
+                const octNbs = gluonNbs.filter(nb => _octNodeSet.has(nb.node));
+                const pick = octNbs.length > 0 ? octNbs[Math.floor(_sRng() * octNbs.length)] : gluonNbs[Math.floor(_sRng() * gluonNbs.length)];
+                moves.push({ xon, target: pick.node, scNeeded: null });
             }
         }
-
-        occupied = _occupiedNodes(); // refresh after assignments
     }
 
-    // ── OCT CAPACITY OVERFLOW — proactive shedding ──
-    // Count ALL xons on oct nodes (any mode — oct, idle_tet, weak all count).
-    // T79 pressure: if approaching the consecutive-full limit, shed 1 extra.
-    // Priority: oct-mode first (least disruptive), then idle_tet, then weak.
-    // Tier 1: _startIdleTetLoop (productive — manifests a hadron, moves off cage).
-    // Tier 2: _pendingWeakEjection (becomes weak when it steps off oct).
+    // ── CONFLICT RESOLUTION ──
+    // Priority: xons in xloop (tet/idle_tet) win. Otherwise random.
+    // Loser picks an alternative free neighbor.
     {
-        const allOnOct = (_octNodeSet && _octNodeSet.size > 0)
-            ? _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length : 0;
-        const t79Pressure = (_octFullConsecutive >= T79_MAX_FULL_TICKS - 1 && allOnOct >= OCT_CAPACITY_MAX) ? 1 : 0;
-        let excess = allOnOct - OCT_CAPACITY_MAX + t79Pressure;
-        if (excess > 0) {
-            // Priority 1: oct-mode xons (easiest to redirect)
-            const octCandidates = _sRngShuffle(_demoXons.filter(x =>
-                x.alive && x._mode === 'oct' && !x._movedThisTick && !x._evictedThisTick &&
-                _octNodeSet.has(x.node)
-            ));
-            for (const xon of octCandidates) {
-                if (excess <= 0) break;
-                if (_startIdleTetLoop(xon, occupied)) {
-                    _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> idle_tet f${xon._assignedFace}`);
-                    _solverNeeded = true;
-                    excess--;
-                    continue;
-                }
-                // No direct weak ejection from oct — xons can only leave
-                // by starting a tet loop. If no loop available, stay on oct.
-                _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow — no tet available, stays on oct`);
-            }
-            // Priority 2: idle_tet xons on oct nodes — revert to oct (no weak ejection)
-            if (excess > 0) {
-                const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
-                for (const xon of idleCandidates) {
-                    if (excess <= 0) break;
-                    const xi = _demoXons.indexOf(xon);
-                    _logChoreo(`X${xi} idle_tet on oct -> oct (shed, no weak ejection)`);
-                    xon._assignedFace = null;
-                    xon._loopSeq = null;
-                    xon._loopStep = 0;
-                    xon._mode = 'oct';
-                    excess--;
-                }
-            }
-            // Priority 3 removed: no direct weak ejection from oct.
-            // Xons can only leave oct by starting a tet loop.
-            if (allOnOct - OCT_CAPACITY_MAX + t79Pressure > 0) occupied = _occupiedNodes();
-        }
-    }
-
-    // ── PHASE 2: Coordinated oct movement planning ──
-    let octXons = [];
-    let octPlans = [];
-    {
-    octXons = _demoXons.filter(x => x.alive && (x._mode === 'oct' || x._mode === 'gluon' || x._mode === 'weak') && !x._movedThisTick);
-    for (const xon of octXons) _occDel(occupied, xon.node);
-
-    octPlans = octXons.map(xon => ({
-        xon,
-        candidates: _getOctCandidates(xon, occupied, planned),
-        assigned: null,
-        fromNode: xon.node,
-    }));
-
-    // Restore occupied for later use
-    for (const xon of octXons) _occAdd(occupied, xon.node);
-
-    // Pre-filter candidates: remove those where vacuum would definitely reject.
-    // EXCEPTION: oct cage SCs bypass this filter — they use full vacuum negotiation
-    // (including excitationSeverForRoom) in _executeOctMove, which the quick check
-    // doesn't account for. Without this exception, cumulative strain from the first
-    // 3 cage SCs can permanently block the 4th from ever being attempted.
-    //
-    // GPU/Worker acceleration: batch all canMaterialiseQuick calls into one Worker
-    // round-trip when available. Falls back to synchronous main-thread solver.
-    let _batchResults = null; // Map<scId, {pass, worst, avg}>
-    if (typeof SolverProxy !== 'undefined' && SolverProxy.isReady()) {
-        // Collect unique SC IDs needing materialisation check
-        // Pre-filter: skip grossly non-local SC edges (saves solver calls)
-        const candidateScIds = new Set();
-        for (const plan of octPlans) {
-            for (const c of plan.candidates) {
-                if (!c._needsMaterialise) continue;
-                if (c._scId === undefined) continue;
-                if (_octSCIds && _octSCIds.includes(c._scId)) continue;
-                // Distance pre-filter: reject obviously non-local SC candidates (d > 1.5)
-                const sc = SC_BY_ID[c._scId];
-                if (sc) {
-                    const pa = pos[sc.a], pb = pos[sc.b];
-                    const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
-                    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                    if (Math.abs(dist - 1) > 0.50) continue; // teleportation-range, skip solver
-                }
-                candidateScIds.add(c._scId);
-            }
-        }
-        if (candidateScIds.size > 0) {
-            const candidateScIdArray = [...candidateScIds];
-            // Only use Worker batch when enough candidates to amortize round-trip.
-            // Worker overhead is ~50ms for postMessage round-trip; CPU CMQ is ~12ms each.
-            // Break-even: ~4 candidates. Below that, CPU is faster.
-            const MIN_BATCH_SIZE = 5;
-            if (candidateScIdArray.length >= MIN_BATCH_SIZE) {
-                const basePairs = _getBasePairs();
-                const candidateScPairs = candidateScIdArray.map(id => { const sc = SC_BY_ID[id]; return [sc.a, sc.b]; });
-                const _batchT0 = performance.now();
-                const results = await SolverProxy.solveBatch(basePairs, candidateScPairs);
-                _profPhases.gpuBatch = (_profPhases.gpuBatch || 0) + (performance.now() - _batchT0);
-                if (results) {
-                    _batchResults = new Map();
-                    for (let i = 0; i < candidateScIdArray.length; i++) {
-                        _batchResults.set(candidateScIdArray[i], results[i]);
-                    }
-                    SolverProxy.cacheBatchResults(candidateScIdArray, results, stateVersion);
-                }
+        const targetMap = new Map(); // target → move
+        const approved = [];
+        const allTargets = new Set();
+        for (const m of moves) allTargets.add(m.target);
+        for (const m of moves) {
+            if (!targetMap.has(m.target)) {
+                targetMap.set(m.target, m);
+                approved.push(m);
             } else {
-                // Small batch: run CMQ on CPU inline (faster than Worker round-trip)
-                _batchResults = new Map();
-                for (const scId of candidateScIdArray) {
-                    _batchResults.set(scId, { pass: canMaterialiseQuick(scId) });
-                }
-            }
-        }
-    }
-    for (const plan of octPlans) {
-        plan.candidates = plan.candidates.filter(c => {
-            if (!c._needsMaterialise) return true; // base edge or already active SC
-            if (c._scId === undefined) return true;
-            // Oct cage SCs get full vacuum negotiation in _executeOctMove
-            if (_octSCIds && _octSCIds.includes(c._scId)) return true;
-            // Distance pre-filter: reject grossly non-local before hitting solver
-            const sc = SC_BY_ID[c._scId];
-            if (sc) {
-                const pa = pos[sc.a], pb = pos[sc.b];
-                const dx = pb[0]-pa[0], dy = pb[1]-pa[1], dz = pb[2]-pa[2];
-                if (Math.abs(Math.sqrt(dx*dx + dy*dy + dz*dz) - 1) > 0.50) return false;
-            }
-            // Use batch results if available, otherwise fall back to sync
-            if (_batchResults && _batchResults.has(c._scId)) {
-                return _batchResults.get(c._scId).pass;
-            }
-            return canMaterialiseQuick(c._scId); // fallback: sync main-thread solver
-        });
-    }
-
-    // ── CANDIDATE SNAPSHOT (pre-exclusion) for traversal log ──
-    let _preExclusionCandidates = null;
-    if (_btActive && _searchTraversalLog) {
-        _preExclusionCandidates = {};
-        for (const plan of octPlans) {
-            const xi = _demoXons.indexOf(plan.xon);
-            _preExclusionCandidates[xi] = plan.candidates.map(c => ({
-                node: c.node, score: +(c.score?.toFixed(3) || 0),
-            }));
-        }
-    }
-
-    // ── BACKTRACK EXCLUSION FILTER: remove moves that caused violations on previous attempts ──
-    if (_btActive) {
-        for (const plan of octPlans) {
-            const xonIdx = _demoXons.indexOf(plan.xon);
-            plan.candidates = plan.candidates.filter(c => !_btIsMoveExcluded(xonIdx, c.node));
-        }
-    }
-
-    // ── CANDIDATE SNAPSHOT (post-exclusion) — mark excluded candidates ──
-    if (_btActive && _searchTraversalLog && _preExclusionCandidates) {
-        _searchLastCandidates = {};
-        for (const plan of octPlans) {
-            const xi = _demoXons.indexOf(plan.xon);
-            const remaining = new Set(plan.candidates.map(c => c.node));
-            _searchLastCandidates[xi] = (_preExclusionCandidates[xi] || []).map(c => ({
-                ...c, excluded: !remaining.has(c.node),
-            }));
-        }
-    }
-
-    // T55 enforcement: Removed — T55 live guard fires into backtracker
-
-    // ── DETERMINISTIC MATCHING ENUMERATION ──
-    // During backtrack retries, instead of rotating candidates and hoping Kuhn's
-    // produces a different matching, we enumerate ALL valid maximum-cardinality
-    // matchings and try them sequentially. This guarantees comprehensiveness.
-    if (_btActive && typeof _enumerateAllMatchings === 'function') {
-        // Enumerate all valid matchings for current candidate lists.
-        // Re-enumerate when exclusions change (ledger size differs from cached state).
-        const ledgerSize = (_btBadMoveLedger.get(_demoTick) || {size:0}).size || 0;
-        if (_btMatchingCache === null || _btMatchingCacheLedgerSize !== ledgerSize) {
-            _btMatchingCache = _enumerateAllMatchings(octPlans, planned);
-            _btMatchingIndex = 0;
-            _btMatchingCacheLedgerSize = ledgerSize;
-            _logChoreo(`ENUM: ${_btMatchingCache.length} valid matchings for tick ${_demoTick} (ledger: ${ledgerSize})`);
-        }
-        // Apply the next matching from the cache, cycling with wrap-around.
-        // Each cycle pairs matchings with a different PRNG seed (via _btRetryCount
-        // / _bfsLayerRetries), so secondary choices (idle_tet face, weak BFS,
-        // return-to-oct neighbor) explore different paths each cycle.
-        if (_btMatchingCache.length > 0) {
-            const idx = _btMatchingIndex % _btMatchingCache.length;
-            _btMatchingIndex++;
-            const matching = _btMatchingCache[idx];
-            for (let i = 0; i < octPlans.length; i++) {
-                octPlans[i].assigned = matching[i];
-            }
-        } else {
-            // Zero valid matchings (all candidates excluded) — null assignments
-            for (const plan of octPlans) plan.assigned = null;
-        }
-    } else if (_kuhnEnabled) {
-        // Normal (non-backtrack) path: Kuhn's augmenting-path matching.
-        _maxBipartiteAssignment(octPlans, planned);
-    } else {
-        // Greedy first-fit: assign each xon its best available candidate.
-        const greedyClaimed = new Set();
-        for (const plan of octPlans) {
-            plan.assigned = null;
-            for (const c of plan.candidates) {
-                if (planned.has(c.node) || greedyClaimed.has(c.node)) continue;
-                plan.assigned = c;
-                greedyClaimed.add(c.node);
-                break;
-            }
-        }
-    }
-    const octClaimed = new Set();
-    for (const plan of octPlans) {
-        if (plan.assigned) octClaimed.add(plan.assigned.node);
-    }
-
-    // ── BFS Test decision trace: capture oct matching ──
-    if (_bfsTestActive) {
-        let entry = _bfsTestDecisionTrace?.find(e => e.tick === _demoTick && e.runIdx === _bfsTestRunIdx);
-        if (!entry) {
-            if (!_bfsTestDecisionTrace) _bfsTestDecisionTrace = [];
-            entry = { tick: _demoTick, runIdx: _bfsTestRunIdx, btActive: _btActive, faceAssignments: [], octMatching: [] };
-            _bfsTestDecisionTrace.push(entry);
-        }
-        entry.octMatching = octPlans.map(p => ({
-            xonIdx: _demoXons.indexOf(p.xon),
-            from: p.fromNode,
-            to: p.assigned ? p.assigned.node : null,
-            candidateCount: p.candidates.length,
-        }));
-        entry.matchingMethod = _btActive ? 'enumerated' : (_kuhnEnabled ? 'kuhn' : 'greedy');
-        if (_btActive && _btMatchingCache) {
-            entry.totalMatchings = _btMatchingCache.length;
-            entry.matchingIdx = _btMatchingIndex;
-        }
-    }
-
-    // Verify needsOctVacate: if an oct xon was supposed to move but couldn't,
-    // convert to annihilation move (lookahead treats collisions as valid terminal states).
-    for (const plan of tetPlans) {
-        if (!plan._needsOctVacate) continue;
-        const blocker = plan._needsOctVacate;
-        const octPlan = octPlans.find(p => p.xon === blocker);
-        if (!octPlan || !octPlan.assigned) {
-            if (_annihilationEnabled) {
-                // Oct xon couldn't move — approve as annihilation instead of revoking.
-                // PHASE 4 will resolve the on-node collision via gluon storage.
-                plan._annihilateMove = true;
-            } else {
-                // Annihilation disabled — revoke this plan so escape hatch handles it.
-                plan.approved = false;
-                planned.delete(plan.toNode);
-            }
-        }
-    }
-
-    // Build a combined blocked set for idle_tet planning
-    const allBlocked = new Map(occupied);
-    for (const n of planned) _occAdd(allBlocked, n);
-    for (const n of octClaimed) _occAdd(allBlocked, n);
-    for (const plan of octPlans) {
-        if (plan.assigned) _occDel(allBlocked, plan.fromNode);
-    }
-
-    // ── COLLISION AVOIDANCE: hierarchical strategy for unassigned xons ──
-    // 1. Divert into unscheduled tet (productive work — manifest a hadron)
-    // 2. If no tet available, eject as weak particle (safety valve)
-    // This replaces the old congestion-relief / bounce-escape / idle_tet fallbacks
-    // with a single unified pass.
-    for (const plan of octPlans) {
-        if (plan.assigned || plan.idleTet) continue;
-        if (plan.xon._evictedThisTick) continue;
-        // Gluon xons must stay on the oct cage — never divert into tet loops
-        if (plan.xon._mode === 'gluon') continue;
-
-        // ── Strategy 1: Divert into tet ──
-        // Try _startIdleTetLoop first (uses Pauli-aware face selection)
-        const _savedMode = plan.xon._mode;
-        const _savedCol = plan.xon.col;
-        let diverted = false;
-        if (_startIdleTetLoop(plan.xon, allBlocked)) {
-            const dest = plan.xon._loopSeq[plan.xon._loopStep + 1];
-            const tmpCheck = new Map(allBlocked); _occAdd(tmpCheck, dest);
-            if (dest !== undefined && !allBlocked.has(dest) && _lookaheadTetPath(plan.xon._loopSeq, 1, tmpCheck, _choreoParams.lookahead, plan.xon)) {
-                plan.idleTet = true;
-                _occAdd(allBlocked, dest);
-                diverted = true;
-                _logChoreo(`X${_demoXons.indexOf(plan.xon)} collision->tet f${plan.xon._assignedFace}`);
-            } else {
-                // Rollback tet attempt
-                _relinquishFaceSCs(plan.xon);
-                plan.xon._mode = _savedMode;
-                if (_flashEnabled) plan.xon.flashT = 1.0;
-                plan.xon._loopSeq = null;
-                plan.xon._loopStep = 0;
-                plan.xon._assignedFace = null;
-                plan.xon.col = _savedCol;
-                if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(_savedCol);
-            }
-        }
-
-        // ── Strategy 2: Eject as weak particle (_t60Ejected = true) ──
-        if (!diverted) {
-            plan.xon._mode = 'weak';
-            plan.xon._t60Ejected = true;
-            plan.xon.col = WEAK_FORCE_COLOR;
-            if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-            _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
-            // Find a neighbor node to escape to
-            const nbs = _localBaseNeighbors(plan.xon.node);
-            let escaped = false;
-            for (const nb of nbs) {
-                if (allBlocked.has(nb.node)) continue;
-                if (planned.has(nb.node)) continue;
-                if (octClaimed.has(nb.node)) continue;
-                plan.assigned = { node: nb.node, dirIdx: nb.dirIdx, score: -999, _needsMaterialise: false, _scId: undefined };
-                octClaimed.add(nb.node);
-                _occAdd(allBlocked, nb.node);
-                escaped = true;
-                _logChoreo(`X${_demoXons.indexOf(plan.xon)} collision->weak n${nb.node}`);
-                break;
-            }
-            if (!escaped) {
-                _logChoreo(`X${_demoXons.indexOf(plan.xon)} STUCK: no tet, no weak escape`);
-            }
-        }
-    }
-    occupied = _occupiedNodes(); // refresh after diversions
-
-    // If idle_tet manifestation added new SCs, flag solver
-    if (_idleTetManifested) _solverNeeded = true;
-
-    // Log PHASE 2 decisions for debugging
-    _logPhase2Summary(octPlans);
-
-    // 2-step verification: Removed — backtracker handles downstream violations
-
-    } // end PHASE 2 block
-    const _pT2 = performance.now(); _profPhases.p2 += _pT2 - _pT1;
-
-    // ── PHASE 3: Execute all planned moves ──
-    // All moves execute in a single pass — simultaneous, not ordered.
-    // If an oct move fails (vacuum rejection), revoke dependent tet approvals.
-
-    // Build reverse map: oct xon → tet plan that depends on it vacating
-    const octToTetDep = new Map(); // oct xon → tet plan
-    for (const plan of tetPlans) {
-        if (plan._needsOctVacate) octToTetDep.set(plan._needsOctVacate, plan);
-    }
-
-    // Execute oct moves first (includes idle_tet advances)
-    for (const plan of octPlans) {
-        if (plan.assigned) {
-            if (plan.xon._movedThisTick) continue; // already moved (WB scatter/return) — one hop per tick
-            const target = plan.assigned;
-            const fromNode = plan.xon.node;
-            // T41 swap check: reject if another xon just moved FROM target.node TO fromNode
-            if (_swapBlocked(fromNode, target.node)) {
-                const depTet = octToTetDep.get(plan.xon);
-                if (depTet) { depTet.approved = false; planned.delete(depTet.toNode); }
-                continue;
-            }
-            _occDel(occupied, plan.xon.node);
-            const ok = _executeOctMove(plan.xon, target);
-            if (!ok) {
-                // Vacuum rejected at execution time — xon stays put
-                // Revoke any tet move that depended on this xon vacating
-                const depTet = octToTetDep.get(plan.xon);
-                if (depTet) {
-                    depTet.approved = false;
-                    planned.delete(depTet.toNode);
-                }
-            } else {
-                anyMoved = true;
-                plan.xon._movedThisTick = true; // prevent double-move in PHASE 3.5/4
-                _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
-                _traceMove(plan.xon, fromNode, plan.xon.node, 'p3oct');
-                // Immediate mode transition for xons that moved off-oct.
-                // Mode must change in the SAME tick as the move (T95: oct mode on oct nodes only).
-                if (_octNodeSet && !_octNodeSet.has(plan.xon.node)) {
-                    if (_cageCriticalXons.has(plan.xon)) {
-                        // Gluon activation: cage-critical xon moved off-cage
-                        plan.xon._mode = 'gluon';
-                        plan.xon.col = GLUON_COLOR;
-                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
-                        _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
-                    } else if (plan.xon._pendingWeakEjection) {
-                        // Pending-weak xon stepped off oct — transition immediately
-                        plan.xon._pendingWeakEjection = false;
-                        plan.xon._mode = 'weak';
-                        plan.xon._t60Ejected = true;
-                        plan.xon.col = WEAK_FORCE_COLOR;
-                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-                        _weakLifecycleEnter(plan.xon, 'pending_ejection_offcage');
-                        _logChoreo(`X${_demoXons.indexOf(plan.xon)} pending-weak → weak at node ${plan.xon.node} (off oct, immediate)`);
+                const existing = targetMap.get(m.target);
+                const mIsTet = m.xon._mode === 'tet' || m.xon._mode === 'idle_tet';
+                const existIsTet = existing.xon._mode === 'tet' || existing.xon._mode === 'idle_tet';
+                // Determine winner: tet wins over non-tet; otherwise random
+                let loser;
+                if (mIsTet && !existIsTet) {
+                    loser = existing;
+                    targetMap.set(m.target, m);
+                    approved[approved.indexOf(existing)] = m;
+                } else if (!mIsTet && existIsTet) {
+                    loser = m;
+                } else {
+                    // Same priority — random
+                    if (_sRng() < 0.5) {
+                        loser = existing;
+                        targetMap.set(m.target, m);
+                        approved[approved.indexOf(existing)] = m;
+                    } else {
+                        loser = m;
                     }
                 }
-                if (plan.xon._solverNeeded) {
-                    _solverNeeded = true;
-                    plan.xon._solverNeeded = false;
+                // Give loser an alternative free base neighbor
+                const nbs = baseNeighbors[loser.xon.node] || [];
+                let alt = null;
+                for (const nb of nbs) {
+                    if ((occupied.get(nb.node) || 0) > 0) continue;
+                    if (allTargets.has(nb.node)) continue;
+                    if (nb.node === loser.xon.prevNode) continue;
+                    alt = nb.node;
+                    break;
                 }
+                if (alt != null) {
+                    loser.target = alt;
+                    loser.scNeeded = null;
+                    targetMap.set(alt, loser);
+                    allTargets.add(alt);
+                    approved.push(loser);
+                }
+                // else: truly stuck — T20 backtracker handles
             }
-            _occAdd(occupied, plan.xon.node);
-        } else if (plan.idleTet) {
-            // Verify SC is still active (may have been severed by oct move negotiation)
-            if (!_canAdvanceSafely(plan.xon)) {
-                _returnXonToOct(plan.xon, occupied); // abort idle_tet — SC was deactivated
-                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
-                continue;
-            }
-            // Pauli check: destination may have become occupied since planning
-            const effectiveStep = plan.xon._loopStep >= 4 ? 0 : plan.xon._loopStep;
-            const idleDest = plan.xon._loopSeq[effectiveStep + 1];
-            if (idleDest !== undefined && (occupied.get(idleDest) || 0) > 0) {
-                _returnXonToOct(plan.xon, occupied); // destination occupied — return to oct
-                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
-                continue;
-            }
-            // T41 swap check: reject if another xon just moved FROM idleDest TO xon.node
-            if (idleDest !== undefined && _swapBlocked(plan.xon.node, idleDest)) {
-                _returnXonToOct(plan.xon, occupied); // would swap — return to oct
-                plan.xon._evictedThisTick = true;    // safety eviction (T52 exempt)
-                continue;
-            }
-            const fromNode = plan.xon.node;
-            _occDel(occupied, plan.xon.node);
-            _advanceXon(plan.xon);
-            _occAdd(occupied, plan.xon.node);
-            _moveRecord.set(plan.xon.node, fromNode); // T41: record idle_tet move
-            _traceMove(plan.xon, fromNode, plan.xon.node, 'p3idle');
-
-            anyMoved = true;
         }
+        moves.length = 0;
+        moves.push(...approved);
     }
 
-    // Execute approved tet moves
-    for (const plan of tetPlans) {
-        if (!plan.approved) continue;
-        // Final Pauli safety check before executing
-        if ((occupied.get(plan.toNode) || 0) > 0) {
-            if (!plan._annihilateMove) continue; // destination still occupied — skip to prevent collision
-            // Annihilation move: allow advance into occupied node ONLY if occupant is non-weak.
-            // Weak xons are protected from non-local annihilation (T38).
-            const occupant = _demoXons.find(x => x.alive && x.node === plan.toNode && x !== plan.xon);
-            if (occupant && occupant._mode === 'weak') continue; // don't collide with returning weak xon
-        }
-        // T41 swap check: reject if any xon just moved FROM plan.toNode TO plan.xon.node
-        if (_swapBlocked(plan.xon.node, plan.toNode)) continue;
-        // Verify SC is still active (may have been severed by oct move negotiation)
-        if (!_canAdvanceSafely(plan.xon)) continue;
-        const tetFrom = plan.xon.node;
-        _advanceXon(plan.xon);
-        _occDel(occupied, plan.xon.prevNode);
-        _occAdd(occupied, plan.xon.node);
-        _moveRecord.set(plan.xon.node, tetFrom); // T41: record tet move
-        _traceMove(plan.xon, tetFrom, plan.xon.node, 'p3tet');
+    // ── EXECUTE ALL MOVES ──
+    for (const m of moves) {
+        const xon = m.xon;
+        const from = xon.node;
 
+        // SC materialization via vacuum negotiation
+        if (m.scNeeded != null) {
+            if (!canMaterialiseQuick(m.scNeeded)) {
+                if (!excitationSeverForRoom(m.scNeeded)) {
+                    continue; // vacuum rejected — skip this move
+                }
+            }
+            // Materialize the SC
+            xonImpliedSet.add(m.scNeeded);
+            _scAttribution.set(m.scNeeded, { reason: 'traversal', xonIdx: _demoXons.indexOf(xon), tick: _demoTick });
+            _solverNeeded = true;
+            stateVersion++;
+        }
+
+        // Also check if the edge between from→target has an SC that needs activation
+        // (for oct moves on cage SCs that are somehow not in any set)
+        const pid = pairId(from, m.target);
+        const edgeSC = scPairToId.get(pid);
+        if (edgeSC != null && edgeSC !== m.scNeeded) {
+            const isBase = baseNeighbors[from] && baseNeighbors[from].some(n => n.node === m.target);
+            if (!isBase && !activeSet.has(edgeSC) && !impliedSet.has(edgeSC) && !xonImpliedSet.has(edgeSC)) {
+                if (canMaterialiseQuick(edgeSC)) {
+                    xonImpliedSet.add(edgeSC);
+                    _scAttribution.set(edgeSC, { reason: 'traversal', xonIdx: _demoXons.indexOf(xon), tick: _demoTick });
+                    _solverNeeded = true;
+                    stateVersion++;
+                }
+            }
+        }
+
+        // Execute the move
+        xon.prevNode = from;
+        xon.node = m.target;
+        xon._movedThisTick = true;
         anyMoved = true;
-    }
 
-    // ── Stuck tet ejection: eject as weak particle instead of staying stuck ──
-    // If a tet/idle_tet xon couldn't move this tick (plan unapproved, blocked,
-    // or vacuum-rejected), eject it as a weak particle with _mayReturn so it
-    // can navigate back to the oct cage and re-enter the nucleus later.
-    for (const plan of tetPlans) {
-        if (plan.xon._movedThisTick) continue; // already moved — no problem
-        if (plan.xon.node !== plan.fromNode) continue; // moved successfully
-        // This tet xon is stuck — eject as weak particle
-        const xi = _demoXons.indexOf(plan.xon);
-        _logChoreo(`X${xi} tet stuck at n${plan.fromNode} (${plan.approved ? 'approved but blocked' : 'unapproved'}) → ejecting as weak`);
-        _relinquishFaceSCs(plan.xon);
-        _clearModeProps(plan.xon);
-        plan.xon._mode = 'weak';
-        plan.xon._t60Ejected = true;
-        plan.xon._assignedFace = null;
-        plan.xon._loopSeq = null;
-        plan.xon._loopStep = 0;
-        plan.xon._quarkType = null;
-        plan.xon.col = WEAK_FORCE_COLOR;
-        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-        _weakLifecycleEnter(plan.xon, 'tet_stuck_ejection');
-        // Try to move to a free neighbor so T20 doesn't fire
-        const stuckNbs = baseNeighbors[plan.xon.node] || [];
-        for (const nb of stuckNbs) {
-            if ((occupied.get(nb.node) || 0) > 0) continue;
-            if (_swapBlocked(plan.xon.node, nb.node)) continue;
-            const fromStuck = plan.xon.node;
-            _occDel(occupied, plan.xon.node);
-            plan.xon.prevNode = plan.xon.node;
-            plan.xon.node = nb.node;
-            // Proxy may have blocked — verify
-            if (plan.xon.node !== nb.node) { _occAdd(occupied, plan.xon.node); continue; }
-            _occAdd(occupied, nb.node);
-            plan.xon._movedThisTick = true;
-            _moveRecord.set(nb.node, fromStuck);
-            _traceMove(plan.xon, fromStuck, nb.node, 'tetStuckEject');
-            plan.xon.tweenT = 0;
-            anyMoved = true;
-            break;
+        // Update direction balance
+        if (xon._dirBalance) {
+            const dirIdx = baseNeighbors[from] ?
+                (baseNeighbors[from].find(n => n.node === m.target) || {}).dirIdx : undefined;
+            if (dirIdx != null && dirIdx < xon._dirBalance.length) {
+                xon._dirBalance[dirIdx]++;
+            }
         }
-    }
+        // Update mode stats
+        if (xon._modeStats) xon._modeStats[xon._mode] = (xon._modeStats[xon._mode] || 0) + 1;
 
-    const _pT3 = performance.now(); _profPhases.p3 += _pT3 - _pT2;
-    _pT5 = _pT3; // PHASE 3b/4/5 removed — bridge profiling timer to solver
+        // Record move trace for backtracker diagnostics
+        _moveTrace.push({ xonIdx: _demoXons.indexOf(xon), from, to: m.target, mode: xon._mode });
+        _moveRecord.set(m.target, from);
 
-    // PHASE 3b: Removed — backtracker handles stuck oct xons via rewind
-
-    // PHASE 3.5: Removed — PHASE 0.5 handles all weak xon movement
-
-    // ── PENDING WEAK EJECTION: transition xons that stepped off oct ──
-    // A xon with _pendingWeakEjection stays in oct mode until it physically
-    // lands on a non-oct node. Only THEN does it become weak.
-    for (const xon of _demoXons) {
-        if (!xon.alive || !xon._pendingWeakEjection) continue;
-        const onOct = _octNodeSet && _octNodeSet.has(xon.node);
-        if (!onOct) {
-            // Stepped off oct — now transition to weak
-            const xi = _demoXons.indexOf(xon);
-            _logChoreo(`X${xi} pending-weak → weak at node ${xon.node} (off oct)`);
-            xon._pendingWeakEjection = false;
-            xon._mode = 'weak';
-            xon._t60Ejected = true;
-            xon.col = WEAK_FORCE_COLOR;
-            if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
-            _weakLifecycleEnter(xon, 'pending_ejection_offcage');
+        // Advance tet loop step
+        if (xon._mode === 'tet' || xon._mode === 'idle_tet') {
+            xon._loopStep = (xon._loopStep + 1) % 5;
+            // Check if tet is actualized for quark counting
+            if (xon._assignedFace != null && _nucleusTetFaceData) {
+                const fd = _nucleusTetFaceData[xon._assignedFace];
+                if (fd) {
+                    const actualized = fd.scIds.every(scId =>
+                        activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+                    if (actualized) {
+                        _tetActualized = true;
+                        if (_demoOctRevealed) _ticksSinceLastQuark = 0;
+                    }
+                }
+            }
+            // Loop completion (step wrapped to 0 from 4)
+            if (xon._loopStep === 0) {
+                // Return to oct if on oct node, else become weak
+                _relinquishFaceSCs(xon);
+                if (_octNodeSet && _octNodeSet.has(xon.node)) {
+                    _clearModeProps(xon);
+                    xon._mode = 'oct';
+                    xon.col = 0xffffff;
+                    if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                } else {
+                    _clearModeProps(xon);
+                    xon._mode = 'weak';
+                    xon.col = WEAK_FORCE_COLOR;
+                    if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                    if (typeof _weakLifecycleEnter === 'function') _weakLifecycleEnter(xon, 'loop_complete_off_oct');
+                }
+            }
         }
-        // If still on oct: stays in oct mode with _pendingWeakEjection — will try again next tick
-    }
 
-    // ── POST-MOVE WEAK→OCT TRANSITION SWEEP ──
-    // Any weak xon that landed on an oct node becomes oct immediately.
-    for (const xon of _demoXons) {
-        if (!xon.alive) continue;
-        if (xon._mode !== 'weak') continue;
-        if (!(_octNodeSet && _octNodeSet.has(xon.node))) continue;
-        const xi = _demoXons.indexOf(xon);
-        _weakLifecycleExit(xon, 'post_move_oct_arrival');
-        _clearModeProps(xon);
-        xon._mode = 'oct';
+        // Weak→oct transition: if weak xon just landed on oct node
+        if (xon._mode === 'weak' && _octNodeSet && _octNodeSet.has(xon.node)) {
+            if (typeof _weakLifecycleExit === 'function') _weakLifecycleExit(xon, 'reached_oct');
+            _clearModeProps(xon);
+            xon._mode = 'oct';
+            xon._t60Ejected = false;
+            xon.col = 0xffffff;
+            if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+        }
+
+        // Gluon→oct transition: if gluon xon just landed on oct node
+        if (xon._mode === 'gluon' && _octNodeSet && _octNodeSet.has(xon.node)) {
+            _clearModeProps(xon);
+            xon._mode = 'oct';
+            xon.col = 0xffffff;
+            if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+        }
+
+        // Start tween animation
+        xon.tweenT = 0;
         if (_flashEnabled) xon.flashT = 1.0;
-        xon.col = 0xffffff;
-        if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
     }
 
-    // ── POST-EXECUTION PAULI CHECK (replaces PHASE 4) ──
-    // If planning was correct, no collisions exist. If one slipped through, trigger backtrack.
-    // Post-exec Pauli check: enforced in both demo and tournament mode.
+    // Refresh occupied map after all moves
+    occupied = _occupiedNodes();
+
+    // ── POST-EXECUTION PAULI CHECK ──
     {
         const _p4occ = new Map();
         for (const xon of _demoXons) {
@@ -3284,9 +2474,6 @@ async function demoTick() {
         }
     }
 
-    // Final safety net: Removed — backtracker handles stuck xons via rewind
-
-    // PHASE 5: Removed — backtracker is the universal deadlock handler (see t=0 canary)
     } // end !_skipNormalPhases
 
     // ── Advance gluons along oct edges (also negotiates with vacuum) ──
