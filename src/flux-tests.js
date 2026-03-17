@@ -1333,7 +1333,6 @@ const LIVE_GUARD_REGISTRY = [
       id: 'T90', name: 'First-place quark ejection',
       init: { _leaderTicks: null, _leaderValue: null },
       projected(states) {
-        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (!_nucleusTetFaceData) return null;
         const g = _liveGuards['T90'];
         if (!g || !g._leaderTicks) return null;
@@ -1390,7 +1389,6 @@ const LIVE_GUARD_REGISTRY = [
         }
       },
       check(tick, g) {
-        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._leaderTicks || !_nucleusTetFaceData) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
@@ -1421,7 +1419,6 @@ const LIVE_GUARD_REGISTRY = [
       id: 'T91', name: 'First-place face ejection',
       init: { _leaderTicks: null, _leaderValue: null },
       projected(states) {
-        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (!_nucleusTetFaceData) return null;
         const g = _liveGuards['T91'];
         if (!g || !g._leaderTicks) return null;
@@ -1476,7 +1473,6 @@ const LIVE_GUARD_REGISTRY = [
         }
       },
       check(tick, g) {
-        if (typeof _ruleBareTetrahedra !== 'undefined' && !_ruleBareTetrahedra) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!g._leaderTicks || !_nucleusTetFaceData) return null;
         for (const [fIdStr, fd] of Object.entries(_nucleusTetFaceData)) {
