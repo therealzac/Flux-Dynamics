@@ -1006,26 +1006,23 @@ function _assignXonToTet(xon, face, quarkType) {
     let rotated = cycle;
     const octNodesOnFace = cycle.filter(n => _octNodeSet.has(n));
 
+    // Xon must be on one of the face's oct nodes to start a loop.
+    // If the face isn't yet actualized, xon MUST be at the pole (cycle[0])
+    // so the first step traverses the unique SC to activate the tet.
     if (!octNodesOnFace.includes(xon.node)) {
-        // Xon is NOT on this face — walk ONE HOP toward nearest face oct node.
-        const faceOctNodes = new Set(octNodesOnFace);
-        const target = _walkToFace(xon, faceOctNodes);
-        if (target === null) {
-            // Didn't reach face in one hop — abort assignment (no teleportation).
-            return;
-        }
-        // Rotate cycle so target node is in position 0
-        const [a, b, c, d] = cycle;
-        if (target === a) rotated = [a, b, c, d];
-        else if (target === c) rotated = [c, b, a, d];
-        else if (target === d) rotated = [d, b, c, a];
-    } else {
-        // Rotate cycle so xon's current node is in position 0
-        const [a, b, c, d] = cycle;
-        if (xon.node === a) rotated = [a, b, c, d];
-        else if (xon.node === c) rotated = [c, b, a, d];
-        else if (xon.node === d) rotated = [d, b, c, a];
+        return; // not on this face — can't assign
     }
+    const [a, b, c, d] = cycle;
+    const faceActualized = fd.scIds.every(scId =>
+        activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
+    if (!faceActualized && xon.node !== a) {
+        // Face needs activation — xon must be at the pole (cycle[0]) to traverse unique SC
+        return;
+    }
+    // Rotate cycle so xon's current node is in position 0
+    if (xon.node === a) rotated = [a, b, c, d];
+    else if (xon.node === c) rotated = [c, b, a, d];
+    else if (xon.node === d) rotated = [d, b, c, a];
 
     let seq = _selectBestPermutation(xon, rotated, quarkType);
 

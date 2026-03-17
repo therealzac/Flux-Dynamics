@@ -4903,6 +4903,41 @@ function _exportBfsTestResults() {
         }
     });
 
+    // ── Quark Test Button ──
+    document.getElementById('btn-quark-test')?.addEventListener('click', async function(){
+        if (_sweepActive || _bfsTestActive || _demoActive) return;
+        // Set quark-forcing rules
+        T79_MAX_FULL_TICKS = 1;
+        OCT_CAPACITY_MAX = 6;
+        _ruleTicksPerQuark = 12;
+        _ruleMaxOctPerXon = 12;
+        _ruleAdaptiveEjection = false;
+        _ruleCubeRootEjection = false;
+        _ruleRelinquishSCs = false;
+        _ruleBareTetrahedra = false;
+        _ruleProjectedGuards = true;
+        _ruleT20StrictMode = true;
+        // Sync UI sliders
+        const _syncSlider = (id, val) => { const el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } };
+        _syncSlider('rule-oct-full-slider', 1);
+        _syncSlider('rule-oct-capacity-slider', 6);
+        _syncSlider('rule-ticks-per-quark-slider', 12);
+        _syncSlider('rule-max-oct-per-xon-slider', 12);
+        const _syncCheck = (id, val) => { const el = document.getElementById(id); if (el) { el.checked = val; el.dispatchEvent(new Event('change')); } };
+        _syncCheck('rule-adaptive-ejection-toggle', false);
+        _syncCheck('rule-cuberoot-ejection-toggle', false);
+        _syncCheck('rule-bare-tet-toggle', false);
+        _syncCheck('rule-tight-space-toggle', false);
+        _syncCheck('rule-projected-guards-toggle', true);
+        _syncCheck('rule-t20-strict-toggle', true);
+        // Clear IDB cache for this ruleset
+        const lvl = +(document.getElementById('lattice-slider')?.value || 2);
+        if (typeof _autosaveIDBClear === 'function') await _autosaveIDBClear(lvl);
+        console.log('%c[QUARK TEST] Rules set, cache cleared — starting sweep', 'color:#ffcc00;font-weight:bold');
+        // Start sweep
+        if (typeof startSweepTest === 'function') startSweepTest(lvl);
+    });
+
     // ── Test Replay Button ──
     document.getElementById('btn-test-replay')?.addEventListener('click', function(){
         // Clear any previous test state

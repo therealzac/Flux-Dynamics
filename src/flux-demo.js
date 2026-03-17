@@ -2049,11 +2049,12 @@ async function demoTick() {
             if (!xon.alive) continue;
             if (xon._mode !== 'tet' && xon._mode !== 'idle_tet') continue;
 
-            // T60 check: face must be actualized every step.
-            // If the vacuum withdrew support (severed a face SC), switch to weak mode.
-            // Recolor existing trail segments to purple — no colored trail without an actualized tet.
-            // Don't physically move — PHASE 0.5 handles weak xon movement.
+            // T60 check: face must be actualized — but allow step 0 (xon at pole,
+            // about to traverse the unique SC that activates the tet).
+            // If the vacuum withdrew support (severed a face SC mid-loop), switch to weak.
             if (xon._assignedFace != null && _nucleusTetFaceData) {
+                // Skip T60 at step 0 — the xon hasn't traversed the unique SC yet
+                if (xon._loopStep === 0) continue;
                 const fd60 = _nucleusTetFaceData[xon._assignedFace];
                 const faceActualized = fd60 && fd60.scIds.every(scId =>
                     activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));

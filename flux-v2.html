@@ -365,7 +365,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-3cd42d3</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-6a54755</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -530,8 +530,11 @@
                 <select id="council-replay-select" style="flex:1; font-size:11px; padding:6px 8px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.15); color:#ccc; border-radius:4px;"></select>
                 <button class="btn-primary" id="btn-simulate-nucleus" style="flex:1;">&#9654;</button>
                 <button class="btn-secondary" id="btn-test-replay"
-                    style="flex:0 0 auto; padding:7px 10px; font-size:12px;"
-                    title="Test replay integrity (record → save → reload → replay with guards)">&#x1F9EA;</button>
+                    style="flex:0 0 auto; padding:7px 10px; font-size:10px;"
+                    title="Test replay integrity (record → save → reload → replay with guards)">Test replay</button>
+                <button class="btn-secondary" id="btn-quark-test"
+                    style="flex:0 0 auto; padding:7px 10px; font-size:11px; color:#ffcc00;"
+                    title="Quark test: sweep with strict quark rules (clears cache)">Q</button>
             </div>
             <!-- Auto-retry best + autosave interval -->
             <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
@@ -770,9 +773,9 @@
     <script src="src/flux-demo-state.js?v=117"></script>
     <script src="src/flux-demo-xon.js?v=25"></script>
     <script src="src/flux-demo-backtrack.js?v=64"></script>
-    <script src="src/flux-demo-planner.js?v=44"></script>
+    <script src="src/flux-demo-planner.js?v=45"></script>
     <script src="src/flux-demo-ui.js?v=166"></script>
-    <script src="src/flux-demo.js?v=520"></script>
+    <script src="src/flux-demo.js?v=521"></script>
     <script src="src/flux-solver-render.js?v=44"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -780,7 +783,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=41"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=408"></script>
+    <script src="src/flux-tests.js?v=409"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.
