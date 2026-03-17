@@ -1207,6 +1207,7 @@ function rebuildShortcutLines(){
         if (!desired.has(id)) {
             scene.remove(scLineObjs[id].line);
             scLineObjs[id].line.geometry.dispose();
+            scLineObjs[id].line.material.dispose();
             delete scLineObjs[id];
         }
     }
