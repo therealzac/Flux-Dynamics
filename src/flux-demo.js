@@ -1832,6 +1832,10 @@ async function demoTick() {
         // Guard snapshot BEFORE restore (mirrors live: snapshot → moves → check)
         if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
         _btRestoreSnapshot(snap);
+        // Replace raw IDB snapshot with live-format snapshot so autosave
+        // doesn't encounter undeserialized data. By replay end, all entries
+        // in _btSnapshots are in the correct Sets/Maps format.
+        _btSnapshots[_replayCursor] = _btCreateSnapshot();
         _replayCursor++;
         simHalted = false;
         // Apply tet coloring BEFORE guards — T58 reads _ruleAnnotations
