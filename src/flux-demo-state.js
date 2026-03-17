@@ -3,8 +3,8 @@
 // ── Visual defaults (single source of truth) ────────────────────────────
 // Applied once when user clicks play, and for council replay init.
 const DEMO_VISUAL_DEFAULTS = [
-    ['sphere-opacity-slider', 1], ['void-opacity-slider', 13],
-    ['graph-opacity-slider', 1], ['trail-opacity-slider', 100],
+    ['sphere-opacity-slider', 3], ['void-opacity-slider', 13],
+    ['graph-opacity-slider', 13], ['trail-opacity-slider', 100],
     ['spark-opacity-slider', 100],
     ['brane-opacity-slider', 0], ['wf-opacity-slider', 0],
     ['bg-gray-slider', 0],
