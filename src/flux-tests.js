@@ -3824,9 +3824,11 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         do { seed = (Math.random() * 0xFFFFFFFF) >>> 0; } while (_sweepUsedSeeds.has(seed) || seed === 0);
         _sweepUsedSeeds.add(seed);
 
-        // Council replay: override seed with the member's seed
+        // Council replay: use member's snapshots but a NEW seed for live play.
+        // The saved snapshots are deterministic (recorded state, not re-simulated),
+        // so the seed only affects live play after snapshots end. New seed = new
+        // stochastic choices at the failure point = maximum exploration diversity.
         const replayMember = _replayOnFirstSeed || null;
-        if (replayMember) seed = replayMember.seed;
 
         await startSweepSeed(seed, replayMember, lvl, _startupLog);
 
