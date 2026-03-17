@@ -2002,6 +2002,7 @@ async function demoTick() {
             occupied = _occupiedNodes(); // refresh after opening moves
         } else {
             _openingPhase = false;
+            _demoOctRevealed = true; // Oct formed — enable oct-dependent guards (T96)
         }
     }
 
