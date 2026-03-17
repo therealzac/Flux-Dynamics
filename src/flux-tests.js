@@ -1046,16 +1046,21 @@ const LIVE_GUARD_REGISTRY = [
         if (tick < 20) return null;
         if (g.ok === true) return null; // already verified
         if (!_btSnapshots || _btSnapshots.length < 2) return null;
-        // Check monotonicity
+        // Check contiguous path from t=0 to t=current:
+        // 1. First snapshot must be tick 0
+        if (_btSnapshots[0].tick !== 0) {
+          return `first snapshot tick=${_btSnapshots[0].tick}, expected 0`;
+        }
+        // 2. Strictly monotonic (no duplicates, no gaps in ordering)
         for (let i = 1; i < _btSnapshots.length; i++) {
           if (_btSnapshots[i].tick <= _btSnapshots[i - 1].tick) {
             return `snapshot[${i}].tick=${_btSnapshots[i].tick} <= snapshot[${i-1}].tick=${_btSnapshots[i-1].tick}`;
           }
         }
-        // Check last snapshot tick matches _demoTick - 1
+        // 3. Last snapshot must reach at least the current tick's pre-state
         const last = _btSnapshots[_btSnapshots.length - 1];
-        if (last.tick !== _demoTick - 1) {
-          return `last snapshot tick=${last.tick} != _demoTick-1=${_demoTick - 1}`;
+        if (last.tick < _demoTick - 1) {
+          return `last snapshot tick=${last.tick} < _demoTick-1=${_demoTick - 1} — gap in history`;
         }
         // All good — promote to green
         g.ok = true; g.msg = '';

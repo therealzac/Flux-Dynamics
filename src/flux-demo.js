@@ -1088,8 +1088,10 @@ function _tickDemoXons(dt) {
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
-            // Color from unified entry
-            const segCol = _roleToColor(_te.role);
+            // Color from next entry (destination) so segments show the move's role,
+            // not the origin's. Matches Catmull-Rom path which uses e2.role.
+            const _teNext = (vi < bodyLen - 1) ? xon.trail[startIdx + vi + 1] : _te;
+            const segCol = _roleToColor(_teNext.role);
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
