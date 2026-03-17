@@ -377,6 +377,11 @@ window.addEventListener('keydown',e=>{
     if(e.key === 'c' || e.key === 'C'){
         console.log(`[CAMERA] sph={theta:${sph.theta.toFixed(4)}, phi:${sph.phi.toFixed(4)}, r:${sph.r.toFixed(4)}} panTarget={x:${panTarget.x.toFixed(4)}, y:${panTarget.y.toFixed(4)}, z:${panTarget.z.toFixed(4)}}`);
     }
+    if(e.key === ' ' && _demoActive){
+        e.preventDefault();
+        if(typeof _demoPaused !== 'undefined' && _demoPaused) { if(typeof resumeDemo === 'function') resumeDemo(); }
+        else { if(typeof pauseDemo === 'function') pauseDemo(); }
+    }
 });
 
 // DEFERRED to init block in flux-v2.html (depends on functions from flux-voids.js)

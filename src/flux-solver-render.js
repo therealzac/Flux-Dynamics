@@ -1201,6 +1201,7 @@ function rebuildShortcutLines(){
     const desired = new Set();
     activeSet.forEach(id => desired.add(id));
     impliedSet.forEach(id => desired.add(id));
+    if (typeof xonImpliedSet !== 'undefined') xonImpliedSet.forEach(id => desired.add(id));
     // Remove lines for SCs no longer in desired set
     for (const k in scLineObjs) {
         const id = +k;
@@ -1234,6 +1235,42 @@ function rebuildShortcutLines(){
             const geo=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...pos[s.a]),new THREE.Vector3(...pos[s.b])]);
             const line=new THREE.Line(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:false};
             scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:false};
+        }
+    });
+    // Render xonImpliedSet SCs not in activeSet or impliedSet (same style as implied)
+    if (typeof xonImpliedSet !== 'undefined') xonImpliedSet.forEach(id => {
+        if (activeSet.has(id) || impliedSet.has(id)) return; // handled below
+        const s=SC_BY_ID[id];
+        const isVoid = _voidOctSCs.has(id);
+        const baseCol = isVoid ? VOID_OCT_COLOR
+            : _ruleAnnotations.scColors.has(id) ? _ruleAnnotations.scColors.get(id) : S_COLOR[s.stype];
+        const r=((baseCol>>16)&0xff),g_c=((baseCol>>8)&0xff),b_c=baseCol&0xff;
+        const grey=Math.round(r*0.3+g_c*0.3+b_c*0.3);
+        const col=((Math.round(r*0.5+grey*0.5))<<16)|((Math.round(g_c*0.5+grey*0.5))<<8)|Math.round(b_c*0.5+grey*0.5);
+        const opac = _ruleAnnotations.scOpacity.has(id) ? _ruleAnnotations.scOpacity.get(id) * 0.55 : graphOpacity * 0.55;
+        const existing = scLineObjs[id];
+        if (existing && existing.implied) {
+            const pa_v = pos[s.a], pb_v = pos[s.b];
+            const arr = existing.line.geometry.attributes.position.array;
+            const SEGS = 7;
+            for(let i=0;i<SEGS;i++){
+                const t0=i/SEGS, t1=(i+0.45)/SEGS;
+                const idx = i * 6;
+                arr[idx]  =pa_v[0]+(pb_v[0]-pa_v[0])*t0; arr[idx+1]=pa_v[1]+(pb_v[1]-pa_v[1])*t0; arr[idx+2]=pa_v[2]+(pb_v[2]-pa_v[2])*t0;
+                arr[idx+3]=pa_v[0]+(pb_v[0]-pa_v[0])*t1; arr[idx+4]=pa_v[1]+(pb_v[1]-pa_v[1])*t1; arr[idx+5]=pa_v[2]+(pb_v[2]-pa_v[2])*t1;
+            }
+            existing.line.geometry.attributes.position.needsUpdate = true;
+            existing.mat.color.setHex(col); existing.mat.opacity = opac;
+            existing.baseColor = col;
+        } else {
+            if (existing) { scene.remove(existing.line); existing.line.geometry.dispose(); }
+            const pa=new THREE.Vector3(...pos[s.a]),pb=new THREE.Vector3(...pos[s.b]);
+            const pts=[]; const SEGS=7;
+            for(let i=0;i<SEGS;i++){ const t0=i/SEGS,t1=(i+0.45)/SEGS; pts.push(pa.clone().lerp(pb,t0),pa.clone().lerp(pb,t1)); }
+            const mat=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:opac,depthTest:false});
+            const geo=new THREE.BufferGeometry().setFromPoints(pts);
+            const line=new THREE.LineSegments(geo,mat); line.renderOrder=11; line.userData={scId:id,implied:true};
+            scene.add(line); scLineObjs[id]={line,mat,baseColor:col,implied:true};
         }
     });
     impliedSet.forEach(id=>{

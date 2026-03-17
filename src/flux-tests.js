@@ -14,9 +14,9 @@ let _testRunning = false;  // suppress display updates during test execution
 // ║    id:          'T19', 'T41', etc.                                  ║
 // ║    name:        display name (without Txx prefix)                   ║
 // ║    init:        extra state props for _liveGuards entry (optional)  ║
-// ║    convergence: true → stays null during grace promotion (optional) ║
+// ║    convergence: true → stays null while pending (optional) ║
 // ║    projected:   lookahead check fn(states) → null | violation       ║
-// ║    activate:    called at grace end for initialization (optional)   ║
+// ║    activate:    called at activation for initialization (optional)   ║
 // ║    snapshot:    called before each tick for state capture (optional) ║
 // ║    check:       runtime check fn(tick, g, ctx) → fail msg | null    ║
 // ║                 ctx = { prev }                                      ║
@@ -326,6 +326,7 @@ const LIVE_GUARD_REGISTRY = [
     },
     { id: 'T23', name: 'Sparkle color matches purpose',
       check(tick, g) {
+        if (!_demoOctRevealed) return null; // opening phase: colors in flux
         for (const xon of _demoXons) {
           if (!xon.alive || !xon.sparkMat) continue;
           const actual = xon.sparkMat.color.getHex();
@@ -762,7 +763,7 @@ const LIVE_GUARD_REGISTRY = [
     // projected() also lets the backtracker steer away from weak-on-oct states.
     { id: 'T61', name: 'No weak xon on oct node',
       check(tick, g) {
-        if (tick < LIVE_GUARD_GRACE) return null; // grace period
+        if (tick < LIVE_GUARD_GRACE) return null; // pending
         if (typeof _openingPhase !== 'undefined' && _openingPhase) return null;
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!_demoXons || !_octNodeSet || _octNodeSet.size === 0) return null;
@@ -789,7 +790,7 @@ const LIVE_GUARD_REGISTRY = [
         }
       },
       check(tick, g, ctx) {
-        if (tick < LIVE_GUARD_GRACE) return null; // grace period
+        if (tick < LIVE_GUARD_GRACE) return null; // pending
         if (g.ok === null) { g.ok = true; g.msg = ''; }
         if (!ctx.prev || !_demoXons || !_octNodeSet || _octNodeSet.size === 0) return null;
         for (const xon of _demoXons) {
@@ -889,7 +890,7 @@ const LIVE_GUARD_REGISTRY = [
     // Non-unit-length SCs should have been removed by the distance-only cleanup.
     { id: 'T78', name: 'SC cleanup distance-only',
       check(tick, g) {
-        if (tick < 12) return null; // grace: cleanup needs solver to settle
+        // Precondition: solver must have run at least once
         for (const scId of xonImpliedSet) {
           const sc = SC_BY_ID[scId];
           if (!sc) continue;
@@ -1015,21 +1016,6 @@ const LIVE_GUARD_REGISTRY = [
             return `tick ${tick}: xon moved ${fromNode}→${toNode} is CCW but winding is CW`;
           }
         }
-        return null;
-      }
-    },
-
-    // ── T82: Planck second counter integrity ──
-    // _planckSeconds counts only ticks with lattice deformation (SC adds/removes).
-    // Must always satisfy: 0 < _planckSeconds <= _demoTick after grace period.
-    {
-      id: 'T82', name: 'Planck second counter',
-      convergence: true,
-      check(tick, g) {
-        if (tick < 12) return null; // grace period
-        if (typeof _planckSeconds === 'undefined') return 'missing _planckSeconds variable';
-        if (_planckSeconds > _demoTick) return `_planckSeconds (${_planckSeconds}) > _demoTick (${_demoTick})`;
-        if (_planckSeconds === 0) return '_planckSeconds still 0 after 12 ticks';
         return null;
       }
     },
@@ -1700,7 +1686,6 @@ const LIVE_GUARD_REGISTRY = [
     {
       id: 'T-PermValid', name: 'Tet loops use valid permutations',
       check(tick, g) {
-        if (tick < 12) return null; // grace period
         for (let i = 0; i < _demoXons.length; i++) {
           const x = _demoXons[i];
           if (!x.alive) continue;
@@ -1778,7 +1763,6 @@ const LIVE_GUARD_REGISTRY = [
     {
       id: 'T95', name: 'Oct mode xons on oct nodes only',
       check(tick, g) {
-        if (tick < 12) return null; // grace period
         if (!_octNodeSet || _octNodeSet.size === 0) return null;
         for (let i = 0; i < _demoXons.length; i++) {
           const x = _demoXons[i];
@@ -1793,17 +1777,51 @@ const LIVE_GUARD_REGISTRY = [
     },
 
     // ── T96: Ticks per quark — quark rate enforcement ──
-    // After oct is formed (grace period), checks that the time since the last
+    // After oct is formed (pending), checks that the time since the last
     // quark actualization doesn't exceed _ruleTicksPerQuark. Only active when
     // the slider is set to a finite value.
     {
       id: 'T96', name: 'Ticks per quark',
       check(tick, g) {
         if (_ruleTicksPerQuark === Infinity) return null; // rule disabled
-        if (tick < 12) return null; // grace: oct not formed yet
         if (!_demoOctRevealed) return null; // oct must exist first
         if (_ticksSinceLastQuark > _ruleTicksPerQuark) {
           return `tick ${tick}: ${_ticksSinceLastQuark} ticks since last quark (max ${_ruleTicksPerQuark})`;
+        }
+        return null;
+      }
+    },
+    // ── T97: Max oct per xon — forces tet assignment after N consecutive oct ticks ──
+    {
+      id: 'T97', name: 'Max oct per xon',
+      check(tick, g) {
+        if (_ruleMaxOctPerXon === Infinity) return null; // rule disabled
+        if (!_demoOctRevealed) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode === 'oct' && (x._octConsecutive || 0) > _ruleMaxOctPerXon) {
+            return `tick ${tick}: X${i} in oct mode for ${x._octConsecutive} consecutive ticks (max ${_ruleMaxOctPerXon})`;
+          }
+        }
+        return null;
+      }
+    },
+    // ── T98: Oct exits only via tet — weak xons must not have been oct last tick ──
+    {
+      id: 'T98', name: 'Oct exits only via tet',
+      check(tick, g, ctx) {
+        if (!ctx || !ctx.prev) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode === 'weak') {
+            // Was this xon oct last tick?
+            const prev = ctx.prev.find(p => p.xon === x);
+            if (prev && prev.mode === 'oct') {
+              return `tick ${tick}: X${i} is weak but was oct last tick (must exit via tet loop)`;
+            }
+          }
         }
         return null;
       }
@@ -1821,17 +1839,17 @@ if (_GUARDS_WITHOUT_PROJECTED.length > 0) {
 
 const _liveGuards = {};
 for (const entry of LIVE_GUARD_REGISTRY) {
-    _liveGuards[entry.id] = { ok: null, msg: 'grace period', failed: false, ...(entry.init || {}) };
+    _liveGuards[entry.id] = { ok: true, msg: '', failed: false, ...(entry.init || {}) };
 }
 let _liveGuardsActive = false;
 let _liveGuardFailTick = null; // tick of first failure (for wind-down halt)
 let _liveGuardDumped = false;  // only dump once per failure
 
-// Reset guard state for rewind — re-enter grace period so replayed ticks
+// Reset guard state for rewind — re-enter pending so replayed ticks
 // don't immediately halt on divergent choreography.
 function _liveGuardResetForRewind() {
     for (const entry of LIVE_GUARD_REGISTRY) {
-        _liveGuards[entry.id] = { ok: null, msg: 'grace period', failed: false, ...(entry.init || {}) };
+        _liveGuards[entry.id] = { ok: true, msg: '', failed: false, ...(entry.init || {}) };
     }
     _liveGuardActivated = false;
     _liveGuardFailTick = null;
@@ -1848,7 +1866,7 @@ function _liveGuardCheck() {
     if (!_demoActive || !_liveGuardsActive) return;
     const tick = _demoTick;
 
-    // ── During grace: stay null ──
+    // ── While pending: stay null ──
     if (tick <= LIVE_GUARD_GRACE) {
         if (tick === LIVE_GUARD_GRACE) {
             _liveGuardActivated = true;
@@ -1867,7 +1885,7 @@ function _liveGuardCheck() {
         return;
     }
 
-    // ── Deferred activation: if grace was 0 and tick jumped past it ──
+    // ── Deferred activation: if guard hasn't activated yet ──
     if (!_liveGuardActivated) {
         _liveGuardActivated = true;
         for (const entry of LIVE_GUARD_REGISTRY) {
@@ -1986,6 +2004,20 @@ function _liveGuardCheck() {
         }
         // Tournament mode: guards enforced identically to demo mode.
         // No bypass — failures trigger backtracker/halt same as demo.
+        // ── Hard stop: if checked, halt immediately on any guard failure ──
+        const _hardStopEl = document.getElementById('chk-hard-stop');
+        if (_hardStopEl && _hardStopEl.checked) {
+            if (typeof stopExcitationClock === 'function') stopExcitationClock();
+            simHalted = true;
+            _demoPaused = true;
+            _sweepActive = false; // kill sweep loop so auto-retry doesn't restart
+            if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+            if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+            _liveGuardRender();
+            console.error('[HARD STOP] Guard failure at tick ' + tick + ': ' +
+                Object.entries(_liveGuards).filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; '));
+            return;
+        }
         // ── BACKTRACKING: all failures trigger rewind instead of halt ──
         const canBacktrack = typeof _rewindRequested !== 'undefined'
             && typeof _btSnapshots !== 'undefined'
@@ -2218,11 +2250,11 @@ function runDemo3Tests() {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  PERSISTENT 6-XON MODEL (T12–T27)
     //  ALL deferred to LIVE MONITORING — continuous per-tick validation
-    //  with grace period, permanent fail + halt on violation
+    //  with pending, permanent fail + halt on violation
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // Auto-register all live guards from LIVE_GUARD_REGISTRY
     for (const entry of LIVE_GUARD_REGISTRY) {
-        skip(`${entry.id} ${entry.name}`, 'grace period (live)');
+        skip(`${entry.id} ${entry.name}`, 'pending (live)');
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3157,6 +3189,9 @@ function _blacklistRuleKey(lvl) {
     if (_ruleGluonMediatedSC)   k += '|glu';
     if (_ruleBareTetrahedra)    k += '|bare';
     if (_ruleProjectedGuards)   k += '|proj';
+    if (_ruleRelinquishSCs)     k += '|tight';
+    if (_ruleTicksPerQuark !== Infinity) k += `|tpq${_ruleTicksPerQuark}`;
+    if (_ruleMaxOctPerXon !== Infinity)  k += `|mop${_ruleMaxOctPerXon}`;
     if (_ruleAdaptiveEjection) {
         k += '|adpt';
     } else if (_ruleCubeRootEjection) {

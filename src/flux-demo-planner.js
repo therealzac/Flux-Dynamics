@@ -908,18 +908,8 @@ function _traversalLockedSCs(excludeXon) {
 // Promote impliedSet-only face SCs into xonImpliedSet so they persist.
 // impliedSet is ephemeral (rebuilt each solver tick). When a xon is assigned
 // to a face, the SCs it will traverse must be in a persistent set.
-function _promoteFaceSCs(face, xon) {
-    const fd = _nucleusTetFaceData[face];
-    if (!fd) return;
-    const xi = xon ? _demoXons.indexOf(xon) : -1;
-    for (const scId of fd.scIds) {
-        if (impliedSet.has(scId) && !xonImpliedSet.has(scId) && !activeSet.has(scId)) {
-            xonImpliedSet.add(scId);
-            _scAttribution.set(scId, { reason: 'faceAssign', xonIdx: xi, face, tick: _demoTick });
-            stateVersion++;
-        }
-    }
-}
+// _promoteFaceSCs removed: no preemptive SC promotion. SCs are only
+// activated through vacuum negotiation when a xon traverses the edge.
 
 // ── Gluon-mediated SC lifecycle ─────────────────────────────────────────────
 // When _ruleGluonMediatedSC is ON, a companion gluon xon holds tet face SCs
@@ -986,51 +976,16 @@ function _assignGluon(gluonXon, face, clientXon) {
 function _releaseGluon(face) {
     if (face == null) return;
     const gluonXon = _demoXons.find(x => x.alive && x._gluonForFace === face);
-    if (!gluonXon) {
-        // No gluon bound — fall through to direct SC deletion (graceful degradation)
-        // Only delete if relinquishment is also enabled
-        if (_ruleRelinquishSCs && _nucleusTetFaceData) {
-            const fd = _nucleusTetFaceData[face];
-            if (fd) {
-                const locked = _traversalLockedSCs();
-                const cageSCs = _octSCIds ? new Set(_octSCIds) : new Set();
-                for (const scId of fd.scIds) {
-                    if (locked.has(scId)) continue;
-                    if (cageSCs.has(scId)) continue;
-                    if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
-                        xonImpliedSet.delete(scId);
-                        _scAttribution.delete(scId);
-                        stateVersion++;
-                    }
-                }
-            }
-        }
-        return;
-    }
+    if (!gluonXon) return; // no gluon bound — nothing to release
     const gi = _demoXons.indexOf(gluonXon);
-    // Release face SCs (same traversal-lock + cage-SC guards)
-    const fd = _nucleusTetFaceData[face];
-    if (fd) {
-        const locked = _traversalLockedSCs();
-        const cageSCs = _octSCIds ? new Set(_octSCIds) : new Set();
-        for (const scId of fd.scIds) {
-            if (locked.has(scId)) continue;
-            if (cageSCs.has(scId)) continue;
-            if (xonImpliedSet.has(scId) && !activeSet.has(scId)) {
-                xonImpliedSet.delete(scId);
-                _scAttribution.delete(scId);
-                stateVersion++;
-            }
-        }
-    }
-    // Clear gluon binding, return to oct
+    // Clear gluon binding, return to oct. SCs are NOT deleted here —
+    // they persist until vacuum severs them (physics-only severance).
     _logChoreo(`X${gi} gluon released from face ${face} → oct`);
     gluonXon._gluonForFace = null;
     gluonXon._gluonBoundSCs = null;
     gluonXon._gluonClientXon = null;
     gluonXon._mode = 'oct';
     gluonXon.col = 0xffffff;
-
     if (gluonXon.sparkMat) gluonXon.sparkMat.color.setHex(0xffffff);
 }
 
@@ -1198,8 +1153,9 @@ function _walkToFace(xon, targetNodes) {
 // T42: Clean up face SCs from xonImpliedSet when a xon abandons its tet face.
 // Respects traversal lock — won't remove SCs being traversed by other xons.
 function _relinquishFaceSCs(xon) {
-    if (_ruleGluonMediatedSC) { _releaseGluon(xon._assignedFace); return; }
-    if (!_ruleRelinquishSCs) return; // switchboard: SC persistence mode
+    // Gluon binding cleanup (no SC deletion — gluons don't touch SCs anymore)
+    if (_ruleGluonMediatedSC) _releaseGluon(xon._assignedFace);
+    if (!_ruleRelinquishSCs) return; // sticky space: SCs persist until vacuum severs
     if (xon._assignedFace == null) return;
     const fd = _nucleusTetFaceData ? _nucleusTetFaceData[xon._assignedFace] : null;
     if (!fd) return;
@@ -1381,85 +1337,9 @@ function _startIdleTetLoop(xon, occupied) {
 
     if (tryFaces(actualizedFaces)) return true;
 
-    // ── Pass 2: Manifest new tet voids ──
-    // Try to materialise the missing SCs for non-actualized faces.
-    // This creates new loiter space when the oct cage is congested.
-    const newlyActualized = [];
-    for (const face of _sRngShuffle(manifestCandidates.slice())) {
-        const fd = _nucleusTetFaceData[face];
-        const missingSCs = fd.scIds.filter(scId =>
-            !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId));
-        // Try to materialise all missing SCs
-        let allOk = true;
-        const justAdded = [];
-        const xi = _demoXons.indexOf(xon);
-        for (const scId of missingSCs) {
-            if (canMaterialiseQuick(scId)) {
-                xonImpliedSet.add(scId);
-                _scAttribution.set(scId, { reason: 'manifest', xonIdx: xi, face, tick: _demoTick });
-                stateVersion++; // invalidate cache for next check
-                justAdded.push(scId);
-            } else if (excitationSeverForRoom(scId)) {
-                if (canMaterialiseQuick(scId)) {
-                    xonImpliedSet.add(scId);
-                    _scAttribution.set(scId, { reason: 'manifest', xonIdx: xi, face, tick: _demoTick });
-                    stateVersion++; // invalidate cache
-                    justAdded.push(scId);
-                } else {
-                    allOk = false; break;
-                }
-            } else {
-                allOk = false; break;
-            }
-        }
-        if (allOk) {
-            newlyActualized.push(face);
-            if (justAdded.length > 0) {
-                _idleTetManifested = true;
-                console.log(`[MANIFEST] Actualized tet face ${face} (${justAdded.length} new SCs) for idle loitering`);
-            }
-        } else {
-            // Roll back partial materialisation
-            for (const scId of justAdded) {
-                xonImpliedSet.delete(scId);
-                _scAttribution.delete(scId);
-                stateVersion++; // invalidate cache
-            }
-        }
-    }
-
-    if (newlyActualized.length > 0) {
-        const _idleLocked = _traversalLockedSCs();
-        if (tryFaces(newlyActualized)) {
-            // Rollback SCs for faces we manifested but didn't use
-            const assignedFace = xon._assignedFace;
-            for (const face of newlyActualized) {
-                if (face === assignedFace) continue;
-                const fd = _nucleusTetFaceData[face];
-                for (const scId of fd.scIds) {
-                    if (_idleLocked.has(scId)) continue; // xon traversing this SC
-                    if (xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
-                        xonImpliedSet.delete(scId);
-                        _scAttribution.delete(scId);
-                        stateVersion++;
-                    }
-                }
-            }
-            return true;
-        }
-        // tryFaces failed — rollback ALL newly manifested SCs
-        for (const face of newlyActualized) {
-            const fd = _nucleusTetFaceData[face];
-            for (const scId of fd.scIds) {
-                if (_idleLocked.has(scId)) continue; // xon traversing this SC
-                if (xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
-                    xonImpliedSet.delete(scId);
-                    _scAttribution.delete(scId);
-                    stateVersion++;
-                }
-            }
-        }
-    }
+    // Pass 2 removed: no preemptive SC materialization. Xons negotiate
+    // with the vacuum at traversal time (Phase 3). Only already-actualized
+    // faces are available for idle tet loops.
 
     // ── Fallback: use any blocked actualized face ──
     // (caller handles Pauli if this destination is occupied)

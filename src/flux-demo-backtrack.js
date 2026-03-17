@@ -38,6 +38,7 @@ function _btCreateSnapshot() {
             _movedThisTick: x._movedThisTick, _evictedThisTick: x._evictedThisTick,
             _lastDir: x._lastDir, alive: x.alive, _highlightT: x._highlightT,
             _t60Ejected: !!x._t60Ejected, _weakLeftOct: !!x._weakLeftOct, _pendingWeakEjection: !!x._pendingWeakEjection,
+            _octConsecutive: x._octConsecutive || 0,
             _gluonForFace: x._gluonForFace, _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
             _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
             _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
@@ -137,6 +138,7 @@ function _btRestoreSnapshot(snap, reverse) {
         x._t60Ejected = !!s._t60Ejected;
         x._weakLeftOct = !!s._weakLeftOct;
         x._pendingWeakEjection = !!s._pendingWeakEjection;
+        x._octConsecutive = s._octConsecutive || 0;
         x._gluonForFace = s._gluonForFace != null ? s._gluonForFace : null;
         x._gluonBoundSCs = s._gluonBoundSCs ? s._gluonBoundSCs.slice() : null;
         // Re-derive _gluonClientXon from face binding (can't serialize xon references)

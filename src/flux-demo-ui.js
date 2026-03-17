@@ -57,7 +57,8 @@ function _updateBottomStats() {
     if (planckEl) planckEl.textContent = _planckSeconds;
     const ticksEl = document.getElementById('st-ticks');
     if (ticksEl) ticksEl.textContent = _demoTick;
-    const totalOpen = activeSet.size + impliedSet.size + (typeof xonImpliedSet !== 'undefined' ? xonImpliedSet.size : 0);
+    const _scUnion = new Set([...activeSet, ...impliedSet, ...(typeof xonImpliedSet !== 'undefined' ? xonImpliedSet : [])]);
+    const totalOpen = _scUnion.size;
     const scEl = document.getElementById('st-sc');
     if (scEl) scEl.textContent = totalOpen + ' / ' + ALL_SC.length;
     const densEl = document.getElementById('st-dens');
@@ -1727,6 +1728,17 @@ window.addEventListener('DOMContentLoaded', () => {
         };
         _tpqRead();
         _tpqSlider.addEventListener('input', () => { _tpqRead(); _populateCouncilDropdown(); });
+    }
+    const _mopSlider = document.getElementById('rule-max-oct-per-xon-slider');
+    const _mopValue = document.getElementById('rule-max-oct-per-xon-value');
+    if (_mopSlider) {
+        const _mopRead = () => {
+            const v = +_mopSlider.value;
+            if (v >= 17) { _ruleMaxOctPerXon = Infinity; if (_mopValue) _mopValue.innerHTML = '&infin;'; }
+            else { _ruleMaxOctPerXon = v; if (_mopValue) _mopValue.textContent = v; }
+        };
+        _mopRead();
+        _mopSlider.addEventListener('input', () => { _mopRead(); _populateCouncilDropdown(); });
     }
     const _projGuardEl = document.getElementById('rule-projected-guards-toggle');
     if (_projGuardEl) {

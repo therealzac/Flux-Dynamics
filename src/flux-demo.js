@@ -1515,8 +1515,8 @@ function startDemoLoop() {
         for (const entry of LIVE_GUARD_REGISTRY) {
             const g = _liveGuards[entry.id];
             if (!g) continue;
-            g.ok = null;
-            g.msg = 'grace period';
+            g.ok = true;
+            g.msg = '';
             g.failed = false;
             // Re-apply init fields so state is clean across demo restarts
             if (entry.init) Object.assign(g, entry.init);
@@ -1582,7 +1582,7 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons: move to above-center neighbors, become oct
+        // Remaining 2 xons: move to above-center neighbors
         for (let i = 4; i < 6; i++) {
             const xon = _demoXons[i];
             if (xon._mode === 'oct_formation') {
@@ -1590,9 +1590,14 @@ function _executeOpeningTick(occupied) {
                 if (aboveIdx < aboveY.length) {
                     _executeOctMove(xon, { node: aboveY[aboveIdx].node, dirIdx: aboveY[aboveIdx].dirIdx, _needsMaterialise: false, _scId: undefined });
                 }
-                xon._mode = 'oct';
-                xon._pendingWeakEjection = true;
             }
+        }
+        // All 6 xons start as weak — they must enter oct via the merry-go-round
+        for (const xon of _demoXons) {
+            if (!xon.alive) continue;
+            xon._mode = 'weak';
+            xon.col = WEAK_FORCE_COLOR;
+            if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         }
 
     } else if (_demoTick === 1) {
@@ -2055,24 +2060,8 @@ async function demoTick() {
                 if (!faceActualized) {
                     // Trail segments keep their original recorded color.
                     // Only new trail pushes after mode change use WEAK_FORCE_COLOR.
-                    // Relinquish face SCs — guarded by switchboard
-                    if (_ruleGluonMediatedSC) {
-                        _releaseGluon(xon._assignedFace);
-                    } else if (_ruleRelinquishSCs) {
-                        const locked60 = _traversalLockedSCs();
-                        const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
-                        if (fd60) {
-                            for (const scId of fd60.scIds) {
-                                if (locked60.has(scId)) continue;
-                                if (cage60.has(scId)) continue;
-                                if (xonImpliedSet.delete(scId)) {
-                                    _scAttribution.delete(scId);
-                                    _solverNeeded = true;
-                                    stateVersion++;
-                                }
-                            }
-                        }
-                    }
+                    // Relinquish face SCs (tight space = delete, sticky space = no-op)
+                    _relinquishFaceSCs(xon);
                     // If already on an oct node, go directly to oct mode (no weak ejection needed)
                     if (_octNodeSet && _octNodeSet.has(xon.node)) {
                         _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} → oct (already on cage)`);
@@ -2118,22 +2107,7 @@ async function demoTick() {
                     x !== xon && (x._mode === 'tet' || x._mode === 'idle_tet'));
                 if (blocker && blocker._mode === 'idle_tet') {
                     // Evict the BLOCKER (idle_tet is expendable, but protect cage SCs)
-                    const blockerFd = blocker._assignedFace != null ? _nucleusTetFaceData[blocker._assignedFace] : null;
-                    if (_ruleGluonMediatedSC && blocker._assignedFace != null) {
-                        _releaseGluon(blocker._assignedFace);
-                    } else if (blockerFd && _ruleRelinquishSCs) {
-                        const locked0 = _traversalLockedSCs();
-                        const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
-                        for (const scId of blockerFd.scIds) {
-                            if (locked0.has(scId)) continue;
-                            if (cage0.has(scId)) continue;
-                            if (xonImpliedSet.delete(scId)) {
-                                _scAttribution.delete(scId);
-                                _solverNeeded = true;
-                                stateVersion++;
-                            }
-                        }
-                    }
+                    _relinquishFaceSCs(blocker);
                     _logChoreo(`X${_demoXons.indexOf(blocker)} idle_tet blocker at n${nextNode} → weak (evicted by X${_demoXons.indexOf(xon)})`);
                     blocker._mode = 'weak';
                     blocker._t60Ejected = true;
@@ -2162,22 +2136,7 @@ async function demoTick() {
 
             if (shouldEvictSelf) {
                 // Eviction is ALWAYS weak + _t60Ejected, NEVER _returnXonToOct
-                const evictFd = xon._assignedFace != null ? _nucleusTetFaceData[xon._assignedFace] : null;
-                if (_ruleGluonMediatedSC && xon._assignedFace != null) {
-                    _releaseGluon(xon._assignedFace);
-                } else if (evictFd && _ruleRelinquishSCs) {
-                    const locked0 = _traversalLockedSCs();
-                    const cage0 = _octSCIds ? new Set(_octSCIds) : new Set();
-                    for (const scId of evictFd.scIds) {
-                        if (locked0.has(scId)) continue;
-                        if (cage0.has(scId)) continue;
-                        if (xonImpliedSet.delete(scId)) {
-                            _scAttribution.delete(scId);
-                            _solverNeeded = true;
-                            stateVersion++;
-                        }
-                    }
-                }
+                _relinquishFaceSCs(xon);
                 _logChoreo(`X${_demoXons.indexOf(xon)} evicted (dead end/blocked) → weak`);
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
@@ -2483,25 +2442,8 @@ async function demoTick() {
             }
             if (!_t60actualized) {
                 // Trail segments keep their original recorded color.
-                // Relinquish face SCs (before mode change) — guarded by switchboard
-                if (_ruleGluonMediatedSC && xon._assignedFace != null) {
-                    _releaseGluon(xon._assignedFace);
-                } else if (_ruleRelinquishSCs && xon._assignedFace != null) {
-                    const fd = _nucleusTetFaceData[xon._assignedFace];
-                    if (fd) {
-                        const locked60 = _traversalLockedSCs();
-                        const cage60 = _octSCIds ? new Set(_octSCIds) : new Set();
-                        for (const scId of fd.scIds) {
-                            if (locked60.has(scId)) continue;
-                            if (cage60.has(scId)) continue;
-                            if (xonImpliedSet.delete(scId)) {
-                                _scAttribution.delete(scId);
-                                _solverNeeded = true;
-                                stateVersion++;
-                            }
-                        }
-                    }
-                }
+                // Relinquish face SCs (tight space = delete, sticky space = no-op)
+                _relinquishFaceSCs(xon);
                 _logChoreo(`X${_demoXons.indexOf(xon)} non-actualized face ${xon._assignedFace} (completion) → weak`);
                 xon._mode = 'weak';
                 xon._assignedFace = null;
@@ -2518,24 +2460,8 @@ async function demoTick() {
 
             // Loop complete + actualized — return to oct
             _returnXonToOct(xon, occupied);
-            // Relinquish face SCs that are no longer needed — guarded by switchboard
-            if (_ruleGluonMediatedSC && xon._assignedFace != null) {
-                _releaseGluon(xon._assignedFace);
-            } else if (_ruleRelinquishSCs && xon._assignedFace != null) {
-                const fd = _nucleusTetFaceData[xon._assignedFace];
-                const cage15 = _octSCIds ? new Set(_octSCIds) : new Set();
-                if (fd) {
-                    for (const scId of fd.scIds) {
-                        if (locked15.has(scId)) continue;
-                        if (cage15.has(scId)) continue;
-                        if (xonImpliedSet.delete(scId)) {
-                            _scAttribution.delete(scId);
-                            _solverNeeded = true;
-                            stateVersion++;
-                        }
-                    }
-                }
-            }
+            // Relinquish face SCs (tight space = delete, sticky space = no-op)
+            _relinquishFaceSCs(xon);
         }
         occupied = _occupiedNodes(); // refresh after returns
     }
@@ -2805,11 +2731,11 @@ async function demoTick() {
                     excess--;
                     continue;
                 }
-                _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow -> pendingWeak`);
-                xon._pendingWeakEjection = true;
-                excess--;
+                // No direct weak ejection from oct — xons can only leave
+                // by starting a tet loop. If no loop available, stay on oct.
+                _logChoreo(`X${_demoXons.indexOf(xon)} oct overflow — no tet available, stays on oct`);
             }
-            // Priority 2: idle_tet xons on oct nodes (interrupt loop, mark for ejection)
+            // Priority 2: idle_tet xons on oct nodes — revert to oct (no weak ejection)
             if (excess > 0) {
                 const idleCandidates = _sRngShuffle(_demoXons.filter(x =>
                     x.alive && x._mode === 'idle_tet' && !x._movedThisTick &&
@@ -2818,30 +2744,16 @@ async function demoTick() {
                 for (const xon of idleCandidates) {
                     if (excess <= 0) break;
                     const xi = _demoXons.indexOf(xon);
-                    _logChoreo(`X${xi} idle_tet on oct -> pendingWeak (T79 shed)`);
+                    _logChoreo(`X${xi} idle_tet on oct -> oct (shed, no weak ejection)`);
                     xon._assignedFace = null;
                     xon._loopSeq = null;
                     xon._loopStep = 0;
                     xon._mode = 'oct';
-                    xon._pendingWeakEjection = true;
                     excess--;
                 }
             }
-            // Priority 3: weak xons on oct nodes (force off-oct movement)
-            if (excess > 0) {
-                const weakOnOct = _sRngShuffle(_demoXons.filter(x =>
-                    x.alive && x._mode === 'weak' && !x._movedThisTick &&
-                    _octNodeSet.has(x.node)
-                ));
-                for (const xon of weakOnOct) {
-                    if (excess <= 0) break;
-                    const xi = _demoXons.indexOf(xon);
-                    _logChoreo(`X${xi} weak on oct -> pendingWeak (T79 shed)`);
-                    xon._mode = 'oct';
-                    xon._pendingWeakEjection = true;
-                    excess--;
-                }
-            }
+            // Priority 3 removed: no direct weak ejection from oct.
+            // Xons can only leave oct by starting a tet loop.
             if (allOnOct - OCT_CAPACITY_MAX + t79Pressure > 0) occupied = _occupiedNodes();
         }
     }
@@ -3615,6 +3527,15 @@ async function demoTick() {
         _octFullConsecutive = 0;
     }
 
+    // Track consecutive oct ticks per xon (Rule 11 / T97)
+    for (const xon of _demoXons) {
+        if (!xon.alive) continue;
+        if (xon._mode === 'oct') {
+            xon._octConsecutive = (xon._octConsecutive || 0) + 1;
+        } else {
+            xon._octConsecutive = 0;
+        }
+    }
     if (_demoOctRevealed) _ticksSinceLastQuark++; // Only count after oct forms — reset in _advanceXon if quark actualized
     _demoTick++;
     if (_demoTick > _maxTickReached) {
@@ -4162,28 +4083,15 @@ async function demoTick() {
     // Update UI — throttled to ~1/sec for heavy panels, rAF for lightweight updates.
     // This prevents 19ms+ panel rebuilds from eating every frame budget.
     _demoPanelDirty = true;
-    if (!_demoPanelTimer) {
-        // Lightweight updates (tick counter, xon panel, edge balance) still go via rAF
-        if (!_demoLightDirty) {
-            _demoLightDirty = true;
-            requestAnimationFrame(() => {
-                _demoLightDirty = false;
-                updateXonPanel();
-                _updateEdgeBalancePanel();
-            });
-        }
-        // Heavy panel rebuilds (innerHTML) throttled to 1/sec
-        _demoPanelTimer = setTimeout(() => {
-            _demoPanelTimer = null;
-            if (_demoPanelDirty) {
-                _demoPanelDirty = false;
-                updateDemoPanel();
-                _updateEjectionBalancePanel();
-                _drawBalanceChart();
-                updateStatus();
-                if (typeof _updateBottomStats === 'function') _updateBottomStats();
-            }
-        }, 1000);
+    // Update all panels every tick
+    if (!_testRunning) {
+        updateXonPanel();
+        _updateEdgeBalancePanel();
+        updateDemoPanel();
+        _updateEjectionBalancePanel();
+        _drawBalanceChart();
+        updateStatus();
+        if (typeof _updateBottomStats === 'function') _updateBottomStats();
     }
 
     // Tick log entry (lightweight, for export)
