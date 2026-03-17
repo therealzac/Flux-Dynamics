@@ -1001,9 +1001,8 @@ function _tickDemoXons(dt) {
                 const c2b = (col2 & 0xff) / 255;
                 const op1 = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e1.role] != null) ? _roleOpacity[e1.role] : 1;
                 const op2 = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e2.role] != null) ? _roleOpacity[e2.role] : 1;
-                // Only interpolate between oct↔weak transitions
-                const _isOctOrWeak = r => r === 'oct' || r === 'weak';
-                const _blend = _isOctOrWeak(e1.role) && _isOctOrWeak(e2.role) && e1.role !== e2.role;
+                // Blend any transition involving oct (oct↔weak, oct↔tet, tet↔oct)
+                const _blend = e1.role !== e2.role && (e1.role === 'oct' || e2.role === 'oct');
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
