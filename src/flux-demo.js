@@ -2003,6 +2003,7 @@ async function demoTick() {
         } else {
             _openingPhase = false;
             _demoOctRevealed = true; // Oct formed — enable oct-dependent guards (T96)
+            _ticksSinceLastQuark = 0; // Start the quark clock when oct forms, not at tick 0
         }
     }
 
