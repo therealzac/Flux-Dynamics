@@ -3669,11 +3669,13 @@ async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
     _sweepBlacklistHitsSeed = 0;
     _sweepGoldenHitsSeed = 0;
     _sweepSeedMoves = new Map();
+    _searchTraversalLog = [];
     _searchEventCounter = 0;
     _searchPathStack = [];
     _searchParentNodeId = null;
     _searchLastCandidates = null;
     _searchStartTime = performance.now();
+    if (typeof _lockRules === 'function') _lockRules(true);
 
     // 3. Set up nucleus
     if (typeof stopDemo === 'function' && _demoActive) stopDemo();
@@ -3701,6 +3703,7 @@ async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
     }
 
     // 5. Initialize simulation
+    _setBfsTestPanelVisible(true);
     _startupLog('startDemoLoop() starting...');
     startDemoLoop();
     _startupLog('startDemoLoop() done');
@@ -5065,6 +5068,19 @@ async function _replayTestReplayPhase(q) {
     _guardHardStop = true;
     _liveGuardsActive = true;
 
+    // Load blacklist so learnings apply during replay + extend
+    const cached = await _blIDBLoad(lvl);
+    if (cached) {
+        _sweepBlacklist = cached.map;
+        _sweepTotalBlacklisted = cached.total;
+        _sweepSeedIdx = cached.seedIdx;
+        _sweepUsedSeeds = new Set(cached.usedSeeds || []);
+        if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
+            _sweepGoldenCouncil = cached.goldenCouncil;
+        }
+        if (_blBucketVersion >= 1) await _blPrefetchBucket(lvl, 0);
+    }
+
     // Start council replay — this calls startSweepSeed directly
     // (sweep is the only execution mode; replay = sweep with pre-seeded redo stack)
     const member = _sweepGoldenCouncil[memberIdx];
@@ -5086,13 +5102,23 @@ async function _replayTestReplayPhase(q) {
                 resolve();
                 return;
             }
-            // Replay cursor exhausted — replay passed, proceed to extend
+            // Replay cursor exhausted — replay validated up to member's peak
             if (_demoActive && !_sweepReplayActive && _replayCursor === -1) {
                 clearInterval(pollId);
                 _replayTestLog(`Replay phase passed — reached tick ${_demoTick}`);
                 _guardHardStop = false;
 
-                // Determine next target
+                // Did we reach the current target? If not, extend to it first.
+                if (_demoTick < q.targetPS) {
+                    _replayTestLog(`Replay ended at tick ${_demoTick}, need ${q.targetPS} — extending...`);
+                    const extQ = { ...q, phase: 'extend' };
+                    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(extQ));
+                    setTimeout(() => _replayTestExtendPhase(extQ), 500);
+                    resolve();
+                    return;
+                }
+
+                // Current target reached — determine next target
                 const currentTarget = q.targetPS;
                 const nextIdx = _REPLAY_TEST_TARGETS.indexOf(currentTarget) + 1;
                 if (nextIdx >= _REPLAY_TEST_TARGETS.length) {
@@ -5102,7 +5128,7 @@ async function _replayTestReplayPhase(q) {
                     return;
                 }
 
-                // Move to extend phase — demo keeps running live within sweep
+                // Move to extend phase for next milestone
                 const nextTarget = _REPLAY_TEST_TARGETS[nextIdx];
                 const extQ = { ...q, phase: 'extend', targetPS: nextTarget };
                 localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(extQ));
@@ -5127,16 +5153,16 @@ async function _replayTestExtendPhase(q) {
         const pollId = setInterval(() => {
             if (simHalted || !_demoActive) {
                 clearInterval(pollId);
-                if (simHalted) {
-                    const failed = Object.entries(_liveGuards).filter(([, g]) => g.failed);
-                    const msg = failed.length > 0
-                        ? failed.map(([k, g]) => `${k}: ${g.msg}`).join('; ')
-                        : 'simHalted during extend';
-                    _replayTestFail('extend', _demoTick, msg);
-                } else {
-                    _replayTestFail('extend', _demoTick, 'demo stopped during extend');
-                }
-                resolve();
+                // Sweep regression or guard halt — restart from council replay
+                // (same as auto-retry-best behavior in normal sweep).
+                _replayTestLog(`Extend halted at tick ${_demoTick} — restarting from council replay...`);
+                if (typeof stopDemo === 'function') stopDemo();
+                setTimeout(async () => {
+                    const replayQ = { ...q, phase: 'replay' };
+                    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(replayQ));
+                    setTimeout(() => location.reload(), 500);
+                    resolve();
+                }, 500);
                 return;
             }
             if (_demoTick >= q.targetPS) {

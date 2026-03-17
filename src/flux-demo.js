@@ -3640,6 +3640,11 @@ async function demoTick() {
         }
     }
 
+    // ── Sweep panel update ──
+    if (!_testRunning && typeof _updateSweepPanel === 'function' && _sweepActive) {
+        _updateSweepPanel(null, _searchStartTime);
+    }
+
     // ── Council replay: suppress all rewinds during the happy path ──
     if (_inReplayPhase && _rewindRequested) {
         _rewindRequested = false;

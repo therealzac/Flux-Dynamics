@@ -562,6 +562,25 @@ Keys for IndexedDB storage (blacklist, autosave, council) are built by **concate
 
 Pattern: `let k = base; if (rule) k += '|tag'; return k;`
 
+### Blacklist Bucket System
+
+The blacklist records "dead end" state fingerprints from previous sweep seeds. **Too large to fit in memory**, so it's split into time-windowed buckets that load on-demand from IndexedDB.
+
+**Fingerprint**: Canonical string of all xon moves at a tick (`"X0:5->9|X1:stay@0|..."`, computed by `_computeTickFingerprint()`).
+
+**Bucket**: Contains all fingerprints for ticks `[i*64, i*64+63]` (64-tick window, one demo cycle). Each bucket is a separate IDB key: `baseKey|bl|bucketIdx`.
+
+**Data flow**:
+1. **Startup**: `_blIDBLoad()` loads metadata only (total count, bucket count), NOT fingerprints. Returns empty `_sweepBlacklist` Map.
+2. **Prefetch**: `_blPrefetchBucket(lvl, bucketIdx)` loads one bucket's fingerprints from IDB → merges into `_sweepBlacklist`. Bucket 0 is eagerly prefetched; others loaded when a tick in their range is reached.
+3. **Check**: `_btRecordFingerprint()` checks `_sweepBlacklist.get(tick).has(fp)`. If hit → state is dead, skip it. Increments `_sweepBlacklistHits` / `_sweepBlacklistHitsSeed`.
+4. **Blacklist**: At seed end, all `_btTriedFingerprints` are promoted into `_sweepBlacklist`.
+5. **Save**: `_blIDBSaveBlacklist()` partitions `_sweepBlacklist` back into buckets and writes to IDB. Debounced to 2s.
+
+**Memory model**: Only loaded buckets are in RAM (typically 1-2 buckets = a few MB). Full dataset stays in IDB (can grow to 10s of MB). `_blLoadedBuckets` Set tracks which are in memory — each loaded exactly once per session.
+
+**Bypass during replay**: Blacklist check is skipped during council replay until past the member's recorded peak (`_sweepReplayActive && tick <= peak`). This allows deterministic replay without blacklist interference.
+
 ---
 
 ## 12. Roadmap
