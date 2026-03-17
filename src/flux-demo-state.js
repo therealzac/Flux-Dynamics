@@ -402,6 +402,8 @@ let _demoPrevFaces = new Set();   // faces active in previous window (for relinq
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
 let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
 let _ruleT20StrictMode = true;   // When true, T20 has no mode-transition exemption
+let _ruleTicksPerQuark = Infinity; // Max ticks between quark actualizations (Infinity = off)
+let _ticksSinceLastQuark = 0;     // Counter: ticks since last quark was actualized
 let _octFullConsecutive = 0;      // T79: running count of consecutive full-oct ticks
 // T41: tick-level move record — tracks destNode → fromNode for all xon moves this tick.
 // Used to prevent adjacent xon swaps (A→B while B→A in the same tick).

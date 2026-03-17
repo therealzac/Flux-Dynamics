@@ -1717,6 +1717,17 @@ window.addEventListener('DOMContentLoaded', () => {
         _ruleRelinquishSCs = _tightEl.checked;
         _tightEl.addEventListener('change', e => { _ruleRelinquishSCs = e.target.checked; _populateCouncilDropdown(); });
     }
+    const _tpqSlider = document.getElementById('rule-ticks-per-quark-slider');
+    const _tpqValue = document.getElementById('rule-ticks-per-quark-value');
+    if (_tpqSlider) {
+        const _tpqRead = () => {
+            const v = +_tpqSlider.value;
+            if (v >= 17) { _ruleTicksPerQuark = Infinity; if (_tpqValue) _tpqValue.innerHTML = '&infin;'; }
+            else { _ruleTicksPerQuark = v; if (_tpqValue) _tpqValue.textContent = v; }
+        };
+        _tpqRead();
+        _tpqSlider.addEventListener('input', () => { _tpqRead(); _populateCouncilDropdown(); });
+    }
     const _projGuardEl = document.getElementById('rule-projected-guards-toggle');
     if (_projGuardEl) {
         _ruleProjectedGuards = _projGuardEl.checked;
@@ -1851,7 +1862,7 @@ function _setSimUIActive(active) {
     if (startRow) startRow.style.display = active ? 'none' : 'flex';
     if (activeRow) activeRow.style.display = active ? 'flex' : 'none';
     // Lock/unlock rule toggles
-    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-tight-space-toggle', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider', 'rule-adaptive-ejection-toggle'];
+    const toggleIds = ['rule-t20-strict-toggle', 'rule-gluon-mediated-toggle', 'rule-bare-tet-toggle', 'rule-tight-space-toggle', 'rule-ticks-per-quark-slider', 'rule-oct-full-slider', 'rule-oct-capacity-slider', 'rule-projected-guards-toggle', 'rule-t90-tolerance-slider', 'rule-t91-tolerance-slider', 'rule-t92-tolerance-slider', 'rule-adaptive-ejection-toggle'];
     for (const id of toggleIds) {
         const el = document.getElementById(id);
         if (el) { el.disabled = active; el.style.opacity = active ? '0.4' : '1'; }

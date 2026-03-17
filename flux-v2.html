@@ -365,7 +365,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-315398f</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-55e551e</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -441,6 +441,18 @@
                     </label>
                     <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
                         Shortcuts sever immediately after use. Default off (sticky space: shortcuts persist until vacuum severs them).
+                    </div>
+                </div>
+                <div id="rule-ticks-per-quark-row" style="margin-top:6px; margin-bottom:2px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-2); user-select:none;">
+                        <span style="white-space:nowrap;">7. Ticks per quark</span>
+                        <button class="btn-ghost tol-tick" data-slider="rule-ticks-per-quark-slider" data-dir="-1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9664;</button>
+                        <input type="range" id="rule-ticks-per-quark-slider" min="1" max="17" value="17" autocomplete="off" style="flex:1; accent-color:#ff6644;">
+                        <button class="btn-ghost tol-tick" data-slider="rule-ticks-per-quark-slider" data-dir="1" style="padding:2px 5px; font-size:10px; line-height:1;">&#9654;</button>
+                        <span id="rule-ticks-per-quark-value" style="font-size:10px; color:var(--text-1); min-width:16px; text-align:right;">&infin;</span>
+                    </label>
+                    <div style="font-size:9px; color:var(--text-3); margin:2px 0 0 22px; line-height:1.4;">
+                        Max ticks allowed between quark actualizations. At 1, every tick must produce a quark. Default &infin; (off).
                     </div>
                 </div>
                 <div id="rule-t90-tolerance-row" style="margin-top:6px; margin-bottom:2px;">
@@ -738,12 +750,12 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
     <script src="src/flux-constants.js?v=8"></script>
     <script src="src/flux-solver-proxy.js?v=2"></script>
-    <script src="src/flux-demo-state.js?v=115"></script>
-    <script src="src/flux-demo-xon.js?v=24"></script>
-    <script src="src/flux-demo-backtrack.js?v=62"></script>
+    <script src="src/flux-demo-state.js?v=116"></script>
+    <script src="src/flux-demo-xon.js?v=25"></script>
+    <script src="src/flux-demo-backtrack.js?v=63"></script>
     <script src="src/flux-demo-planner.js?v=41"></script>
     <script src="src/flux-demo-ui.js?v=164"></script>
-    <script src="src/flux-demo.js?v=512"></script>
+    <script src="src/flux-demo.js?v=513"></script>
     <script src="src/flux-solver-render.js?v=43"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
@@ -751,7 +763,7 @@
     <script src="src/flux-xons.js?v=19"></script>
     <script src="src/flux-voids.js?v=41"></script>
     <script src="src/flux-nucleus.js?v=52"></script>
-    <script src="src/flux-tests.js?v=398"></script>
+    <script src="src/flux-tests.js?v=399"></script>
     <script>
     // ═══ INIT: deferred calls that depend on cross-file globals ═══
     // These were top-level calls in the original monolithic script.

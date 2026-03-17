@@ -1791,6 +1791,23 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T96: Ticks per quark — quark rate enforcement ──
+    // After oct is formed (grace period), checks that the time since the last
+    // quark actualization doesn't exceed _ruleTicksPerQuark. Only active when
+    // the slider is set to a finite value.
+    {
+      id: 'T96', name: 'Ticks per quark',
+      check(tick, g) {
+        if (_ruleTicksPerQuark === Infinity) return null; // rule disabled
+        if (tick < 12) return null; // grace: oct not formed yet
+        if (!_demoOctRevealed) return null; // oct must exist first
+        if (_ticksSinceLastQuark > _ruleTicksPerQuark) {
+          return `tick ${tick}: ${_ticksSinceLastQuark} ticks since last quark (max ${_ruleTicksPerQuark})`;
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -3356,6 +3373,7 @@ function _serializeSnapshot(snap) {
         scAttribution: [...snap.scAttribution.entries()],
         pos: snap.pos, // array of [x,y,z] already
         octFullConsecutive: snap.octFullConsecutive,
+        ticksSinceLastQuark: snap.ticksSinceLastQuark,
         demoVisits: snap.demoVisits,
         actualizationVisits: snap.actualizationVisits,
         faceEdgeEpoch: snap.faceEdgeEpoch,

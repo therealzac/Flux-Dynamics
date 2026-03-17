@@ -65,6 +65,7 @@ function _btCreateSnapshot() {
         pos: pos.map(p => [p[0], p[1], p[2]]),
         // T79 state
         octFullConsecutive: _octFullConsecutive,
+        ticksSinceLastQuark: _ticksSinceLastQuark,
         // Hadron balance counts (must rewind with backtracker for correct T22)
         demoVisits: _demoVisits ? JSON.parse(JSON.stringify(_demoVisits)) : null,
         // Actualization-based quark counts (must rewind to stay in sync)
@@ -237,6 +238,7 @@ function _btRestoreSnapshot(snap, reverse) {
     if ('openingPhase' in snap) _openingPhase = snap.openingPhase;
     // Restore T79 state
     if ('octFullConsecutive' in snap) _octFullConsecutive = snap.octFullConsecutive;
+    if ('ticksSinceLastQuark' in snap) _ticksSinceLastQuark = snap.ticksSinceLastQuark;
     // Restore hadron balance counts
     if (snap.demoVisits) _demoVisits = JSON.parse(JSON.stringify(snap.demoVisits));
     // Restore actualization-based quark counts

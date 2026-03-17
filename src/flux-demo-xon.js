@@ -226,6 +226,7 @@ function _advanceXon(xon) {
         if (fd && fd.scIds.every(scId =>
             activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId))) {
             xon._tetActualized = true;
+            _ticksSinceLastQuark = 0; // Reset counter — quark actualized this tick
         }
     }
 

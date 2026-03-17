@@ -3613,6 +3613,7 @@ async function demoTick() {
         _octFullConsecutive = 0;
     }
 
+    _ticksSinceLastQuark++; // Increment before guard check — reset in _advanceXon if quark actualized
     _demoTick++;
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
