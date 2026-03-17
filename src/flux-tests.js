@@ -4098,13 +4098,11 @@ function _saveCurrentRunToCouncil() {
 // Replay phase uses forced moves + guard suppression up to peak,
 // then continues as a normal greedy sweep (blacklist, council, etc.)
 async function startCouncilReplay(memberIdx) {
-    const member = _sweepGoldenCouncil[memberIdx];
-    if (!member) return;
-    if (_sweepActive || _bfsTestActive || _demoActive) return;
+    // Council replay IS a sweep — it goes through the full sweep loop
+    // so auto-retry-best, blacklisting, and seed iteration all work.
     const slider = document.getElementById('lattice-slider');
     const lvl = slider ? +slider.value : 2;
-    _sweepActive = true;
-    await startSweepSeed(member.seed, member, lvl);
+    await startSweepTest(lvl, memberIdx);
 }
 
 
