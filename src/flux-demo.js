@@ -1818,6 +1818,43 @@ async function demoTick() {
     const _tickT0 = performance.now();
     try {
 
+    // ── REPLAY CURSOR: restore from _btSnapshots instead of live choreography ──
+    if (_replayCursor >= 0 && _replayCursor < _btSnapshots.length) {
+        const snap = _btSnapshots[_replayCursor];
+        // On LAST snapshot: switch off hard-stop before restoring,
+        // so guard failures on this tick trigger backtracking, not corruption halt.
+        if (_replayCursor === _btSnapshots.length - 1 && _sweepReplayActive) {
+            _sweepReplayActive = false;
+            _sweepReplayMember = null;
+            _guardHardStop = false;
+            console.log(`%c[REPLAY] Final snapshot — switching to live mode`, 'color:#66ccff;font-weight:bold');
+        }
+        // Guard snapshot BEFORE restore (mirrors live: snapshot → moves → check)
+        if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
+        _btRestoreSnapshot(snap);
+        _replayCursor++;
+        simHalted = false;
+        // Apply tet coloring BEFORE guards — T58 reads _ruleAnnotations
+        if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
+        // Guards fire during replay — detect corruption
+        if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
+        if (simHalted) {
+            console.error(`[REPLAY] Corruption at tick ${_demoTick}: guard failure during snapshot replay`);
+            _tickInProgress = false;
+            return;
+        }
+        // Update display (throttled by setInterval rate — no extra throttle needed)
+        if (!_testRunning) _playbackUpdateDisplay();
+        // Check if cursor exhausted — transition to live
+        if (_replayCursor >= _btSnapshots.length) {
+            _replayCursor = -1;
+            _maxTickReached = _demoTick;
+            console.log(`%c[REPLAY] Cursor reached end — transitioning to live play at tick ${_demoTick}`, 'color:#66ccff;font-weight:bold');
+        }
+        _tickInProgress = false;
+        return;
+    }
+
     // ── Bucketed blacklist: ensure current tick's bucket is loaded ──
     if (_sweepActive && _blBucketVersion >= 1 && typeof _blEnsureTick === 'function') {
         const _lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;

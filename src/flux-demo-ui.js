@@ -883,77 +883,12 @@ function resumeDemo() {
     const _pb = document.getElementById('btn-nucleus-pause');
     if (_pb) { _pb.textContent = '\u23F8'; _pb.title = 'Pause simulation'; }
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
-        if (_replayCursor >= 0 && _replayCursor < _btSnapshots.length - 1) {
-            // Cursor-based replay: advance through pre-loaded _btSnapshots.
-            // Uses setTimeout chaining so speed adjustments take effect immediately.
-            let _lastForwardVisual = 0;
-            const FWD_VISUAL_INTERVAL = 33; // ~30fps
-            function _replayStep() {
-                if (_demoPaused || !_demoActive) {
-                    _demoInterval = null;
-                    return;
-                }
-                _replayCursor++;
-                if (_replayCursor >= _btSnapshots.length) {
-                    // Past end — transition to live play
-                    _replayCursor = -1;
-                    _demoInterval = null;
-                    if (_sweepReplayActive) {
-                        _sweepReplayActive = false;
-                        _sweepReplayMember = null;
-                        _guardHardStop = false;
-                        console.log('%c[REPLAY] Cursor exhausted — continuing live from tick ' + _demoTick, 'color:#66ccff;font-weight:bold');
-                    }
-                    _maxTickReached = _demoTick;
-                    const liveMs = _getDemoIntervalMs();
-                    if (liveMs === 0) {
-                        _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
-                    } else {
-                        _demoInterval = setInterval(demoTick, liveMs);
-                    }
-                    return;
-                }
-                // On LAST snapshot: switch off hard-stop before restoring,
-                // so guard failures on this tick trigger backtracking, not corruption halt.
-                if (_replayCursor === _btSnapshots.length - 1 && _sweepReplayActive) {
-                    _sweepReplayActive = false;
-                    _sweepReplayMember = null;
-                    _guardHardStop = false;
-                    console.log(`%c[REPLAY] Final snapshot — switching to live mode`, 'color:#66ccff;font-weight:bold');
-                }
-                // Guard snapshot BEFORE restore — captures previous tick's state
-                if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
-                _btRestoreSnapshot(_btSnapshots[_replayCursor]);
-                simHalted = false;
-                // Update tet coloring BEFORE guards — T58 reads _ruleAnnotations
-                if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
-                // Guards always fire during replay — no exceptions.
-                if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
-                if (simHalted) {
-                    _demoInterval = null;
-                    _playbackUpdateDisplay();
-                    return;
-                }
-                // Throttle visual updates to ~30fps
-                const now = performance.now();
-                if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {
-                    _playbackUpdateDisplay();
-                    _lastForwardVisual = now;
-                }
-                const nextMs = Math.max(4, _getDemoIntervalMs());
-                _demoInterval = setTimeout(_replayStep, nextMs);
-            }
-            const intervalMs = Math.max(4, _getDemoIntervalMs());
-            _demoInterval = setTimeout(_replayStep, intervalMs);
+        // Unified: demoTick handles both replay cursor and live play internally.
+        const intervalMs = _getDemoIntervalMs();
+        if (intervalMs === 0) {
+            _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
         } else {
-            // Live play (no replay cursor active)
-            _replayCursor = -1;
-            const intervalMs = _getDemoIntervalMs();
-            if (intervalMs === 0) {
-                _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
-            } else {
-                _demoInterval = setInterval(demoTick, intervalMs);
-            }
+            _demoInterval = setInterval(demoTick, intervalMs);
         }
     }
 }
