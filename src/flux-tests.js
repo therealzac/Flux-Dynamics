@@ -3083,7 +3083,11 @@ async function _autosaveToIDB() {
     if (_btSnapshots.length === 0) return;
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
-    const allSnaps = _btSnapshots.map(_serializeSnapshot);
+    // Incremental serialization: cold snapshots are already serialized (from IDB),
+    // only serialize the hot (live) portion beyond _btColdBoundary.
+    const coldPart = _btColdSnapshots.slice(0, Math.min(_btColdBoundary, _btColdSnapshots.length));
+    const hotPart = _btSnapshots.slice(_btColdBoundary).map(_serializeSnapshot);
+    const allSnaps = coldPart.concat(hotPart);
     const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
     const key = _blacklistRuleKey(lvl);
     try {
@@ -3500,7 +3504,12 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
     }
 
     // Full overwrite — _btSnapshots IS the complete traversal.
-    const snapsArr = snapshots.map(_serializeSnapshot);
+    // Incremental serialization: cold snapshots are already serialized,
+    // only serialize the hot (live) portion beyond _btColdBoundary.
+    const coldCount = Math.min(_btColdBoundary, snapshots.length, _btColdSnapshots.length);
+    const coldPart = _btColdSnapshots.slice(0, coldCount);
+    const hotPart = snapshots.slice(coldCount).map(_serializeSnapshot);
+    const snapsArr = coldPart.concat(hotPart);
     const movesArr = [];
     for (const [tick, moveMap] of moves) {
         movesArr.push([tick, [...moveMap.entries()]]);
@@ -3702,6 +3711,10 @@ async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
     if (replaySnapshots) {
         _btSnapshots.length = 0;
         _btSnapshots.push(...replaySnapshots);
+        // Cold boundary: all loaded snapshots are raw IDB format (already serialized).
+        // Keep a copy so we can skip re-serialization at save time.
+        _btColdBoundary = replaySnapshots.length;
+        _btColdSnapshots = replaySnapshots.slice(); // shallow copy — raw objects are immutable
         _replayCursor = 0;
         _btRestoreSnapshot(_btSnapshots[0]);
         console.log(`%c[REPLAY] Loaded ${replaySnapshots.length} snapshots into _btSnapshots — cursor at 0`, 'color:#66ccff;font-weight:bold');

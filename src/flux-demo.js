@@ -1388,6 +1388,8 @@ function startDemoLoop() {
     _bfsReset(); // fresh demo = clean BFS + ledger
     _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 100
     _btSnapshots.length = 0;
+    _btColdBoundary = 0;
+    _btColdSnapshots.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
     _movieFrames.length = 0;
@@ -1832,10 +1834,8 @@ async function demoTick() {
         // Guard snapshot BEFORE restore (mirrors live: snapshot → moves → check)
         if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
         _btRestoreSnapshot(snap);
-        // Replace raw IDB snapshot with live-format snapshot so autosave
-        // doesn't encounter undeserialized data. By replay end, all entries
-        // in _btSnapshots are in the correct Sets/Maps format.
-        _btSnapshots[_replayCursor] = _btCreateSnapshot();
+        // No re-snapshot needed — cold snapshots stay raw. At save time,
+        // _btColdSnapshots provides pre-serialized data for indices < _btColdBoundary.
         _replayCursor++;
         simHalted = false;
         // Apply tet coloring BEFORE guards — T58 reads _ruleAnnotations
@@ -3897,6 +3897,10 @@ async function demoTick() {
             // playback only shows the happy path, not BFS mistakes.
             while (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick > targetTick) {
                 _btSnapshots.pop();
+            }
+            // Adjust cold boundary if we rewound into the cold region
+            if (_btColdBoundary > _btSnapshots.length) {
+                _btColdBoundary = _btSnapshots.length;
             }
             // Snapshots <= targetTick are kept intact for rewind/playback.
             // Also trim tick log — entries past the anchor tick will be
