@@ -3905,7 +3905,8 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         // Golden council: insert this seed if it qualifies
         if (_sweepSeedMoves && _sweepSeedMoves.size > 0) {
             const maxSize = _goldenCouncilSize();
-            const peak = result.maxTick || 0;
+            // Peak = last snapshot tick (actual traversal), not _maxTickReached (stale after backtracking)
+            const peak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : (result.maxTick || 0);
             const lowestPeak = _sweepGoldenCouncil.length >= maxSize
                 ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
             const avgPeak = _sweepGoldenCouncil.length > 0
@@ -4048,7 +4049,9 @@ async function _clearCacheExecute() {
 function _saveCurrentRunToCouncil() {
     if (!_sweepSeedMoves || _sweepSeedMoves.size === 0) return;
     const seed = _forceSeed || _runSeed || 0;
-    const peak = Math.max(_demoTick || 0, _maxTickReached || 0);
+    // Peak = last snapshot tick (the actual traversal), not _maxTickReached
+    // (which can be stale after backtracking)
+    const peak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : (_demoTick || 0);
     const maxSize = _goldenCouncilSize();
     const lowestPeak = _sweepGoldenCouncil.length >= maxSize
         ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
