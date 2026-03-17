@@ -230,13 +230,12 @@ const LIVE_GUARD_REGISTRY = [
           const n = xon.node;
           if (occupied.has(n)) {
             // Diagnostic: dump _moveTrace for this tick
-            if (typeof _moveTrace !== 'undefined' && _moveTrace.length) {
+            if (!_btActive && typeof _moveTrace !== 'undefined' && _moveTrace.length) {
               console.error('T19 TRACE:', _moveTrace.map(t =>
                 `x${t.xonIdx}:${t.from}\u2192${t.to}(${t.path},${t.mode})`).join(' | '));
+              console.error('T19 POSITIONS:', _demoXons.map((x,i) =>
+                x.alive ? `x${i}@${x.node}(${x._mode})` : `x${i}:dead`).join(' '));
             }
-            // Dump all xon positions
-            console.error('T19 POSITIONS:', _demoXons.map((x,i) =>
-              x.alive ? `x${i}@${x.node}(${x._mode})` : `x${i}:dead`).join(' '));
             return `tick ${tick}: node ${n} has 2+ xons`;
           }
           occupied.set(n, true);
@@ -390,7 +389,7 @@ const LIVE_GUARD_REGISTRY = [
               const inSnap = aSnap.has(scId) || iSnap.has(scId) || eSnap.has(scId);
               const inCurr = activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId);
               if (!inSnap && !inCurr) {
-                if (typeof _moveTrace !== 'undefined' && _moveTrace.length) {
+                if (!_btActive && typeof _moveTrace !== 'undefined' && _moveTrace.length) {
                   console.error('T26 TRACE:', _moveTrace.map(t =>
                     `x${t.xonIdx}:${t.from}\u2192${t.to}(${t.path},${t.mode})`).join(' | '));
                 }
@@ -531,7 +530,7 @@ const LIVE_GUARD_REGISTRY = [
               const aMode = a.mode + '→' + a.xon._mode;
               const bMode = b.mode + '→' + b.xon._mode;
               // Diagnostic: dump _moveTrace for this tick
-              if (typeof _moveTrace !== 'undefined' && _moveTrace.length) {
+              if (!_btActive && typeof _moveTrace !== 'undefined' && _moveTrace.length) {
                 console.error('T41 SWAP TRACE:', _moveTrace.map(t =>
                   `x${t.xonIdx}:${t.from}→${t.to}(${t.path},${t.mode})`).join(' | '));
               }
@@ -1890,7 +1889,8 @@ function _liveGuardCheck() {
         _liveGuardRender();
         const failMsgs = Object.entries(_liveGuards)
             .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`);
-        console.error('[LIVE GUARD] Failure detected:', failMsgs.join('; '));
+        // Only log guard failures when NOT backtracking (expected during BT)
+        if (!_btActive) console.error('[LIVE GUARD] Failure detected:', failMsgs.join('; '));
         // Dump failure state to localStorage + file download for post-refresh audit
         if (!_liveGuardDumped) {
             _liveGuardDumped = true;
@@ -1988,7 +1988,8 @@ function _liveGuardCheck() {
             }
             _liveGuardFailTick = null;
             _liveGuardDumped = false; // allow re-dump on next real failure
-            console.warn(`[BACKTRACK] Rewind requested: ${_rewindViolation}`);
+            // Throttle backtrack logs — only log every 50th rewind to reduce GC pressure
+            if (_btRetryCount % 50 === 0) console.warn(`[BACKTRACK] Rewind #${_btRetryCount}: ${_rewindViolation}`);
         } else if (tick >= _liveGuardFailTick + 0) {
             // No backtrack snapshots available — halt as last resort
             if (typeof stopExcitationClock === 'function') stopExcitationClock();
@@ -3252,10 +3253,25 @@ function _blIDBSave(lvl) {
 // ── Bucketed blacklist: on-demand loading ──
 
 // Load a single bucket from IDB into _sweepBlacklist. Returns a Promise.
+const _BL_MAX_LOADED_BUCKETS = 3; // keep at most current ± 1 in RAM
 async function _blPrefetchBucket(lvl, bucketIdx) {
     if (_blBucketVersion < 1) return;            // legacy format, already fully loaded
     if (_blLoadedBuckets.has(bucketIdx)) return;  // already in memory
     if (bucketIdx >= _blBucketCount) return;      // beyond stored range
+
+    // Evict distant buckets to cap RAM usage
+    if (_blLoadedBuckets.size >= _BL_MAX_LOADED_BUCKETS) {
+        for (const bi of _blLoadedBuckets) {
+            if (Math.abs(bi - bucketIdx) > 1) {
+                // Remove all fingerprints in this bucket's tick range
+                const lo = bi * _blBucketSize;
+                const hi = lo + _blBucketSize;
+                for (let t = lo; t < hi; t++) _sweepBlacklist.delete(t);
+                _blLoadedBuckets.delete(bi);
+                console.log(`[BL] Evicted bucket ${bi} (ticks ${lo}-${hi - 1}) — too far from bucket ${bucketIdx}`);
+            }
+        }
+    }
 
     const t0 = performance.now();
     const baseKey = _blacklistRuleKey(lvl);

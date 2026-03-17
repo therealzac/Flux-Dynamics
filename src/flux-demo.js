@@ -3576,6 +3576,10 @@ async function demoTick() {
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
     }
+    // Size-based GC: cap traversal log regardless of forward progress
+    if (_searchTraversalLog && _searchTraversalLog.length > 2000) {
+        _searchTraversalLog.splice(0, _searchTraversalLog.length - 1000);
+    }
     // Capture fingerprint of the tick that achieved the new high-water mark
     if (_demoTick > _maxTickReached && typeof _computeTickFingerprint === 'function') {
         _bestPathFingerprint = _computeTickFingerprint();
