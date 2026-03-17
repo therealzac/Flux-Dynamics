@@ -265,7 +265,7 @@ function raycast(e){
 }
 
 // ─── Camera orbit / pan ───────────────────────────────────────────────────────
-let sph={theta:51.0502,phi:1.0040,r:9.6533},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
+let sph={theta:51.0502,phi:1.0040,r:9.6667},orbitFrom=null,isDrag=false,dragMoved=false,downX=0,downY=0;
 let panTarget={x:0.0000,y:-0.5774,z:0.0000};
 let isGrabMode=false;
 function applyCamera(){ camera.position.set(panTarget.x+sph.r*Math.sin(sph.phi)*Math.sin(sph.theta),panTarget.y+sph.r*Math.cos(sph.phi),panTarget.z+sph.r*Math.sin(sph.phi)*Math.cos(sph.theta)); camera.lookAt(panTarget.x,panTarget.y,panTarget.z); }
