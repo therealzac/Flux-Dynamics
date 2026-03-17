@@ -622,6 +622,8 @@ let _lastAutosavePeak = 0;          // last _maxTickReached at which autosave fi
 const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
 let _btSnapshots = [];               // stack of state snapshots (one per tick) — source of truth for IDB saves
+let _btColdBoundary = 0;             // index where cold (raw IDB) snapshots end and live snapshots begin
+let _btColdSnapshots = [];           // raw IDB snapshots (already serialized) — immutable, used at save time
 let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
 let _btActive = false;               // true while inside a backtrack retry loop
 
