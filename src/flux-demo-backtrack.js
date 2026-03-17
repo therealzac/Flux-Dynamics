@@ -203,11 +203,16 @@ function _btRestoreSnapshot(snap, reverse) {
             x.tweenT = 1; // snap to position
         }
     }
-    // Restore SC sets
+    // Restore SC sets (handle both Set and Array formats for lazy deser)
     activeSet.clear(); for (const id of snap.activeSet) activeSet.add(id);
     xonImpliedSet.clear(); for (const id of snap.xonImpliedSet) xonImpliedSet.add(id);
     impliedSet.clear(); for (const id of snap.impliedSet) impliedSet.add(id);
-    _scAttribution.clear(); for (const [k, v] of snap.scAttribution) _scAttribution.set(k, v);
+    _scAttribution.clear();
+    if (snap.scAttribution instanceof Map) {
+        for (const [k, v] of snap.scAttribution) _scAttribution.set(k, v);
+    } else if (Array.isArray(snap.scAttribution)) {
+        for (const [k, v] of snap.scAttribution) _scAttribution.set(k, v);
+    }
     // Restore solver positions
     for (let i = 0; i < pos.length && i < snap.pos.length; i++) {
         pos[i][0] = snap.pos[i][0];

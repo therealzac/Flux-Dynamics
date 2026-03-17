@@ -3554,7 +3554,10 @@ async function _hydrateCouncilMember(lvl, member) {
                 if (data) {
                     const t1 = performance.now();
                     if (data.snapshots) {
-                        member.snapshots = data.snapshots.map(_deserializeSnapshot);
+                        // Lazy deserialization: store raw IDB snapshots as-is.
+                        // _btRestoreSnapshot handles both raw arrays and Sets/Maps.
+                        // Trail reconstruction happens incrementally during playback.
+                        member.snapshots = data.snapshots;
                     }
                     const t2 = performance.now();
                     if (data.moves) {
@@ -3563,40 +3566,9 @@ async function _hydrateCouncilMember(lvl, member) {
                             member.moves.set(tick, new Map(pairs));
                         }
                     }
-                    // Reconstruct full trail arrays from deltas so redo drain
-                    // uses the simple copy path (no incremental delta accumulation).
-                    if (member.snapshots && member.snapshots.length > 0) {
-                        const xonCount = member.snapshots[0].xons.length;
-                        const trails = new Array(xonCount);
-                        for (let xi = 0; xi < xonCount; xi++) trails[xi] = [];
-                        for (const snap of member.snapshots) {
-                            for (let xi = 0; xi < snap.xons.length; xi++) {
-                                const sx = snap.xons[xi];
-                                const t = trails[xi];
-                                const tLen = sx.trailLen != null ? sx.trailLen : 0;
-                                // Rewind
-                                if (t.length > tLen) t.length = tLen;
-                                // Recolor
-                                if (sx._tRecolor && t.length === tLen && t.length > 0) {
-                                    t[t.length - 1] = { ...t[t.length - 1], role: sx._tRecolor };
-                                }
-                                // Forward: push deltas
-                                if (t.length < tLen && sx._tDelta) {
-                                    for (const e of sx._tDelta) t.push({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] });
-                                }
-                                // Safety: pad to trailLen if deltas didn't reach it
-                                while (t.length < tLen) {
-                                    const p = snap.pos && snap.pos[sx.node] ? snap.pos[sx.node] : [0,0,0];
-                                    t.push({ node: sx.node, role: sx._role || 'oct', pos: [p[0], p[1], p[2]] });
-                                }
-                                // Stamp full trail on snapshot for redo drain
-                                sx.trail = t.map(e => ({ node: e.node, role: e.role, pos: [e.pos[0], e.pos[1], e.pos[2]] }));
-                            }
-                        }
-                    }
                     member._cold = false;
                     const t3 = performance.now();
-                    console.log(`%c[Council IDB] Hydrated member seed 0x${member.seed.toString(16).padStart(8,'0')} — IDB read: ${(t1-t0).toFixed(1)}ms, ${member.snapshots ? member.snapshots.length : 0} snapshots deser: ${(t2-t1).toFixed(1)}ms, moves deser: ${(t3-t2).toFixed(1)}ms, total: ${(t3-t0).toFixed(1)}ms`, 'color:#66ccff');
+                    console.log(`%c[Council IDB] Hydrated member seed 0x${member.seed.toString(16).padStart(8,'0')} — IDB read: ${(t1-t0).toFixed(1)}ms, ${member.snapshots ? member.snapshots.length : 0} snapshots (lazy), moves deser: ${(t3-t2).toFixed(1)}ms, total: ${(t3-t0).toFixed(1)}ms`, 'color:#66ccff');
                 }
                 resolve();
             };
