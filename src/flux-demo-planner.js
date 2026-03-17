@@ -1060,10 +1060,37 @@ function _assignXonToTet(xon, face, quarkType) {
 
     // Immediate advance: don't stall for one tick at seq[0].
     // Check Pauli at seq[1] before moving.
+    // Also activate the unique SC via vacuum negotiation (Phase 3 won't run for this move).
     if (xon._loopStep === 0 && seq[1] !== undefined) {
         const dest = seq[1];
         const destOccupied = _demoXons.some(x => x.alive && x !== xon && x.node === dest);
         if (!destOccupied) {
+            // Activate unique SC before moving (this edge is SC-only for pole→ext)
+            const pid = pairId(xon.node, dest);
+            const scId = scPairToId.get(pid);
+            if (scId !== undefined && !xonImpliedSet.has(scId) && !activeSet.has(scId) && !impliedSet.has(scId)) {
+                if (canMaterialiseQuick(scId)) {
+                    xonImpliedSet.add(scId);
+                    _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: _demoXons.indexOf(xon), face: face, tick: _demoTick });
+                    _solverNeeded = true;
+                } else if (excitationSeverForRoom(scId) && canMaterialiseQuick(scId)) {
+                    xonImpliedSet.add(scId);
+                    _scAttribution.set(scId, { reason: 'tetTraversal', xonIdx: _demoXons.indexOf(xon), face: face, tick: _demoTick });
+                    _solverNeeded = true;
+                } else {
+                    // Can't activate SC — abort assignment
+                    _clearModeProps(xon);
+                    xon._mode = 'oct';
+                    xon._assignedFace = null;
+                    xon._quarkType = null;
+                    xon._loopType = null;
+                    xon._loopSeq = null;
+                    xon._loopStep = 0;
+                    xon.col = 0xffffff;
+                    if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
+                    return;
+                }
+            }
             _advanceXon(xon);
             xon._movedThisTick = true;
         }
