@@ -989,13 +989,21 @@ function _tickDemoXons(dt) {
                   if(d3x*d3x+d3y*d3y+d3z*d3z>1.44) cp3=cp2; }
                 const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
                 const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
-                // Segment color from destination trail entry (e2) — the segment
-                // "belongs to" the tick that created the move, not the origin.
-                const segCol = _roleToColor(e2.role);
-                const scr = ((segCol >> 16) & 0xff) / 255;
-                const scg = ((segCol >> 8) & 0xff) / 255;
-                const scb = (segCol & 0xff) / 255;
-                const segRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e2.role] != null) ? _roleOpacity[e2.role] : 1;
+                // Segment color: quarks/gluons use e2 (destination) flat color.
+                // Oct↔non-oct transitions interpolate for smooth blending.
+                const col1 = _roleToColor(e1.role);
+                const c1r = ((col1 >> 16) & 0xff) / 255;
+                const c1g = ((col1 >> 8) & 0xff) / 255;
+                const c1b = (col1 & 0xff) / 255;
+                const col2 = _roleToColor(e2.role);
+                const c2r = ((col2 >> 16) & 0xff) / 255;
+                const c2g = ((col2 >> 8) & 0xff) / 255;
+                const c2b = (col2 & 0xff) / 255;
+                const op1 = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e1.role] != null) ? _roleOpacity[e1.role] : 1;
+                const op2 = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e2.role] != null) ? _roleOpacity[e2.role] : 1;
+                // Only interpolate between oct↔weak transitions
+                const _isOctOrWeak = r => r === 'oct' || r === 'weak';
+                const _blend = _isOctOrWeak(e1.role) && _isOctOrWeak(e2.role) && e1.role !== e2.role;
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
@@ -1016,6 +1024,11 @@ function _tickDemoXons(dt) {
                     if (teleport) {
                         xon.trailCol[out*3] = 0; xon.trailCol[out*3+1] = 0; xon.trailCol[out*3+2] = 0;
                     } else {
+                        // Blend oct↔non-oct transitions; flat color otherwise
+                        const scr = _blend ? c1r + (c2r - c1r) * u : c2r;
+                        const scg = _blend ? c1g + (c2g - c1g) * u : c2g;
+                        const scb = _blend ? c1b + (c2b - c1b) * u : c2b;
+                        const segRoleOp = _blend ? op1 + (op2 - op1) * u : op2;
                         const flashBoost = xon.flashT * 0.4 * progress;
                         xon._lastTrailFlashBoost = Math.max(xon._lastTrailFlashBoost || 0, flashBoost);
                         const alpha = sparkOp * _xoi * segRoleOp * Math.min(1, fadeCurve + flashBoost);
