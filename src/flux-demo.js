@@ -3636,9 +3636,11 @@ async function demoTick() {
     // Fires when _maxTickReached crosses a new 100-tick boundary since last milestone.
     // GC always runs; autosave saves to council if eligible.
     {
-        const nextMilestone = _lastAutosavePeak + 100;
+        const _asEl = document.getElementById('autosave-interval');
+        const _asInterval = _asEl ? +_asEl.value : 100;
+        const nextMilestone = _lastAutosavePeak + _asInterval;
         if (_maxTickReached >= nextMilestone) {
-            _lastAutosavePeak = Math.floor(_maxTickReached / 100) * 100;
+            _lastAutosavePeak = Math.floor(_maxTickReached / _asInterval) * _asInterval;
             _gc10();
             // Only autosave when we're AT the peak (not replaying old ground)
             if (_demoTick >= _maxTickReached

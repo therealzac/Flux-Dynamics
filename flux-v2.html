@@ -499,12 +499,21 @@
                     style="flex:0 0 auto; padding:7px 10px; font-size:12px;"
                     title="Test replay integrity (record → save → reload → replay with guards)">&#x1F9EA;</button>
             </div>
-            <!-- Auto-retry best checkbox (always visible) -->
-            <label style="display:flex; align-items:center; gap:4px; font-size:10px; color:#9abccc; cursor:pointer; user-select:none; margin-top:4px;">
-                <input type="checkbox" id="chk-auto-retry-best" checked
-                    style="margin:0; cursor:pointer;">
-                Auto-retry best
-            </label>
+            <!-- Auto-retry best + autosave interval -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                <label style="display:flex; align-items:center; gap:4px; font-size:10px; color:#9abccc; cursor:pointer; user-select:none;">
+                    <input type="checkbox" id="chk-auto-retry-best" checked
+                        style="margin:0; cursor:pointer;">
+                    Auto-retry best
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; font-size:10px; color:#9abccc; user-select:none;">
+                    Save
+                    <input type="range" id="autosave-interval" min="10" max="250" value="100" step="10"
+                        style="width:60px; cursor:pointer;"
+                        oninput="document.getElementById('autosave-interval-val').textContent=this.value">
+                    <span id="autosave-interval-val" style="min-width:28px; text-align:right;">100</span>
+                </label>
+            </div>
             <!-- Action buttons: active row (shown when sim is running) -->
             <div id="sim-active-buttons" style="display:none; gap:6px; margin-top:4px; align-items:center;">
                 <button class="btn-secondary" id="btn-nucleus-pause"
@@ -719,7 +728,7 @@
     <script src="src/flux-demo-backtrack.js?v=61"></script>
     <script src="src/flux-demo-planner.js?v=41"></script>
     <script src="src/flux-demo-ui.js?v=162"></script>
-    <script src="src/flux-demo.js?v=505"></script>
+    <script src="src/flux-demo.js?v=506"></script>
     <script src="src/flux-solver-render.js?v=42"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
