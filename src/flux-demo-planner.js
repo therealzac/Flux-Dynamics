@@ -448,19 +448,18 @@ function _scoreFaceOpportunity(xon, face, occupied) {
     if (!_nucleusTetFaceData || !_nucleusTetFaceData[face]) return null;
     const fd = _nucleusTetFaceData[face];
 
-    // REACHABILITY (pass/fail): xon must be on a face oct node or 1 hop away
+    // REACHABILITY: xon must be on a face oct node.
+    // If face is NOT actualized, xon must be at the pole (cycle[0])
+    // so the first step traverses the unique SC to activate the tet.
     const faceOctNodes = [];
     for (const n of fd.cycle) {
         if (_octNodeSet && _octNodeSet.has(n)) faceOctNodes.push(n);
     }
+    const faceActualized = fd.scIds.every(scId =>
+        activeSet.has(scId) || impliedSet.has(scId) || xonImpliedSet.has(scId));
     const onFace = faceOctNodes.includes(xon.node);
-    if (!onFace) {
-        let nearFace = false;
-        for (const nb of (baseNeighbors[xon.node] || [])) {
-            if (faceOctNodes.includes(nb.node)) { nearFace = true; break; }
-        }
-        if (!nearFace) return null; // unreachable this tick
-    }
+    if (!onFace) return null; // must be directly on a face oct node
+    if (!faceActualized && xon.node !== fd.cycle[0]) return null; // must be at pole for non-actualized faces
 
     // Quark type selection
     const isProtonFace = A_SET.has(face);
