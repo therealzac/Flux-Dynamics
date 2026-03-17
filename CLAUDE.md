@@ -754,3 +754,46 @@ Automated pipeline: record→save→reload→replay w/guards→scrub→extend, t
 **What's validated**: T59 (trail head matches node) passes. T57 (segment length) is the remaining risk — synthetic trail entries from padding may span non-adjacent nodes. The `resumeDemo()` reconstruction should eliminate this by building trails incrementally from chronological snapshots.
 
 **What still needs testing**: (1) Fresh 100+ run → scrub to t=0 → play → verify T57/T59 pass and live continuation works. (2) Dropdown replay of same run → verify trails match. (3) Auto-retry-best on reload → verify redo drain completes cleanly.
+
+---
+
+## 14. Current Focus: Quark Generation (2026-03-17)
+
+**Status**: Replay system is stable. Focus has shifted to quark generation correctness.
+
+After scrutinizing the physics to ensure the simulation accurately models the theory, quarks are no longer being generated. We have set up a **Quark Test button** (Q) that configures strict quark-forcing rules and clears IDB cache. **Current goal: pass 100ps with at least 2 quarks generated.**
+
+We suspect the problem is a programming bug, not a physics modeling issue.
+
+### Tet Activation Physics (Implemented)
+
+Each tet face has exactly **2 SCs**: one equatorial (cage SC, always active) and one **unique SC** connecting the pole to the ext node. The unique SC must be activated by physical traversal.
+
+**Poles**: Node 0 serves faces 1-4. Node 4 serves faces 5-8. These are antipodal oct vertices.
+
+**Key rules**:
+- A xon can only activate a tet's unique SC by traversing it from the correct pole
+- Walk-to-face has been removed — xons can only start loops from face oct nodes they're already on
+- If the tet is not yet actualized, the xon MUST be at the pole (cycle[0]) so the first loop step traverses the unique SC
+- If the tet IS already actualized, the xon may start from any of the face's oct nodes
+- T60 ejection skips step 0 — the xon hasn't traversed the unique SC yet (it's about to)
+- T98 guard: oct mode xons cannot directly eject as weak — the only way off the oct is via a tet loop
+
+**Face→Pole→SC mapping** (from live data):
+| Face | Pole | Ext Node | Unique SC | Cage SC |
+|------|------|----------|-----------|---------|
+| F1 | 0 | 1 | SC0 (0↔1) | SC51 |
+| F2 | 0 | 5 | SC4 (0↔5) | SC48 |
+| F3 | 0 | 2 | SC1 (0↔2) | SC68 |
+| F4 | 0 | 6 | SC5 (0↔6) | SC53 |
+| F5 | 4 | 26 | SC21 (4↔26) | SC51 |
+| F6 | 4 | 97 | SC24 (4↔97) | SC48 |
+| F7 | 4 | 48 | SC22 (4↔48) | SC68 |
+| F8 | 4 | 102 | SC25 (4↔102) | SC53 |
+
+### What's Been Done
+- Removed walk-to-face from `_assignXonToTet`
+- Face assignment requires xon at pole for non-actualized faces
+- T60 skips step 0 (xon about to traverse unique SC)
+- T98 live guard prevents oct→weak direct ejection
+- Quark test button (Q) with strict ruleset + IDB cache clear
