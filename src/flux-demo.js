@@ -1385,6 +1385,8 @@ function startDemoLoop() {
     _relayEnumTotal = 0;
     console.log(`%c[DEMO] seed=0x${_runSeed.toString(16).padStart(8,'0')}`, 'color:cyan;font-weight:bold');
     _balanceHistory = [];
+    _octFullConsecutive = 0;
+    _ticksSinceLastQuark = 0;
     _bfsReset(); // fresh demo = clean BFS + ledger
     _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 100
     _btSnapshots.length = 0;
@@ -1582,7 +1584,8 @@ function _executeOpeningTick(occupied) {
             const pick = belowY[i];
             _executeOctMove(xon, { node: pick.node, dirIdx: pick.dirIdx, _needsMaterialise: false, _scId: undefined });
         }
-        // Remaining 2 xons: move to above-center neighbors, become oct
+        // Remaining 2 xons: move to above-center neighbors, become weak
+        // CA engine's weak branch will BFS them toward oct once it's discovered at tick 1.
         for (let i = 4; i < 6; i++) {
             const xon = _demoXons[i];
             if (xon._mode === 'oct_formation') {
@@ -1590,8 +1593,9 @@ function _executeOpeningTick(occupied) {
                 if (aboveIdx < aboveY.length) {
                     _executeOctMove(xon, { node: aboveY[aboveIdx].node, dirIdx: aboveY[aboveIdx].dirIdx, _needsMaterialise: false, _scId: undefined });
                 }
-                xon._mode = 'oct';
-                xon._pendingWeakEjection = true;
+                xon._mode = 'weak';
+                xon.col = WEAK_FORCE_COLOR;
+                if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
         }
 
@@ -2126,7 +2130,7 @@ async function demoTick() {
 
             // Check overcrowding: fire tet from pole if needed
             const octCount = _demoXons.filter(x => x.alive && x._mode === 'oct').length;
-            const overcrowded = octCount > (typeof OCT_CAPACITY_MAX !== 'undefined' ? OCT_CAPACITY_MAX : 6)
+            const overcrowded = octCount >= (typeof OCT_CAPACITY_MAX !== 'undefined' ? OCT_CAPACITY_MAX : 6)
                 || (_octFullConsecutive >= (typeof T79_MAX_FULL_TICKS !== 'undefined' ? T79_MAX_FULL_TICKS : Infinity));
             const maxOctReached = typeof _ruleMaxOctPerXon !== 'undefined' && _ruleMaxOctPerXon !== Infinity
                 && (xon._octConsecutive || 0) >= _ruleMaxOctPerXon;
@@ -2318,13 +2322,16 @@ async function demoTick() {
                         loser = m;
                     }
                 }
-                // Give loser an alternative free base neighbor
+                // Give loser an alternative free neighbor
+                // Oct xons must stay on oct nodes
+                const loserIsOct = loser.xon._mode === 'oct';
                 const nbs = baseNeighbors[loser.xon.node] || [];
                 let alt = null;
                 for (const nb of nbs) {
                     if ((occupied.get(nb.node) || 0) > 0) continue;
                     if (allTargets.has(nb.node)) continue;
                     if (nb.node === loser.xon.prevNode) continue;
+                    if (loserIsOct && _octNodeSet && !_octNodeSet.has(nb.node)) continue;
                     alt = nb.node;
                     break;
                 }

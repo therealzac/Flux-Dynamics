@@ -759,13 +759,39 @@ Automated pipeline: record→save→reload→replay w/guards→scrub→extend, t
 
 ## 14. Current Focus: Quark Generation (2026-03-17)
 
-**Status**: Replay system is stable. Focus has shifted to quark generation correctness.
+**Status**: Replay system is stable. Phased choreography has been replaced with a cellular automata engine.
 
-After scrutinizing the physics to ensure the simulation accurately models the theory, quarks are no longer being generated. We have set up a **Quark Test button** (Q) that configures strict quark-forcing rules and clears IDB cache. **Current goal: pass 100ps with at least 2 quarks generated.**
+After scrutinizing the physics to ensure the simulation accurately models the theory, quarks are no longer being generated. We have set up a **Quark Test button** (Q) that configures strict quark-forcing rules and clears IDB cache. **Current goal: get the CA engine to achieve tick 10 in quark test.**
 
 We suspect the problem is a programming bug, not a physics modeling issue.
 
-### Tet Activation Physics (Implemented)
+### Cellular Automata Engine (2026-03-17)
+
+Replaced ~1250 lines of phased choreography (PHASE 0-3) with ~300-line CA engine. Each xon follows local rules:
+
+**Base rules (all xons):**
+- Stochastic movement with zero-sum direction bias
+- Never stops (T20), never collides (T19)
+
+**Oct rules:**
+- Move along cage edges (base + cage SCs)
+- When overcrowded (T79) or max oct ticks reached (T97): fire tet from pole
+- Choreographer picks which tet based on face demand (least-visited)
+- Oct xon not on oct node: BFS toward oct via base edges
+
+**Tet rules:**
+- Follow loop sequence, one hop per tick
+- Abandon if next move occupied (Pauli) or face de-actualized
+- On abandonment: oct if on oct node, weak otherwise
+- Loop completion: return to oct or weak
+
+**Weak rules:**
+- BFS toward nearest oct node via base edges only
+- On reaching oct node: become oct
+
+**Conflict resolution:** tet xons win, otherwise random. Loser picks alternative free neighbor.
+
+### Tet Activation Physics
 
 Each tet face has exactly **2 SCs**: one equatorial (cage SC, always active) and one **unique SC** connecting the pole to the ext node. The unique SC must be activated by physical traversal.
 
@@ -773,7 +799,6 @@ Each tet face has exactly **2 SCs**: one equatorial (cage SC, always active) and
 
 **Key rules**:
 - A xon can only activate a tet's unique SC by traversing it from the correct pole
-- Walk-to-face has been removed — xons can only start loops from face oct nodes they're already on
 - If the tet is not yet actualized, the xon MUST be at the pole (cycle[0]) so the first loop step traverses the unique SC
 - If the tet IS already actualized, the xon may start from any of the face's oct nodes
 - T60 ejection skips step 0 — the xon hasn't traversed the unique SC yet (it's about to)
@@ -790,10 +815,3 @@ Each tet face has exactly **2 SCs**: one equatorial (cage SC, always active) and
 | F6 | 4 | 97 | SC24 (4↔97) | SC48 |
 | F7 | 4 | 48 | SC22 (4↔48) | SC68 |
 | F8 | 4 | 102 | SC25 (4↔102) | SC53 |
-
-### What's Been Done
-- Removed walk-to-face from `_assignXonToTet`
-- Face assignment requires xon at pole for non-actualized faces
-- T60 skips step 0 (xon about to traverse unique SC)
-- T98 live guard prevents oct→weak direct ejection
-- Quark test button (Q) with strict ruleset + IDB cache clear
