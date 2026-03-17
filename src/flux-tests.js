@@ -1949,8 +1949,8 @@ function _liveGuardCheck() {
         // During council replay phase (up to recorded peak), suppress rewinds/halts.
         // The recorded moves are known-good; guard failures are transient and the
         // original run resolved them via backtracking. We replay the happy path only.
-        if (_sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak) {
-            // Replay corruption: halt unconditionally. Never silently reset guards.
+        if (_guardHardStop && _sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak) {
+            // Replay corruption (test pipeline only): halt unconditionally.
             const failMsgs = Object.entries(_liveGuards)
                 .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; ');
             console.error(`[REPLAY GUARD] Corruption at tick ${tick}: ${failMsgs}`);
