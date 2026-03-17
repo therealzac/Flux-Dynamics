@@ -3919,11 +3919,15 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                 // Dedup: if this seed already exists in council, update it instead of pushing a duplicate
                 const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
                 if (existingMember) {
-                    existingMember.peak = peak; // actual traversal peak, not stale high-water mark
-                    if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
-                    else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    await _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
-                    console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
+                    if (peak <= existingMember.peak) {
+                        console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) not longer than existing (t${existingMember.peak}) — skip`, 'color:#cc8866');
+                    } else {
+                        existingMember.peak = peak;
+                        if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
+                        else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
+                        await _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
+                        console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
+                    }
                 } else {
                     // Collect evicted seeds before trimming
                     const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
@@ -4072,9 +4076,13 @@ function _saveCurrentRunToCouncil() {
         // _btSnapshots IS the traversal — serialize directly, no archive needed
         const snapsCopy = _btSnapshots.slice();
         if (existingMember) {
-            // Always save for same seed — full overwrite. The stored peak may be
-            // stale (from _maxTickReached before backtracking), so never skip based
-            // on the old peak. The actual snapshot data is the source of truth.
+            // Only overwrite if new run is longer — don't clobber 899 with 852
+            // after backtracker truncation. Peak is now correctly derived from
+            // _btSnapshots (not stale _maxTickReached), so this comparison is valid.
+            if (peak <= existingMember.peak) {
+                console.log(`%c[SAVE] Current run (peak t${peak}) not longer than existing (t${existingMember.peak}) — skip`, 'color:#cc8866');
+                return;
+            }
             existingMember.peak = peak;
             existingMember.moves = movesCopy;
             _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
