@@ -702,14 +702,12 @@ document.getElementById('excitation-speed-slider').addEventListener('input', ()=
     // Restart clock so new interval takes effect immediately
     if(excitationClockTimer){ clearInterval(excitationClockTimer); excitationClockTimer=null; startExcitationClock(); }
     // Also restart demo interval if demo is running (but NOT if paused).
-    // If we're in forward replay mode (draining redo stack), restart the replay
-    // chain instead of switching to live demoTick — otherwise speed changes
-    // during replay would trigger heavy live computation.
+    // If we're in replay or live mode, restart the tick loop with updated speed.
     if(_demoActive && typeof isDemoPaused === 'function' && !isDemoPaused()) {
         if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
         if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-        if (typeof _redoStack !== 'undefined' && _redoStack.length > 0) {
-            // Re-enter replay mode — resumeDemo() handles redo stack correctly
+        if (_replayCursor >= 0 && _replayCursor < _btSnapshots.length - 1) {
+            // Re-enter replay mode — resumeDemo() handles cursor correctly
             _demoPaused = true;
             resumeDemo();
         } else {
@@ -731,11 +729,6 @@ if (typeof TRAIL_MAX !== 'undefined') document.getElementById('tracer-lifespan-s
 document.getElementById('tracer-lifespan-slider').addEventListener('input',()=>{
     const val=+document.getElementById('tracer-lifespan-slider').value;
     document.getElementById('tracer-lifespan-val').textContent = val === 0 ? 'off' : val;
-    // When paused, augment trails from snapshot history to match new slider value
-    if (typeof _demoPaused !== 'undefined' && _demoPaused &&
-        typeof _augmentTrailsFromSnapshots === 'function') {
-        _augmentTrailsFromSnapshots();
-    }
 });
 // Spark slider synced from xons (trail) slider
 document.getElementById('trail-opacity-slider').addEventListener('input',()=>{

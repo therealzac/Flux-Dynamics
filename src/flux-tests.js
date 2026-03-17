@@ -343,19 +343,19 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
-    { id: 'T24', name: 'Trail color stability',
+    { id: 'T24', name: 'Trail role validity',
       check(tick, g) {
+        const validRoles = new Set(['oct', 'pu1', 'pu2', 'pd', 'nd1', 'nd2', 'nu', 'weak', 'gluon']);
         for (const xon of _demoXons) {
-          if (!xon.alive || !xon.trailColHistory) continue;
-          for (let j = 0; j < xon.trailColHistory.length; j++) {
-            const c = xon.trailColHistory[j];
-            const isWhite = c === 0xffffff;
-            const isQuark = Object.values(QUARK_COLORS).includes(c);
-            const isWeak = c === WEAK_FORCE_COLOR;
-            const isGluon = c === GLUON_COLOR;
-            if (!isWhite && !isQuark && !isWeak && !isGluon) return `tick ${tick}: color 0x${c.toString(16)}`;
+          if (!xon.alive || !xon.trail) continue;
+          for (let j = 0; j < xon.trail.length; j++) {
+            const e = xon.trail[j];
+            if (!e || !e.role) return `tick ${tick}: trail entry ${j} missing role`;
+            if (!validRoles.has(e.role)) return `tick ${tick}: invalid role '${e.role}'`;
+            // Verify color derivable from role
+            const c = _roleToColor(e.role);
+            if (c === undefined || c === null) return `tick ${tick}: role '${e.role}' has no color`;
           }
-          if (xon.trailColHistory.length !== xon.trail.length) return `tick ${tick}: trail/color desync`;
         }
         return null;
       }
@@ -447,8 +447,10 @@ const LIVE_GUARD_REGISTRY = [
           if (!xon.alive || xon._dying) continue;
           if (!xon.trail || xon.trail.length === 0)
             return `tick ${tick}: alive xon has empty trail at node ${xon.node}`;
-          if (!xon.trailColHistory || xon.trailColHistory.length !== xon.trail.length)
-            return `tick ${tick}: trail/color length mismatch`;
+          // Verify unified entry format
+          const last = xon.trail[xon.trail.length - 1];
+          if (!last || typeof last.node !== 'number' || !last.role)
+            return `tick ${tick}: trail entry malformed`;
         }
         return null;
       }
@@ -661,8 +663,9 @@ const LIVE_GUARD_REGISTRY = [
         for (const xon of _demoXons) {
           if (!xon.alive || xon._dying) continue;
           if (!xon.trail || xon.trail.length < 2) continue;
-          const fromN = xon.trail[xon.trail.length - 2];
-          const toN = xon.trail[xon.trail.length - 1];
+          const fromE = xon.trail[xon.trail.length - 2];
+          const toE = xon.trail[xon.trail.length - 1];
+          const fromN = fromE.node, toN = toE.node;
           if (fromN === toN) continue; // same-node (spawn)
           const a = pos[fromN], b = pos[toN];
           if (!a || !b) continue;
@@ -727,8 +730,8 @@ const LIVE_GUARD_REGISTRY = [
           if (!xon.alive) continue;
           if (!xon.trail || xon.trail.length === 0) continue;
           const lastTrail = xon.trail[xon.trail.length - 1];
-          if (xon.node !== lastTrail) {
-            return `tick ${tick}: X${xi} at node ${xon.node} but trail ends at ${lastTrail}`;
+          if (xon.node !== lastTrail.node) {
+            return `tick ${tick}: X${xi} at node ${xon.node} but trail ends at ${lastTrail.node}`;
           }
         }
         return null;
@@ -1043,16 +1046,21 @@ const LIVE_GUARD_REGISTRY = [
         if (tick < 20) return null;
         if (g.ok === true) return null; // already verified
         if (!_btSnapshots || _btSnapshots.length < 2) return null;
-        // Check monotonicity
+        // Check contiguous path from t=0 to t=current:
+        // 1. First snapshot must be tick 0
+        if (_btSnapshots[0].tick !== 0) {
+          return `first snapshot tick=${_btSnapshots[0].tick}, expected 0`;
+        }
+        // 2. Strictly monotonic (no duplicates, no gaps in ordering)
         for (let i = 1; i < _btSnapshots.length; i++) {
           if (_btSnapshots[i].tick <= _btSnapshots[i - 1].tick) {
             return `snapshot[${i}].tick=${_btSnapshots[i].tick} <= snapshot[${i-1}].tick=${_btSnapshots[i-1].tick}`;
           }
         }
-        // Check last snapshot tick matches _demoTick - 1
+        // 3. Last snapshot must reach at least the current tick's pre-state
         const last = _btSnapshots[_btSnapshots.length - 1];
-        if (last.tick !== _demoTick - 1) {
-          return `last snapshot tick=${last.tick} != _demoTick-1=${_demoTick - 1}`;
+        if (last.tick < _demoTick - 1) {
+          return `last snapshot tick=${last.tick} < _demoTick-1=${_demoTick - 1} — gap in history`;
         }
         // All good — promote to green
         g.ok = true; g.msg = '';
@@ -1098,44 +1106,6 @@ const LIVE_GUARD_REGISTRY = [
             }
           }
           // If xon left tet mode (now oct/weak), that's fine — ejection/completion
-        }
-        return null;
-      }
-    },
-
-    // ── T85: Stochastic DFS — runs must diverge ──
-    // At tick 50, fingerprint xon positions and save to localStorage.
-    // If a subsequent run produces the identical fingerprint, DFS is not
-    // exploring different branches → violation.
-    {
-      id: 'T85', name: 'Stochastic DFS (runs diverge)',
-      convergence: true,
-      init: { checked: false },
-      check(tick, g) {
-        if (g.checked) return null;
-        const CHECK_TICK = 50;
-        if (tick < CHECK_TICK) return null;
-        if (tick > CHECK_TICK) { g.checked = true; return null; } // missed window
-        // Build fingerprint: sorted list of (xonIndex, node, mode)
-        const fp = _demoXons.map((x, i) =>
-          x.alive ? `${i}:${x.node}:${x._mode}:${x._assignedFace||'-'}` : `${i}:dead`
-        ).join('|');
-        const KEY = '_fluxT85_fingerprint';
-        try {
-          const prev = localStorage.getItem(KEY);
-          localStorage.setItem(KEY, fp);
-          g.checked = true;
-          if (prev && prev === fp) {
-            return `tick ${CHECK_TICK}: identical fingerprint across runs — DFS is deterministic`;
-          }
-          // First run or different fingerprint → pass
-          g.ok = true;
-          g.msg = 'diverged';
-        } catch (e) {
-          // localStorage unavailable — skip test
-          g.checked = true;
-          g.ok = true;
-          g.msg = 'localStorage N/A';
         }
         return null;
       }
@@ -1634,6 +1604,71 @@ const LIVE_GUARD_REGISTRY = [
       }
     },
 
+    // ── T93: Trail head color matches xon ──
+    // The most recent trail entry's role must always match the xon's current role.
+    // Enforces the invariant: "the color of an xon's most recent trail segment
+    // is always the same color as the xon."
+    {
+      id: 'T93', name: 'Trail head color matches xon',
+      check(tick, g) {
+        for (let i = 0; i < _demoXons.length; i++) {
+          const xon = _demoXons[i];
+          if (!xon.alive || !xon.trail || xon.trail.length === 0) continue;
+          const trailRole = xon.trail[xon.trail.length - 1].role;
+          const xonRole = _xonRole(xon);
+          if (trailRole !== xonRole) {
+            return `tick ${tick}: X${i} role=${xonRole} but trail head role=${trailRole}`;
+          }
+        }
+        return null;
+      }
+    },
+
+    // ── T94: Historical trail colors are immutable ──
+    // Once a trail segment is recorded, its role (color) must never change.
+    // _trailRecolor is gone; _trailPush at tick-end is the only writer.
+    // All entries are frozen the moment they're pushed.
+    {
+      id: 'T94', name: 'Historical trail colors immutable',
+      snapshot(g) {
+        // Capture role of ALL trail entries (including head)
+        g._t94Prev = [];
+        for (let i = 0; i < _demoXons.length; i++) {
+          const xon = _demoXons[i];
+          if (!xon.alive || !xon.trail || xon.trail.length === 0) {
+            g._t94Prev.push(null);
+            continue;
+          }
+          const roles = [];
+          for (let j = 0; j < xon.trail.length; j++) {
+            roles.push(xon.trail[j].role);
+          }
+          g._t94Prev.push(roles);
+        }
+      },
+      check(tick, g) {
+        if (!g._t94Prev) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const xon = _demoXons[i];
+          if (!xon.alive || !xon.trail) continue;
+          const prev = g._t94Prev[i];
+          if (!prev) continue;
+          // If trail was truncated (backtracker rewind), the rewritten entries
+          // are legitimately different. Only check entries that survived.
+          // Entries 0..trail.length-1 that existed before the tick must match.
+          const checkLen = Math.min(prev.length, xon.trail.length);
+          // If trail shrank, the rewound entries are new — skip them
+          if (xon.trail.length < prev.length) continue;
+          for (let j = 0; j < checkLen; j++) {
+            if (xon.trail[j].role !== prev[j]) {
+              return `tick ${tick}: X${i} trail[${j}] role changed from ${prev[j]} to ${xon.trail[j].role}`;
+            }
+          }
+        }
+        return null;
+      }
+    },
+
     // ── T-DirBal: Directional balance convergence ──
     // After 64 ticks, each alive xon must have used >= 3 distinct direction
     // indices in _dirBalance. Validates the balance tracking is working and
@@ -1742,6 +1777,25 @@ const LIVE_GUARD_REGISTRY = [
         return null;
       }
     },
+
+    // ── T95: Oct mode xons must be on oct nodes only ──
+    // Any xon in 'oct' or 'oct_formation' mode must have its .node in _octNodeSet.
+    {
+      id: 'T95', name: 'Oct mode xons on oct nodes only',
+      check(tick, g) {
+        if (tick < 12) return null; // grace period
+        if (!_octNodeSet || _octNodeSet.size === 0) return null;
+        for (let i = 0; i < _demoXons.length; i++) {
+          const x = _demoXons[i];
+          if (!x.alive) continue;
+          if (x._mode !== 'oct' && x._mode !== 'oct_formation') continue;
+          if (!_octNodeSet.has(x.node)) {
+            return `tick ${tick}: X${i} mode=${x._mode} at node ${x.node} not in _octNodeSet`;
+          }
+        }
+        return null;
+      }
+    },
 ];
 
 // ── Auto-derived from registry ──
@@ -1779,7 +1833,7 @@ function _liveGuardResetForRewind() {
 // ══════════════════════════════════════════════════════════════════
 let _liveGuardActivated = false;
 function _liveGuardCheck() {
-    if (!_demoActive || !_liveGuardsActive || _testRunning) return;
+    if (!_demoActive || !_liveGuardsActive) return;
     const tick = _demoTick;
 
     // ── During grace: stay null ──
@@ -1900,14 +1954,19 @@ function _liveGuardCheck() {
         // The recorded moves are known-good; guard failures are transient and the
         // original run resolved them via backtracking. We replay the happy path only.
         if (_sweepReplayActive && _sweepReplayMember && tick <= _sweepReplayMember.peak) {
-            // Reset failed guards silently — replay continues
-            for (const entry of LIVE_GUARD_REGISTRY) {
-                const g = _liveGuards[entry.id];
-                if (g.failed) { g.failed = false; g.ok = true; g.msg = ''; }
+            // Replay corruption: halt unconditionally. Never silently reset guards.
+            const failMsgs = Object.entries(_liveGuards)
+                .filter(([, g]) => g.failed).map(([k, g]) => `${k}: ${g.msg}`).join('; ');
+            console.error(`[REPLAY GUARD] Corruption at tick ${tick}: ${failMsgs}`);
+            if (_guardHardStop) {
+                _guardHardStop = false;
+                if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, failMsgs);
             }
-            _liveGuardFailTick = null;
-            _liveGuardDumped = false;
-            // Don't request rewind or halt — just continue
+            simHalted = true;
+            _demoPaused = true;
+            _sweepActive = false; // kill sweep synchronously before polls see simHalted
+            _liveGuardRender();
+            return;
         } else {
         if (typeof _liveGuardFailTick === 'undefined' || _liveGuardFailTick === null) {
             _liveGuardFailTick = tick; // record first failure tick
@@ -1949,7 +2008,7 @@ function _liveGuardCheck() {
 // Snapshot xon positions BEFORE demoTick advances them (called from demoTick)
 let _liveGuardPrev = null;
 function _liveGuardSnapshot() {
-    if (!_liveGuardsActive || _testRunning) { _liveGuardPrev = null; return; }
+    if (!_liveGuardsActive) { _liveGuardPrev = null; return; }
     _liveGuardPrev = _demoXons.filter(x => x.alive).map(x => ({
         xon: x, node: x.node, mode: x._mode
     }));
@@ -3024,11 +3083,10 @@ function _isCouncilEligible() {
 }
 
 async function _autosaveToIDB() {
-    if (_councilSnapArchive.length === 0) return;
+    if (_btSnapshots.length === 0) return;
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
-    // Use forward-only archive (pre-serialized at each max-tick advance)
-    const allSnaps = _councilSnapArchive.slice();
+    const allSnaps = _btSnapshots.map(_serializeSnapshot);
     const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
     const key = _blacklistRuleKey(lvl);
     try {
@@ -3155,7 +3213,7 @@ async function _blIDBLoad(lvl) {
                     _blLoadedBuckets = new Set();
                     const ms = (performance.now() - t0).toFixed(1);
                     console.log(`[BL] Loaded metadata: ${data.total} fps across ${_blBucketCount} buckets + council [${peaks}] in ${ms}ms`);
-                    resolve({ map: new Map(), total: data.total || 0, seedIdx: data.seedIdx || 0, goldenCouncil });
+                    resolve({ map: new Map(), total: data.total || 0, seedIdx: data.seedIdx || 0, usedSeeds: data.usedSeeds || [], goldenCouncil });
                     return;
                 }
 
@@ -3175,7 +3233,7 @@ async function _blIDBLoad(lvl) {
                     }
                     const ms = (performance.now() - t0).toFixed(1);
                     console.log(`[BL] Loaded legacy blob: ${total} fps + council [${peaks}] in ${ms}ms (will migrate on next save)`);
-                    resolve({ map, total, seedIdx: data.seedIdx || 0, goldenCouncil });
+                    resolve({ map, total, seedIdx: data.seedIdx || 0, usedSeeds: data.usedSeeds || [], goldenCouncil });
                 } else {
                     resolve(null);
                 }
@@ -3272,8 +3330,8 @@ function _serializeSnapshot(snap) {
         openingPhase: snap.openingPhase,
         xons: snap.xons.map(x => {
             const role = x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct');
-            // Strip trail arrays — only store trailLen. Trails reconstructed by cold-set cleaning.
-            const { trail, trailColHistory, _trailRoleHistory, _trailFrozenPos, ...rest } = x;
+            // Strip live trail array — only store trailLen + per-tick delta (_tDelta/_tRecolor).
+            const { trail, _trailLenAtTickStart, ...rest } = x;
             return { ...rest, _role: role, trailLen: x.trailLen != null ? x.trailLen : (trail ? trail.length : 0) };
         }),
         activeSet: [...snap.activeSet],
@@ -3311,21 +3369,24 @@ function _deserializeSnapshot(s) {
         _v: s._v || 0,
         tick: s.tick,
         openingPhase: s.openingPhase,
-        xons: s.xons.map(x => ({
-            ...x,
-            // Backfill _role for legacy IDB data (pre-_role snapshots)
-            _role: x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct'),
-            _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
-            // Trail arrays: legacy IDB data may have them, modern data uses trailLen only
-            trail: x.trail ? x.trail.slice() : null,
-            trailColHistory: x.trailColHistory ? x.trailColHistory.slice() : null,
-            _trailRoleHistory: x._trailRoleHistory ? x._trailRoleHistory.slice() : null,
-            _trailFrozenPos: x._trailFrozenPos ? x._trailFrozenPos.map(p => [p[0], p[1], p[2]]) : null,
-            trailLen: x.trailLen != null ? x.trailLen : (x.trail ? x.trail.length : 0),
-            _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
-            _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
-            _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
-        })),
+        xons: s.xons.map(x => {
+            const role = x._role || (x._mode === 'gluon' ? 'gluon' : x._mode === 'weak' ? 'weak' : x._quarkType || 'oct');
+            // Trail: unified entry format or null (modern snapshots use trailLen + _tDelta)
+            let trail = null;
+            if (x.trail && Array.isArray(x.trail) && x.trail.length > 0 && typeof x.trail[0] === 'object') {
+                trail = x.trail.map(e => ({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] }));
+            }
+            return {
+                ...x,
+                _role: role,
+                _loopSeq: x._loopSeq ? x._loopSeq.slice() : null,
+                trail: trail,
+                trailLen: x.trailLen != null ? x.trailLen : (trail ? trail.length : 0),
+                _dirBalance: x._dirBalance ? x._dirBalance.slice() : new Array(10).fill(0),
+                _modeStats: x._modeStats ? { ...x._modeStats } : { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 },
+                _gluonBoundSCs: x._gluonBoundSCs ? x._gluonBoundSCs.slice() : null,
+            };
+        }),
         activeSet: new Set(s.activeSet),
         xonImpliedSet: new Set(s.xonImpliedSet),
         impliedSet: new Set(s.impliedSet),
@@ -3396,6 +3457,7 @@ function _blIDBSaveBlacklist(lvl) {
             bucketCount,
             total: _sweepTotalBlacklisted,
             seedIdx: _sweepSeedIdx,
+            usedSeeds: [..._sweepUsedSeeds],
             councilIndex,
             timestamp: new Date().toISOString(),
         }, baseKey);
@@ -3408,7 +3470,7 @@ function _blIDBSaveBlacklist(lvl) {
     } catch (e) { console.warn('[BL] Save failed:', e); }
 }
 
-async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak) {
+async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl) + '|' + seed;
@@ -3425,50 +3487,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
         }
     }
 
-    // ── Append-only save when extending a replay ──
-    // Keep ancestor's snapshots (perfect trail data), only append new ticks beyond ancestorPeak.
-    if (ancestorPeak >= 0) {
-        try {
-            const existingData = await new Promise((resolve) => {
-                const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
-                const req = tx.objectStore(_CS_IDB_STORE).get(key);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
-            });
-            if (existingData && existingData.snapshots && existingData.snapshots.length > 0) {
-                // Find where new data starts (ticks beyond ancestor's peak)
-                const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
-                if (newSnapshots.length > 0) {
-                    let combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
-                    // Trim to last contiguous run (existing IDB may have stale multi-run data)
-                    { let ls = 0; for (let i = 1; i < combinedSnaps.length; i++) { if (combinedSnaps[i].tick <= combinedSnaps[i-1].tick) ls = i; } if (ls > 0) combinedSnaps = combinedSnaps.slice(ls); }
-                    const movesArr = [];
-                    for (const [tick, moveMap] of moves) {
-                        movesArr.push([tick, [...moveMap.entries()]]);
-                    }
-                    const tx2 = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
-                    const store = tx2.objectStore(_CS_IDB_STORE);
-                    store.put({
-                        seed, snapshots: combinedSnaps, moves: movesArr,
-                        snapshotVersion: _SNAPSHOT_VERSION,
-                        timestamp: new Date().toISOString(),
-                    }, key);
-                    store.put({ seed, moves: movesArr }, key + '|mv');
-                    console.log(`%c[Council IDB] Extended member seed 0x${seed.toString(16).padStart(8,'0')} — kept ${existingData.snapshots.length} ancestor snapshots, appended ${newSnapshots.length} new (total ${combinedSnaps.length})`, 'color:#66ccff');
-                } else {
-                    console.log(`%c[Council IDB] No new snapshots beyond ancestor peak t${ancestorPeak} — skip`, 'color:#cccc66');
-                }
-                return; // done — don't fall through to full overwrite
-            }
-        } catch (e) { console.warn('[Council IDB] Append-only read failed, falling back to full save:', e); }
-    }
-
-    // NOTE: blacklist is cross-seed — do NOT GC based on one member's cold set.
-    // Fingerprints from seed A at tick N must still block seed B at tick N.
-
-    // Serialize for IDB — no trail reconstruction needed.
-    // _serializeSnapshot strips trail arrays; _t* fields (per-tick trail entry)
-    // survive serialization and drive forward restore on replay load.
+    // Full overwrite — _btSnapshots IS the complete traversal.
     const snapsArr = snapshots.map(_serializeSnapshot);
     const movesArr = [];
     for (const [tick, moveMap] of moves) {
@@ -3524,6 +3543,37 @@ async function _hydrateCouncilMember(lvl, member) {
                         member.moves = new Map();
                         for (const [tick, pairs] of data.moves) {
                             member.moves.set(tick, new Map(pairs));
+                        }
+                    }
+                    // Reconstruct full trail arrays from deltas so redo drain
+                    // uses the simple copy path (no incremental delta accumulation).
+                    if (member.snapshots && member.snapshots.length > 0) {
+                        const xonCount = member.snapshots[0].xons.length;
+                        const trails = new Array(xonCount);
+                        for (let xi = 0; xi < xonCount; xi++) trails[xi] = [];
+                        for (const snap of member.snapshots) {
+                            for (let xi = 0; xi < snap.xons.length; xi++) {
+                                const sx = snap.xons[xi];
+                                const t = trails[xi];
+                                const tLen = sx.trailLen != null ? sx.trailLen : 0;
+                                // Rewind
+                                if (t.length > tLen) t.length = tLen;
+                                // Recolor
+                                if (sx._tRecolor && t.length === tLen && t.length > 0) {
+                                    t[t.length - 1] = { ...t[t.length - 1], role: sx._tRecolor };
+                                }
+                                // Forward: push deltas
+                                if (t.length < tLen && sx._tDelta) {
+                                    for (const e of sx._tDelta) t.push({ node: e.node, role: e.role, pos: e.pos ? [e.pos[0], e.pos[1], e.pos[2]] : [0,0,0] });
+                                }
+                                // Safety: pad to trailLen if deltas didn't reach it
+                                while (t.length < tLen) {
+                                    const p = snap.pos && snap.pos[sx.node] ? snap.pos[sx.node] : [0,0,0];
+                                    t.push({ node: sx.node, role: sx._role || 'oct', pos: [p[0], p[1], p[2]] });
+                                }
+                                // Stamp full trail on snapshot for redo drain
+                                sx.trail = t.map(e => ({ node: e.node, role: e.role, pos: [e.pos[0], e.pos[1], e.pos[2]] }));
+                            }
                         }
                     }
                     member._cold = false;
@@ -3594,6 +3644,95 @@ function _dehydrateCouncilMember(member) {
     member._cold = true;
 }
 
+// ── startSweepSeed: single-seed entry point ──
+// Initializes the demo for one seed and returns immediately.
+// If replayMember is provided, populates the redo stack from cold storage
+// (council replay = sweep with pre-seeded redo stack).
+// The caller polls for completion — this function does NOT loop.
+async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
+    if (!_startupLog) _startupLog = () => {};
+
+    // 1. Set sweep/replay flags
+    _forceSeed = seed;
+    _sweepReplayActive = !!replayMember;
+    _sweepReplayMember = replayMember || null;
+    _replayAncestorPeak = replayMember ? replayMember.peak : -1;
+
+    if (replayMember) {
+        console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${replayMember.peak}`, 'color:#66ccff;font-weight:bold');
+    }
+
+    // 2. Reset per-seed state
+    simHalted = false;
+    _btBadMoveLedger.clear();
+    _btTriedFingerprints.clear();
+    _sweepBlacklistHitsSeed = 0;
+    _sweepGoldenHitsSeed = 0;
+    _sweepSeedMoves = new Map();
+    _searchTraversalLog = [];
+    _searchEventCounter = 0;
+    _searchPathStack = [];
+    _searchParentNodeId = null;
+    _searchLastCandidates = null;
+    _searchStartTime = performance.now();
+    if (typeof _lockRules === 'function') _lockRules(true);
+
+    // 3. Set up nucleus
+    if (typeof stopDemo === 'function' && _demoActive) stopDemo();
+    _startupLog('simulateNucleus() starting...');
+    NucleusSimulator.simulateNucleus();
+    _startupLog('simulateNucleus() done, yielding 100ms...');
+    await new Promise(r => setTimeout(r, 100));
+    _startupLog('yield done');
+    _bfsTestRandomChoreographer = false; // GC mode
+
+    // 4. Hydrate from cold storage BEFORE starting the demo loop.
+    //    The await yields to the event loop — if startDemoLoop() ran
+    //    first, the uncapped tick loop would execute live ticks during
+    //    the IDB read, corrupting the fresh state.
+    let replaySnapshots = null;
+    if (replayMember) {
+        if (replayMember._cold) {
+            _startupLog('Hydrating council member from cold storage...');
+            await _hydrateCouncilMember(lvl || 2, replayMember);
+            _startupLog('Council member hydrated');
+        }
+        if (replayMember.snapshots && replayMember.snapshots.length > 0) {
+            replaySnapshots = replayMember.snapshots;
+        }
+    }
+
+    // 5. Initialize simulation
+    _setBfsTestPanelVisible(true);
+    _startupLog('startDemoLoop() starting...');
+    startDemoLoop();
+    _startupLog('startDemoLoop() done');
+
+    // 6. If replaying: load snapshots into _btSnapshots, restore t=0
+    if (replaySnapshots) {
+        _btSnapshots.length = 0;
+        _btSnapshots.push(...replaySnapshots);
+        _replayCursor = 0;
+        _btRestoreSnapshot(_btSnapshots[0]);
+        console.log(`%c[REPLAY] Loaded ${replaySnapshots.length} snapshots into _btSnapshots — cursor at 0`, 'color:#66ccff;font-weight:bold');
+        // Kill the live tick loop so resumeDemo() starts cursor-based replay
+        if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+        if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+        // Council-grade runs have already revealed the oct — force it so
+        // void spheres and shells render from the first replay frame.
+        _demoOctRevealed = true;
+        for (let f = 1; f <= 8; f++) _demoVisitedFaces.add(f);
+        pauseDemo();
+        _testRunning = false; // enable rendering for entire replay seed
+        // Ensure opacity defaults are applied for replay visuals
+        for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
+            const el = document.getElementById(id);
+            if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
+        }
+        resumeDemo();
+    }
+}
+
 async function startSweepTest(latticeLevel, replayMemberIdx) {
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const lvl = latticeLevel || 1;
@@ -3605,6 +3744,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
     _sweepActive = true;
     _sweepSeedIdx = 0;
+    _sweepUsedSeeds = new Set();
     _sweepBlacklist = new Map();
     _sweepResults = [];
     _sweepTotalBlacklisted = 0;
@@ -3641,6 +3781,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _sweepBlacklist = cached.map;
         _sweepTotalBlacklisted = cached.total;
         _sweepSeedIdx = cached.seedIdx;
+        _sweepUsedSeeds = new Set(cached.usedSeeds || []);
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
         }
@@ -3668,98 +3809,24 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     }
     _startupLog('Council moves hydrated');
 
-    // If replaying a council member, set up for the first seed
+    // ── Seed iteration loop ──
+    // Runs startSweepSeed() for each new seed (or council replay).
+    // startSweepSeed() initializes the demo and returns immediately;
+    // the sweep loop polls for completion before moving to the next seed.
     let _replayOnFirstSeed = (typeof replayMemberIdx === 'number' && replayMemberIdx >= 0
         && _sweepGoldenCouncil.length > replayMemberIdx) ? _sweepGoldenCouncil[replayMemberIdx] : null;
 
     while (_sweepActive) {
-        let seed = _sweepSeedIdx + 1; // 1, 2, 3, ...
+        // Pick a random seed we haven't used yet
+        let seed;
+        do { seed = (Math.random() * 0xFFFFFFFF) >>> 0; } while (_sweepUsedSeeds.has(seed) || seed === 0);
+        _sweepUsedSeeds.add(seed);
 
-        // Council replay: override first seed with the member's seed
-        if (_replayOnFirstSeed) {
-            seed = _replayOnFirstSeed.seed;
-            _sweepReplayActive = true;
-            _sweepReplayMember = _replayOnFirstSeed;
-            _replayAncestorPeak = _replayOnFirstSeed.peak; // preserve for append-only save
-            console.log(`%c[REPLAY] Starting council replay — seed 0x${seed.toString(16).padStart(8,'0')}, peak t${_replayOnFirstSeed.peak}`, 'color:#66ccff;font-weight:bold');
-        } else {
-            _sweepReplayActive = false;
-            _sweepReplayMember = null;
-            _replayAncestorPeak = -1;
-        }
+        // Council replay: override seed with the member's seed
+        const replayMember = _replayOnFirstSeed || null;
+        if (replayMember) seed = replayMember.seed;
 
-        _forceSeed = seed;
-
-        // Reset per-seed state
-        simHalted = false;
-        _btBadMoveLedger.clear();
-        _btTriedFingerprints.clear();
-        _sweepBlacklistHitsSeed = 0;
-        _sweepGoldenHitsSeed = 0;
-        _sweepSeedMoves = new Map();
-        _searchEventCounter = 0;
-        _searchPathStack = [];
-        _searchParentNodeId = null;
-        _searchLastCandidates = null;
-        _searchStartTime = performance.now();
-
-        // Set up nucleus and run
-        if (typeof stopDemo === 'function' && _demoActive) stopDemo();
-        _startupLog('simulateNucleus() starting...');
-        NucleusSimulator.simulateNucleus();
-        _startupLog('simulateNucleus() done, yielding 100ms...');
-        await new Promise(r => setTimeout(r, 100));
-        _startupLog('yield done');
-        _bfsTestRandomChoreographer = false; // GC mode
-
-        // Council replay: hydrate from cold storage BEFORE starting the demo
-        // loop. The await yields to the event loop — if startDemoLoop() ran
-        // first, the uncapped tick loop would execute live ticks during the
-        // IDB read, corrupting the fresh state.
-        let _replaySnapshots = null;
-        if (_replayOnFirstSeed) {
-            if (_replayOnFirstSeed._cold) {
-                _startupLog('Hydrating council member from cold storage...');
-                await _hydrateCouncilMember(lvl, _replayOnFirstSeed);
-                _startupLog('Council member hydrated');
-            }
-            if (_replayOnFirstSeed.snapshots && _replayOnFirstSeed.snapshots.length > 0) {
-                // Stash snapshots — startDemoLoop() clears _redoStack,
-                // so we populate it AFTER the loop initializes.
-                _replaySnapshots = _replayOnFirstSeed.snapshots;
-            }
-        }
-
-        _startupLog('startDemoLoop() starting...');
-        startDemoLoop();
-        _startupLog('startDemoLoop() done');
-
-        // Now that startDemoLoop has initialized everything (xons, lattice,
-        // seed, etc.) and cleared _redoStack, populate redo from the stashed
-        // snapshots and switch to redo-drain mode.
-        if (_replaySnapshots) {
-            _redoStack.length = 0;
-            for (let i = _replaySnapshots.length - 1; i >= 0; i--) {
-                _redoStack.push(_replaySnapshots[i]);
-            }
-            console.log(`%c[REPLAY] Loaded ${_replaySnapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
-            // Kill the live tick loop so resumeDemo() starts redo drain instead
-            if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
-            if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
-            // Council-grade runs have already revealed the oct — force it so
-            // void spheres and shells render from the first replay frame.
-            _demoOctRevealed = true;
-            for (let f = 1; f <= 8; f++) _demoVisitedFaces.add(f);
-            pauseDemo();
-            _testRunning = false; // enable rendering for entire replay seed
-            // Ensure opacity defaults are applied for replay visuals
-            // Source: DEMO_VISUAL_DEFAULTS in flux-demo-state.js
-            for (const [id, val] of DEMO_VISUAL_DEFAULTS) {
-                const el = document.getElementById(id);
-                if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
-            }
-            resumeDemo();
-        }
+        await startSweepSeed(seed, replayMember, lvl, _startupLog);
 
         // Poll for completion
         await new Promise(resolve => {
@@ -3779,9 +3846,12 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                 }
             }, 100);
         });
-        if (typeof stopDemo === 'function') stopDemo();
+        // If sweep was killed (user stop or _replayTestFail), break BEFORE
+        // stopDemo so the user can scrub through the failed replay
+        // (stopDemo destroys xons & clears _demoActive).
+        if (!_sweepActive) break;
 
-        if (!_sweepActive) break; // user stopped
+        if (typeof stopDemo === 'function') stopDemo();
 
         // Capture result
         const result = _captureBfsRunResult();
@@ -3825,7 +3895,8 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         // Auto-retry best: if checkbox checked and council has members,
         // replay the best council member next (blacklist ensures divergence)
         const _arbChk = document.getElementById('chk-auto-retry-best');
-        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
+        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0
+            && _sweepGoldenCouncil[0].peak >= 30) {
             _replayOnFirstSeed = _sweepGoldenCouncil[0]; // best = highest peak (sorted)
         }
 
@@ -3840,14 +3911,15 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             if (avgPeak > 0 && peak < avgPeak) {
                 console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below council avg (t${Math.round(avgPeak)})`, 'color:#cc6666');
             } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-                const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
+                // _btSnapshots IS the traversal — serialize directly, no archive needed
+                const snapsCopy = _btSnapshots.slice();
                 // Dedup: if this seed already exists in council, update it instead of pushing a duplicate
                 const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
                 if (existingMember) {
                     existingMember.peak = Math.max(existingMember.peak, peak);
                     if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
                     else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
+                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                 } else {
                     // Collect evicted seeds before trimming
@@ -3855,7 +3927,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
                     _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
                     if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
+                    _blIDBSaveCouncilMember(lvl, seed, _btSnapshots.slice(), _sweepSeedMoves);
                     // Delete evicted members from cold storage
                     for (const ps of prevSeeds) {
                         if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
@@ -3992,8 +4064,8 @@ function _saveCurrentRunToCouncil() {
     } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak || existingMember) {
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
-        // Use forward-only archive (pre-serialized, never popped by backtracking)
-        const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
+        // _btSnapshots IS the traversal — serialize directly, no archive needed
+        const snapsCopy = _btSnapshots.slice();
         if (existingMember) {
             // Only update if current run surpasses the existing peak (most mature wins)
             if (peak <= existingMember.peak) {
@@ -4002,8 +4074,7 @@ function _saveCurrentRunToCouncil() {
             }
             existingMember.peak = peak;
             existingMember.moves = movesCopy;
-            // Append-only: keep ancestor's IDB snapshots, add new ticks beyond ancestor peak
-            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves, _replayAncestorPeak);
+            _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
             _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
@@ -4026,11 +4097,14 @@ function _saveCurrentRunToCouncil() {
 // ── Council member replay — starts a sweep with the member's seed first ──
 // Replay phase uses forced moves + guard suppression up to peak,
 // then continues as a normal greedy sweep (blacklist, council, etc.)
-function startCouncilReplay(memberIdx) {
+async function startCouncilReplay(memberIdx) {
+    const member = _sweepGoldenCouncil[memberIdx];
+    if (!member) return;
     if (_sweepActive || _bfsTestActive || _demoActive) return;
     const slider = document.getElementById('lattice-slider');
     const lvl = slider ? +slider.value : 2;
-    startSweepTest(lvl, memberIdx);
+    _sweepActive = true;
+    await startSweepSeed(member.seed, member, lvl);
 }
 
 
@@ -4707,13 +4781,10 @@ function _exportBfsTestResults() {
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
-        // Pop all snapshots into redo stack until we reach t=0
-        while (_btSnapshots.length > 0 && _demoTick > 0) {
-            _btSaveSnapshot();
-            _redoStack.push(_btSnapshots.pop());
-            const snap = _btSnapshots.pop();
-            if (!snap) break;
-            _btRestoreSnapshot(snap);
+        // Jump to t=0: restore first snapshot, set cursor
+        if (_btSnapshots.length > 0) {
+            _replayCursor = 0;
+            _btRestoreSnapshot(_btSnapshots[0]);
         }
         simHalted = false;
         _bfsReset(); _btReset();
@@ -4736,11 +4807,10 @@ function _exportBfsTestResults() {
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
-        // Restore all redo snapshots instantly
-        while (_redoStack.length > 0) {
-            _btSaveSnapshot();
-            const snap = _redoStack.pop();
-            _btRestoreSnapshot(snap);
+        // Jump to end: restore last snapshot, clear cursor
+        if (_btSnapshots.length > 0) {
+            _replayCursor = -1;
+            _btRestoreSnapshot(_btSnapshots[_btSnapshots.length - 1]);
         }
         simHalted = false;
         _bfsReset(); _btReset();
@@ -4765,6 +4835,43 @@ function _exportBfsTestResults() {
         }
     });
 
+    // ── Test Replay Button ──
+    document.getElementById('btn-test-replay')?.addEventListener('click', function(){
+        // Clear any previous test state
+        localStorage.removeItem(_REPLAY_TEST_KEY);
+        if (typeof _clearReplayCorruption === 'function') _clearReplayCorruption();
+        if (_sweepActive || _bfsTestActive || _demoActive) return;
+        _startReplayTest();
+    });
+
+    // ── On-load: check for pending replay test phase ──
+    const _rTestQ = localStorage.getItem('flux_replay_test');
+    if (_rTestQ) {
+        try {
+            const q = JSON.parse(_rTestQ);
+            if (q && q.phase === 'done' && q.result && q.result.startsWith('FAIL')) {
+                // Test fixture: re-run the replay phase on every reload.
+                // The IDB data is our fixture. Replay it, hit the failure, stop.
+                // localStorage is NOT cleared — this is the persistent fixture.
+                setTimeout(() => {
+                    _replayTestLog(`Re-running test fixture (previous: ${q.result})`);
+                    // Reset phase to replay so _runReplayTestPhase picks it up
+                    const replayQ = { phase: 'replay', targetPS: q.targetPS || 100,
+                        seed: q.seed, startedAt: q.startedAt };
+                    _runReplayTestPhase(replayQ);
+                }, 1500);
+            } else if (q && q.phase === 'done' && q.result) {
+                // PASS result — show static message
+                setTimeout(() => {
+                    _replayTestLog(`Previous test result: ${q.result}`);
+                }, 1000);
+            } else if (q && q.phase && q.phase !== 'done') {
+                // Interrupted mid-pipeline — resume the phase
+                setTimeout(() => _runReplayTestPhase(q), 1500);
+            }
+        } catch (e) { localStorage.removeItem('flux_replay_test'); }
+    }
+
     // Stop/clear button
     document.getElementById('btn-stop-nucleus')?.addEventListener('click', function(){
         NucleusSimulator.deactivate();
@@ -4788,6 +4895,315 @@ function _exportBfsTestResults() {
     });
 
 })();
+
+// ╔══════════════════════════════════════════════════════════════════════╗
+// ║  REPLAY INTEGRITY TEST PIPELINE                                     ║
+// ║  Record → Save → Reload → Replay w/ Guards → Scrub → Extend        ║
+// ╚══════════════════════════════════════════════════════════════════════╝
+
+const _REPLAY_TEST_KEY = 'flux_replay_test';
+const _REPLAY_TEST_TARGETS = [100, 200, 300]; // planck-second milestones
+
+function _replayTestLog(msg) {
+    console.log(`%c[REPLAY TEST] ${msg}`, 'color:#ff66ff;font-weight:bold');
+}
+
+function _replayTestFail(phase, tick, reason) {
+    _guardHardStop = false;  // stop guards from re-triggering
+    const q = { phase: 'done', result: `FAIL @ ${phase} t=${tick}: ${reason}` };
+    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
+    _replayTestLog(`FAILED: ${q.result}`);
+    if (typeof _showReplayCorruption === 'function') _showReplayCorruption(tick, reason);
+    // Kill the sweep so it doesn't death-loop through more seeds.
+    // Keep _demoActive = true so the timeline scrubber remains functional.
+    simHalted = true;
+    _demoPaused = true;
+    _sweepActive = false;
+    _sweepReplayActive = false;
+    _sweepReplayMember = null;
+    if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
+    if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
+    // Update scrubber so user can scrub through the failed replay
+    if (typeof _updateTimelineScrubber === 'function') _updateTimelineScrubber();
+    // Update pause button to show play icon
+    const pb = document.getElementById('btn-nucleus-pause');
+    if (pb) { pb.textContent = '\u25B6'; pb.title = 'Resume simulation'; }
+}
+
+function _replayTestPass() {
+    const q = { phase: 'done', result: 'PASS — 300ps replay perfection achieved' };
+    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
+    _replayTestLog('PASSED — all milestones verified');
+    if (typeof _clearReplayCorruption === 'function') _clearReplayCorruption();
+    const pb = document.getElementById('btn-nucleus-pause');
+    if (pb) {
+        let el = document.getElementById('replay-corruption-msg');
+        if (!el) {
+            el = document.createElement('span');
+            el.id = 'replay-corruption-msg';
+            el.style.cssText = 'color:#44ff44;font-weight:bold;display:block;font-size:11px;margin-top:4px;';
+            pb.parentNode.appendChild(el);
+        }
+        el.style.color = '#44ff44';
+        el.textContent = 'REPLAY TEST PASSED — 300ps verified';
+    }
+}
+
+// Phase: record — clear IDB, run sweep until target planck-seconds, save, reload
+async function _startReplayTest() {
+    _replayTestLog('Starting replay integrity test — clearing IDB for default ruleset...');
+    if (typeof _clearReplayCorruption === 'function') _clearReplayCorruption();
+
+    // Clear IDB for default ruleset
+    const slider = document.getElementById('lattice-slider');
+    const lvl = slider ? +slider.value : 2;
+    if (_blIDB) {
+        try {
+            const baseKey = _blacklistRuleKey(lvl);
+            const tx = _blIDB.transaction([_BL_IDB_STORE, _CS_IDB_STORE], 'readwrite');
+            const blStore = tx.objectStore(_BL_IDB_STORE);
+            const csStore = tx.objectStore(_CS_IDB_STORE);
+            // Delete all keys with this base prefix
+            const blKeys = await new Promise(r => { const req = blStore.getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
+            for (const k of blKeys) { if (typeof k === 'string' && k.startsWith(baseKey)) blStore.delete(k); }
+            const csKeys = await new Promise(r => { const req = csStore.getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
+            for (const k of csKeys) { if (typeof k === 'string' && k.startsWith(baseKey)) csStore.delete(k); }
+        } catch (e) { console.warn('[REPLAY TEST] IDB clear error:', e); }
+    }
+
+    // Reset council
+    _sweepGoldenCouncil.length = 0;
+
+    const targetPS = _REPLAY_TEST_TARGETS[0];
+    const q = { phase: 'record', targetPS, startedAt: Date.now() };
+    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
+
+    _replayTestLog(`Recording run to ${targetPS} planck-seconds...`);
+
+    // Start sweep
+    _sweepActive = false; // ensure clean
+    await new Promise(r => setTimeout(r, 100));
+
+    // Start a normal sweep
+    startSweepTest(lvl);
+
+    // Poll until we reach target planck-seconds or sim halts
+    const pollId = setInterval(() => {
+        if (!_sweepActive && !_demoActive) {
+            clearInterval(pollId);
+            _replayTestLog('Sweep ended before reaching target — checking council...');
+            _finishRecordPhase(targetPS);
+            return;
+        }
+        if (_demoTick >= targetPS) {
+            clearInterval(pollId);
+            _replayTestLog(`Reached tick ${_demoTick} (target ${targetPS}) — saving...`);
+            // Stop sweep and save
+            _sweepActive = false;
+            setTimeout(() => _finishRecordPhase(targetPS), 500);
+        }
+    }, 200);
+}
+
+function _finishRecordPhase(targetPS) {
+    // Force save current run to council
+    if (typeof _saveCurrentRunToCouncil === 'function') _saveCurrentRunToCouncil();
+
+    // Wait for IDB write to settle, then check we have a member
+    setTimeout(() => {
+        if (_sweepGoldenCouncil.length === 0) {
+            _replayTestFail('record', _demoTick, 'No council member saved — run did not produce valid data');
+            return;
+        }
+        const member = _sweepGoldenCouncil[0];
+        const q = { phase: 'replay', targetPS, seed: member.seed, startedAt: Date.now() };
+        localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(q));
+        _replayTestLog(`Saved seed 0x${member.seed.toString(16).padStart(8,'0')} (peak t${member.peak}) — reloading...`);
+
+        if (typeof stopDemo === 'function') stopDemo();
+        setTimeout(() => location.reload(), 500);
+    }, 1000);
+}
+
+// Dispatch to the correct phase handler
+async function _runReplayTestPhase(q) {
+    _replayTestLog(`Resuming test — phase: ${q.phase}, targetPS: ${q.targetPS}, seed: 0x${(q.seed || 0).toString(16).padStart(8,'0')}`);
+
+    if (q.phase === 'replay') {
+        await _replayTestReplayPhase(q);
+    } else if (q.phase === 'extend') {
+        await _replayTestExtendPhase(q);
+    }
+}
+
+// Phase: replay — hydrate from IDB, play with guards
+async function _replayTestReplayPhase(q) {
+    _replayTestLog('Replay phase — loading from IDB with guard mode...');
+
+    // Wait for IDB
+    if (!_blIDBReady) await _blIDBOpen();
+    await new Promise(r => setTimeout(r, 500));
+
+    // Populate council from IDB
+    const slider = document.getElementById('lattice-slider');
+    const lvl = slider ? +slider.value : 2;
+    await _populateCouncilDropdown();
+    await new Promise(r => setTimeout(r, 300));
+
+    // Find the member by seed
+    let memberIdx = -1;
+    for (let i = 0; i < _sweepGoldenCouncil.length; i++) {
+        if (_sweepGoldenCouncil[i].seed === q.seed) { memberIdx = i; break; }
+    }
+    if (memberIdx < 0) {
+        // Try first member if seed not found
+        if (_sweepGoldenCouncil.length > 0) memberIdx = 0;
+        else {
+            _replayTestFail('replay', 0, 'No council member found in IDB');
+            return;
+        }
+    }
+
+    // Set replay guard mode BEFORE starting replay
+    _guardHardStop = true;
+    _liveGuardsActive = true;
+
+    // Load blacklist so learnings apply during replay + extend
+    const cached = await _blIDBLoad(lvl);
+    if (cached) {
+        _sweepBlacklist = cached.map;
+        _sweepTotalBlacklisted = cached.total;
+        _sweepSeedIdx = cached.seedIdx;
+        _sweepUsedSeeds = new Set(cached.usedSeeds || []);
+        if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
+            _sweepGoldenCouncil = cached.goldenCouncil;
+        }
+        if (_blBucketVersion >= 1) await _blPrefetchBucket(lvl, 0);
+    }
+
+    // Start council replay — this calls startSweepSeed directly
+    // (sweep is the only execution mode; replay = sweep with pre-seeded redo stack)
+    const member = _sweepGoldenCouncil[memberIdx];
+    _sweepActive = true;
+    await startSweepSeed(member.seed, member, lvl);
+
+    // Poll for redo drain completion or corruption (observer only — no pause/resume)
+    await new Promise(resolve => {
+        const pollId = setInterval(() => {
+            if (simHalted) {
+                clearInterval(pollId);
+                const failed = Object.entries(_liveGuards).filter(([, g]) => g.failed);
+                if (failed.length > 0) {
+                    const msg = failed.map(([k, g]) => `${k}: ${g.msg}`).join('; ');
+                    _replayTestFail('replay', _demoTick, msg);
+                } else {
+                    _replayTestFail('replay', _demoTick, 'simHalted without guard failure');
+                }
+                resolve();
+                return;
+            }
+            // Replay cursor exhausted — replay validated up to member's peak
+            if (_demoActive && !_sweepReplayActive && _replayCursor === -1) {
+                clearInterval(pollId);
+                _replayTestLog(`Replay phase passed — reached tick ${_demoTick}`);
+                _guardHardStop = false;
+
+                // Did we reach the current target? If not, extend to it first.
+                if (_demoTick < q.targetPS) {
+                    _replayTestLog(`Replay ended at tick ${_demoTick}, need ${q.targetPS} — extending...`);
+                    const extQ = { ...q, phase: 'extend' };
+                    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(extQ));
+                    setTimeout(() => _replayTestExtendPhase(extQ), 500);
+                    resolve();
+                    return;
+                }
+
+                // Current target reached — determine next target
+                const currentTarget = q.targetPS;
+                const nextIdx = _REPLAY_TEST_TARGETS.indexOf(currentTarget) + 1;
+                if (nextIdx >= _REPLAY_TEST_TARGETS.length) {
+                    // All targets done!
+                    _replayTestPass();
+                    resolve();
+                    return;
+                }
+
+                // Move to extend phase for next milestone
+                const nextTarget = _REPLAY_TEST_TARGETS[nextIdx];
+                const extQ = { ...q, phase: 'extend', targetPS: nextTarget };
+                localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(extQ));
+                _replayTestLog(`Extending to ${nextTarget} planck-seconds...`);
+                setTimeout(() => _replayTestExtendPhase(extQ), 500);
+                resolve();
+            }
+        }, 200);
+    });
+}
+
+// Phase: extend — continue live until target planck-seconds, save, reload
+async function _replayTestExtendPhase(q) {
+    _replayTestLog(`Extend phase — running live until ${q.targetPS} planck-seconds...`);
+    _guardHardStop = false; // live play uses normal guards
+
+    // Ensure demo is running
+    if (_demoPaused && typeof resumeDemo === 'function') resumeDemo();
+
+    // Poll for target planck-seconds
+    await new Promise(resolve => {
+        const pollId = setInterval(() => {
+            if (simHalted || !_demoActive) {
+                clearInterval(pollId);
+                // Sweep regression or guard halt — restart from council replay
+                // (same as auto-retry-best behavior in normal sweep).
+                _replayTestLog(`Extend halted at tick ${_demoTick} — restarting from council replay...`);
+                if (typeof stopDemo === 'function') stopDemo();
+                setTimeout(async () => {
+                    const replayQ = { ...q, phase: 'replay' };
+                    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(replayQ));
+                    setTimeout(() => location.reload(), 500);
+                    resolve();
+                }, 500);
+                return;
+            }
+            if (_demoTick >= q.targetPS) {
+                clearInterval(pollId);
+                _replayTestLog(`Reached tick ${_demoTick} (target ${q.targetPS}) — saving extended replay...`);
+
+                // Save to council
+                if (typeof _saveCurrentRunToCouncil === 'function') _saveCurrentRunToCouncil();
+
+                setTimeout(() => {
+                    const replayQ = { ...q, phase: 'replay' };
+                    localStorage.setItem(_REPLAY_TEST_KEY, JSON.stringify(replayQ));
+                    _replayTestLog(`Saved — reloading for replay verification at ${q.targetPS}ps...`);
+                    if (typeof stopDemo === 'function') stopDemo();
+                    setTimeout(() => location.reload(), 500);
+                    resolve();
+                }, 1000);
+            }
+        }, 200);
+    });
+}
+
+// Export for console debugging
+function _exportReplayFixture() {
+    if (_sweepGoldenCouncil.length === 0) {
+        console.warn('No council members to export');
+        return;
+    }
+    const member = _sweepGoldenCouncil[0];
+    if (member._cold) {
+        console.warn('Member is cold — hydrate first by selecting from dropdown');
+        return;
+    }
+    const data = {
+        seed: member.seed,
+        peak: member.peak,
+        snapshots: member.snapshots ? member.snapshots.map(s => _serializeSnapshot(s)) : null,
+    };
+    localStorage.setItem('flux_test_fixture', JSON.stringify(data));
+    console.log(`Exported replay fixture: seed 0x${member.seed.toString(16).padStart(8,'0')}, peak t${member.peak}, ${data.snapshots ? data.snapshots.length : 0} snapshots`);
+}
 
 // ╔══════════════════════════════════════════════════════════════════════╗
 // ║  TOURNAMENT / RL TRAINING — REMOVED                                ║

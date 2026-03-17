@@ -843,7 +843,7 @@ function _tickDemoXons(dt) {
                 xon.trailPos[i * 3] = fp[0];
                 xon.trailPos[i * 3 + 1] = fp[1];
                 xon.trailPos[i * 3 + 2] = fp[2];
-                const segCol = (xon._frozenColors && xon._frozenColors[i]) || xon.col;
+                const segCol = (xon._frozenRoles && xon._frozenRoles[i]) ? _roleToColor(xon._frozenRoles[i]) : xon.col;
                 const cr = ((segCol >> 16) & 0xff) / 255;
                 const cg = ((segCol >> 8) & 0xff) / 255;
                 const cb = (segCol & 0xff) / 255;
@@ -904,10 +904,9 @@ function _tickDemoXons(dt) {
                 xon.group.position.set(pf[0], pf[1], pf[2]);
             } else if (_fjCurvature > 0) {
                 // ── FORWARD: curvature-blended spline ──
-                const fp = xon._trailFrozenPos;
-                const tl = fp ? fp.length : 0;
+                const _tl = xon.trail ? xon.trail.length : 0;
                 const p1 = pf, p2 = pt;
-                const p0 = (tl >= 3) ? fp[tl - 3] : p1;
+                const p0 = (_tl >= 3) ? xon.trail[_tl - 3].pos : p1;
                 _fjP3[0] = 2*p2[0] - p1[0];
                 _fjP3[1] = 2*p2[1] - p1[1];
                 _fjP3[2] = 2*p2[2] - p1[2];
@@ -958,8 +957,6 @@ function _tickDemoXons(dt) {
         // Trails knob controls how many trail points are visible (0-1000).
         // Always store full history; render only the last `visLen` points.
         const lifespan = +document.getElementById('tracer-lifespan-slider').value;
-        const _trailFP = xon._trailFrozenPos;
-        const _trailCH = xon.trailColHistory;
         const fullLen = xon.trail.length;
         const visLen = Math.min(fullLen, lifespan);
         const startIdx = fullLen - visLen; // skip older points beyond lifespan
@@ -974,37 +971,31 @@ function _tickDemoXons(dt) {
         // ── Fighterjet curved trails: subdivide each segment with CR spline ──
         if (_fjCurvature > 0 && bodyLen >= 2) {
             // FJ_SUBS defined in flux-demo-state.js
-            const fp = _trailFP;
             xon._lastTrailFlashBoost = 0;
             let out = 0; // output vertex index
             for (let vi = 0; vi < bodyLen - 1 && out < XON_TRAIL_VERTS - FJ_SUBS - 2; vi++) {
                 const i = startIdx + vi;
-                // 4 control points for this segment: p0, p1(=fp[i]), p2(=fp[i+1]), p3
-                const cp1 = fp[i]     || pos[xon.trail[i]];
-                const cp2 = fp[i + 1] || pos[xon.trail[i + 1]];
+                const e1 = xon.trail[i], e2 = xon.trail[i + 1];
+                // 4 control points for this segment
+                const cp1 = e1.pos || pos[e1.node];
+                const cp2 = e2.pos || pos[e2.node];
                 if (!cp1 || !cp2) continue;
-                let cp0 = (i > 0 ? (fp[i - 1] || pos[xon.trail[i - 1]]) : null) || cp1;
-                let cp3 = (i + 2 < fullLen ? (fp[i + 2] || pos[xon.trail[i + 2]]) : null)
+                let cp0 = (i > 0 ? (xon.trail[i-1].pos || pos[xon.trail[i-1].node]) : null) || cp1;
+                let cp3 = (i + 2 < fullLen ? (xon.trail[i+2].pos || pos[xon.trail[i+2].node]) : null)
                     || [2*cp2[0]-cp1[0], 2*cp2[1]-cp1[1], 2*cp2[2]-cp1[2]];
-                // Clamp tangent control points: if cp0 or cp3 are far from their
-                // anchor (teleport in adjacent segment), collapse to prevent spline overshoot
                 { const d0x=cp0[0]-cp1[0],d0y=cp0[1]-cp1[1],d0z=cp0[2]-cp1[2];
                   if(d0x*d0x+d0y*d0y+d0z*d0z>1.44) cp0=cp1; }
                 { const d3x=cp3[0]-cp2[0],d3y=cp3[1]-cp2[1],d3z=cp3[2]-cp2[2];
                   if(d3x*d3x+d3y*d3y+d3z*d3z>1.44) cp3=cp2; }
-                // Teleport check between cp1 and cp2
                 const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
                 const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
-                // Segment color — prefer role-based resolution for phase independence
-                const _rh = xon._trailRoleHistory;
-                const segCol = (_rh && _rh[i]) ? _roleToColor(_rh[i])
-                    : ((_trailCH && _trailCH[i]) || xon.col);
+                // Segment color from destination trail entry (e2) — the segment
+                // "belongs to" the tick that created the move, not the origin.
+                const segCol = _roleToColor(e2.role);
                 const scr = ((segCol >> 16) & 0xff) / 255;
                 const scg = ((segCol >> 8) & 0xff) / 255;
                 const scb = (segCol & 0xff) / 255;
-                // Per-segment role opacity (baked into vertex color alpha)
-                const segRole = (_rh && _rh[i]) ? _rh[i] : null;
-                const segRoleOp = (segRole && typeof _roleOpacity !== 'undefined' && _roleOpacity[segRole] != null) ? _roleOpacity[segRole] : 1;
+                const segRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e2.role] != null) ? _roleOpacity[e2.role] : 1;
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
@@ -1036,12 +1027,13 @@ function _tickDemoXons(dt) {
             // Trail head: CR-subdivide current hop up to tweenT (matches sprite path)
             // During reverse animation: skip head (trails show restored state instantly)
             if (!xon._fjReverseFrom && out < XON_TRAIL_VERTS - FJ_SUBS - 2 && xon.tweenT < 1 && bodyLen >= 1) {
-                const _hfp = _trailFP;
                 const hi = startIdx + bodyLen - 1; // last body index
-                const hp1 = _hfp[hi] || pos[xon.trail[hi]]; // prevNode pos
+                const _he = xon.trail[hi];
+                const hp1 = _he ? (_he.pos || pos[_he.node]) : null; // prevNode pos
                 const hp2 = pos[xon.node]; // destination
                 if (hp1 && hp2) {
-                    const hp0 = (hi > 0 ? (_hfp[hi - 1] || pos[xon.trail[hi - 1]]) : null) || hp1;
+                    const _he0 = hi > 0 ? xon.trail[hi - 1] : null;
+                    const hp0 = (_he0 ? (_he0.pos || pos[_he0.node]) : null) || hp1;
                     _fjP3[0] = 2*hp2[0]-hp1[0]; _fjP3[1] = 2*hp2[1]-hp1[1]; _fjP3[2] = 2*hp2[2]-hp1[2];
                     const _tdx = hp2[0]-hp1[0], _tdy = hp2[1]-hp1[1], _tdz = hp2[2]-hp1[2];
                     const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
@@ -1071,24 +1063,22 @@ function _tickDemoXons(dt) {
         } else {
         // ── Normal straight-line trails ──
 
-        // Per-segment color from trailColHistory — segments retain their original color
-        // flashT boosts trail brightness near the head (mode transition / birth flash)
+        // Per-segment color from unified trail entry — segments retain their original role
         xon._lastTrailFlashBoost = 0; // reset per frame for T37 measurement
         for (let vi = 0; vi < bodyLen; vi++) {
             const i = startIdx + vi;
-            // Use frozen positions (recorded at trail push time) so trails don't deform with solver
-            const np = (xon._trailFrozenPos && xon._trailFrozenPos[i]) || pos[xon.trail[i]];
+            const _te = xon.trail[i];
+            if (!_te) continue;
+            const np = _te.pos || pos[_te.node];
             if (!np) continue;
-            // Teleport suppression: if this segment jumps > 1.5 from previous point,
-            // collapse to previous point (zero-length segment hides the teleport line)
+            // Teleport suppression
             if (vi > 0) {
                 const _spx = xon.trailPos[(vi-1) * 3], _spy = xon.trailPos[(vi-1) * 3 + 1], _spz = xon.trailPos[(vi-1) * 3 + 2];
                 const _sdx = np[0] - _spx, _sdy = np[1] - _spy, _sdz = np[2] - _spz;
-                if (_sdx*_sdx + _sdy*_sdy + _sdz*_sdz > 1.44) { // 1.2^2
+                if (_sdx*_sdx + _sdy*_sdy + _sdz*_sdz > 1.44) {
                     xon.trailPos[vi * 3] = _spx;
                     xon.trailPos[vi * 3 + 1] = _spy;
                     xon.trailPos[vi * 3 + 2] = _spz;
-                    // Zero alpha to fully hide collapsed point
                     xon.trailCol[vi * 3] = 0;
                     xon.trailCol[vi * 3 + 1] = 0;
                     xon.trailCol[vi * 3 + 2] = 0;
@@ -1098,16 +1088,14 @@ function _tickDemoXons(dt) {
             xon.trailPos[vi * 3] = np[0];
             xon.trailPos[vi * 3 + 1] = np[1];
             xon.trailPos[vi * 3 + 2] = np[2];
-            // Prefer role-based resolution for phase independence
-            const _rh2 = xon._trailRoleHistory;
-            const segCol = (_rh2 && _rh2[i]) ? _roleToColor(_rh2[i])
-                : ((xon.trailColHistory && xon.trailColHistory[i]) || xon.col);
+            // Color from next entry (destination) so segments show the move's role,
+            // not the origin's. Matches Catmull-Rom path which uses e2.role.
+            const _teNext = (vi < bodyLen - 1) ? xon.trail[startIdx + vi + 1] : _te;
+            const segCol = _roleToColor(_teNext.role);
             const cr = ((segCol >> 16) & 0xff) / 255;
             const cg = ((segCol >> 8) & 0xff) / 255;
             const cb = (segCol & 0xff) / 255;
-            // Per-segment role opacity (baked into vertex color alpha)
-            const segRole = (_rh2 && _rh2[i]) ? _rh2[i] : null;
-            const segRoleOp = (segRole && typeof _roleOpacity !== 'undefined' && _roleOpacity[segRole] != null) ? _roleOpacity[segRole] : 1;
+            const segRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[_te.role] != null) ? _roleOpacity[_te.role] : 1;
             // Gentle fade: linear with floor so long trails stay visible
             const progress = vi / Math.max(bodyLen - 1, 1); // 0=tail, 1=head
             const fadeCurve = _trailFadeFloor + (1 - _trailFadeFloor) * progress;
@@ -1126,7 +1114,8 @@ function _tickDemoXons(dt) {
         if (last < XON_TRAIL_LENGTH && bodyLen > 0) {
             // Distance from last body point to current group position
             const _lfi = startIdx + bodyLen - 1;
-            const _lfp = (xon._trailFrozenPos && xon._trailFrozenPos[_lfi]) || pos[xon.trail[startIdx + bodyLen - 1]];
+            const _lfe = xon.trail[_lfi];
+            const _lfp = _lfe ? (_lfe.pos || pos[_lfe.node]) : null;
             if (_lfp) {
                 const _hdx = xon.group.position.x - _lfp[0];
                 const _hdy = xon.group.position.y - _lfp[1];
@@ -1173,12 +1162,11 @@ function _clearTrailsAlongEdges(edgeNodes) {
     const _nan3 = [NaN, NaN, NaN];
     for (const xon of _demoXons) {
         if (!xon.alive || !xon.trail || xon.trail.length < 2) continue;
-        if (!xon._trailFrozenPos) continue;
         // Skip the gluon xon itself — don't clear its own trail
         if (xon._mode === 'gluon') continue;
         for (let i = 0; i < xon.trail.length; i++) {
-            if (nodeSet.has(xon.trail[i])) {
-                xon._trailFrozenPos[i] = _nan3;
+            if (nodeSet.has(xon.trail[i].node)) {
+                xon.trail[i].pos = _nan3;
             }
         }
     }
@@ -1388,12 +1376,11 @@ function startDemoLoop() {
     _bfsReset(); // fresh demo = clean BFS + ledger
     _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 100
     _btSnapshots.length = 0;
-    _councilSnapArchive.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
     _movieFrames.length = 0;
     _lastMoviePos = null;
-    _redoStack.length = 0;
+    _replayCursor = -1;
     _demoReversing = false;
     if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
     _demoTetAssignments = 0;
@@ -1760,14 +1747,12 @@ function _executeOpeningTick(occupied) {
                 _clearModeProps(xon);
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
             } else {
                 // Not on oct node → weak, navigate back via PHASE 0.5
                 xon._mode = 'weak';
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             }
         }
@@ -1846,6 +1831,9 @@ async function demoTick() {
     }
     const _inReplayPhase = _sweepReplayActive && _sweepReplayMember
         && _demoTick <= _sweepReplayMember.peak;
+    // Set trail baseline BEFORE snapshot so tick-start snapshots have _tDelta=null
+    // (no moves have happened yet). Reset again inside retry loop after backtrack restores.
+    for (const xon of _demoXons) { xon._trailLenAtTickStart = xon.trail ? xon.trail.length : 0; }
     _btSaveSnapshot();
     _rewindRequested = false;
     _rewindViolation = null;
@@ -1887,7 +1875,7 @@ async function demoTick() {
         _sRngSeed(_demoTick * 65537 + _btRetryCount * 997 + _bfsLayer * 31 + _bfsLayerRetries * 7919);
     }
     // Clear stale movement flags from previous tick so WB processing isn't blocked
-    for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; }
+    for (const xon of _demoXons) { xon._movedThisTick = false; xon._evictedThisTick = false; xon._trailLenAtTickStart = xon.trail ? xon.trail.length : 0; }
     // Gluon mode is now sticky — cleared in PHASE 2a only when cage is stable.
     // (Previously reverted here every tick, allowing gluons to immediately enter tets.)
     _moveRecord.clear(); // T41: clear tick-level move record
@@ -1986,7 +1974,6 @@ async function demoTick() {
             xon._loopSeq = null;
             xon._loopStep = 0;
             xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         }
     }
@@ -2041,7 +2028,6 @@ async function demoTick() {
                         xon._loopSeq = null;
                         xon._loopStep = 0;
                         xon.col = 0xffffff;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                         if (_flashEnabled) xon.flashT = 1.0;
                     } else {
@@ -2054,7 +2040,6 @@ async function demoTick() {
                         xon._tetActualized = false;
                         xon._t60Ejected = true;
                         xon.col = WEAK_FORCE_COLOR;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                         _weakLifecycleEnter(xon, 'non_actualized_tet');
                     }
@@ -2147,7 +2132,6 @@ async function demoTick() {
                 xon._loopStep = 0;
                 xon._tetActualized = false;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'phase0_eviction');
                 xon._evictedThisTick = true;
@@ -2174,7 +2158,6 @@ async function demoTick() {
                 xon._mode = 'oct';
                 if (_flashEnabled) xon.flashT = 1.0;
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 continue;
             }
@@ -2253,7 +2236,6 @@ async function demoTick() {
             _moveRecord.set(bestStep, fromWk);
             _traceMove(xon, fromWk, bestStep, 'weakBFS');
             _recordEjectionTraversal(fromWk, bestStep);
-            _trailPush(xon, bestStep, WEAK_FORCE_COLOR);
             xon.tweenT = 0;
             anyMoved = true;
             _weakLifecycleStep(xon);
@@ -2267,7 +2249,6 @@ async function demoTick() {
                     xon._mode = 'oct';
                     if (_flashEnabled) xon.flashT = 1.0;
                     xon.col = 0xffffff;
-                    _trailRecolor(xon);
                     if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 }
             }
@@ -2314,7 +2295,6 @@ async function demoTick() {
                 xon._movedThisTick = true;
                 _moveRecord.set(freeNb.node, fromWk2);
                 _traceMove(xon, fromWk2, freeNb.node, 'weakDetour');
-                _trailPush(xon, freeNb.node, WEAK_FORCE_COLOR);
                 xon.tweenT = 0;
                 anyMoved = true;
                 _weakLifecycleStep(xon);
@@ -2326,7 +2306,6 @@ async function demoTick() {
                         xon._mode = 'oct';
                         if (_flashEnabled) xon.flashT = 1.0;
                         xon.col = 0xffffff;
-                        _trailRecolor(xon);
                         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                     }
                 }
@@ -2477,7 +2456,6 @@ async function demoTick() {
                 xon._tetActualized = false;
                 xon._t60Ejected = true;
                 xon.col = WEAK_FORCE_COLOR;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
                 _weakLifecycleEnter(xon, 'non_actualized_tet');
                 continue; // PHASE 0.5 will move it; skip normal return-to-oct
@@ -2542,7 +2520,6 @@ async function demoTick() {
             if (_octNodeSet && _octNodeSet.has(xon.node)) {
                 xon._mode = 'oct';
                 xon.col = 0xffffff;
-                _trailRecolor(xon);
                 if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
                 octIdle.push(xon);
                 _logChoreo(`GLUON: X${_demoXons.indexOf(xon)} returned to oct cage → oct mode`);
@@ -3083,7 +3060,6 @@ async function demoTick() {
             plan.xon._mode = 'weak';
             plan.xon._t60Ejected = true;
             plan.xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(plan.xon);
             if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(plan.xon, 'phase2_collision_eject');
             // Find a neighbor node to escape to
@@ -3155,13 +3131,25 @@ async function demoTick() {
                 plan.xon._movedThisTick = true; // prevent double-move in PHASE 3.5/4
                 _moveRecord.set(plan.xon.node, fromNode); // T41: record dest→origin
                 _traceMove(plan.xon, fromNode, plan.xon.node, 'p3oct');
-                // Gluon activation: cage-critical xon moved to non-oct node → gluon mode
-                if (_cageCriticalXons.has(plan.xon) && _octNodeSet && !_octNodeSet.has(plan.xon.node)) {
-                    plan.xon._mode = 'gluon';
-                    plan.xon.col = GLUON_COLOR;
-                    _trailRecolor(plan.xon);
-                    if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
-                    _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
+                // Immediate mode transition for xons that moved off-oct.
+                // Mode must change in the SAME tick as the move (T95: oct mode on oct nodes only).
+                if (_octNodeSet && !_octNodeSet.has(plan.xon.node)) {
+                    if (_cageCriticalXons.has(plan.xon)) {
+                        // Gluon activation: cage-critical xon moved off-cage
+                        plan.xon._mode = 'gluon';
+                        plan.xon.col = GLUON_COLOR;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(GLUON_COLOR);
+                        _logChoreo(`GLUON: X${_demoXons.indexOf(plan.xon)} moved off-cage ${fromNode}→${plan.xon.node} → gluon mode`);
+                    } else if (plan.xon._pendingWeakEjection) {
+                        // Pending-weak xon stepped off oct — transition immediately
+                        plan.xon._pendingWeakEjection = false;
+                        plan.xon._mode = 'weak';
+                        plan.xon._t60Ejected = true;
+                        plan.xon.col = WEAK_FORCE_COLOR;
+                        if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
+                        _weakLifecycleEnter(plan.xon, 'pending_ejection_offcage');
+                        _logChoreo(`X${_demoXons.indexOf(plan.xon)} pending-weak → weak at node ${plan.xon.node} (off oct, immediate)`);
+                    }
                 }
                 if (plan.xon._solverNeeded) {
                     _solverNeeded = true;
@@ -3245,7 +3233,6 @@ async function demoTick() {
         plan.xon._loopStep = 0;
         plan.xon._quarkType = null;
         plan.xon.col = WEAK_FORCE_COLOR;
-        _trailRecolor(plan.xon);
         if (plan.xon.sparkMat) plan.xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
         _weakLifecycleEnter(plan.xon, 'tet_stuck_ejection');
         // Try to move to a free neighbor so T20 doesn't fire
@@ -3263,7 +3250,6 @@ async function demoTick() {
             plan.xon._movedThisTick = true;
             _moveRecord.set(nb.node, fromStuck);
             _traceMove(plan.xon, fromStuck, nb.node, 'tetStuckEject');
-            _trailPush(plan.xon, nb.node, WEAK_FORCE_COLOR);
             plan.xon.tweenT = 0;
             anyMoved = true;
             break;
@@ -3291,7 +3277,6 @@ async function demoTick() {
             xon._mode = 'weak';
             xon._t60Ejected = true;
             xon.col = WEAK_FORCE_COLOR;
-            _trailRecolor(xon);
             if (xon.sparkMat) xon.sparkMat.color.setHex(WEAK_FORCE_COLOR);
             _weakLifecycleEnter(xon, 'pending_ejection_offcage');
         }
@@ -3363,16 +3348,15 @@ async function demoTick() {
         });
         stateVersion++;
         applyPositions(pSolved);
-        // Re-freeze any trail entries that were captured before the solver ran (stale [0,0,0])
+        // Re-freeze any trail entries captured before solver ran (stale [0,0,0])
         for (const xon of _demoXons) {
-            if (!xon || !xon.alive || !xon._trailFrozenPos) continue;
-            for (let ti = 0; ti < xon._trailFrozenPos.length; ti++) {
-                const fp = xon._trailFrozenPos[ti];
-                if (fp[0] === 0 && fp[1] === 0 && fp[2] === 0) {
-                    const n = xon.trail[ti];
-                    const p = pos[n];
+            if (!xon || !xon.alive || !xon.trail) continue;
+            for (let ti = 0; ti < xon.trail.length; ti++) {
+                const e = xon.trail[ti];
+                if (!e.pos || (e.pos[0] === 0 && e.pos[1] === 0 && e.pos[2] === 0)) {
+                    const p = pos[e.node];
                     if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
-                        xon._trailFrozenPos[ti] = [p[0], p[1], p[2]];
+                        e.pos = [p[0], p[1], p[2]];
                     }
                 }
             }
@@ -3560,6 +3544,15 @@ async function demoTick() {
 
     const _pTrender = performance.now(); _profPhases.render += _pTrender - _pTsolver;
 
+    // ── TRAIL: one entry per xon per tick (unified push) ──
+    // All movement is resolved. Record FINAL position and role.
+    // Always push — even if xon didn't move — so the trail captures role changes.
+    // _trailRecolor is gone; this is the only place trail entries are created.
+    for (const xon of _demoXons) {
+        if (!xon.alive || xon._dying) continue;
+        _trailPush(xon, xon.node);
+    }
+
     // T79: track consecutive full-oct ticks (for next tick's overflow pressure)
     if (_octNodeSet && _demoXons.filter(x => x.alive && _octNodeSet.has(x.node)).length >= 6) {
         _octFullConsecutive++;
@@ -3570,35 +3563,10 @@ async function demoTick() {
     _demoTick++;
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
-        // Refresh archive tail: backtracker may have rewritten recent history on
-        // an alternate path, making older archive entries stale.  Re-serialize the
-        // last min(101, 51% of run) snapshots from _btSnapshots (always the current
-        // happy path) plus a fresh post-tick snapshot for the new high-water mark.
-        {
-            const total = _btSnapshots.length;
-            const refreshWindow = Math.min(101, Math.ceil(total * 0.51));
-            const safeIdx = Math.max(0, total - refreshWindow);
-            // If the archive is shorter than safeIdx (e.g. after a replay
-            // where no archive entries were created), backfill the gap from
-            // _btSnapshots so we don't leave undefined holes.
-            const archiveLen = _councilSnapArchive.length;
-            if (archiveLen < safeIdx) {
-                for (let i = archiveLen; i < safeIdx; i++) {
-                    _councilSnapArchive.push(_serializeSnapshot(_btSnapshots[i]));
-                }
-            } else {
-                _councilSnapArchive.length = safeIdx;      // trim stale tail
-            }
-            for (let i = safeIdx; i < total; i++) {
-                _councilSnapArchive.push(_serializeSnapshot(_btSnapshots[i]));
-            }
-            // Append current live post-tick state (includes this tick's effects)
-            _councilSnapArchive.push(_serializeSnapshot(_btCreateSnapshot()));
-        }
-        // Capture fingerprint of the tick that achieved the new high-water mark
-        if (typeof _computeTickFingerprint === 'function') {
-            _bestPathFingerprint = _computeTickFingerprint();
-        }
+    }
+    // Capture fingerprint of the tick that achieved the new high-water mark
+    if (_demoTick > _maxTickReached && typeof _computeTickFingerprint === 'function') {
+        _bestPathFingerprint = _computeTickFingerprint();
     }
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)
@@ -3670,6 +3638,11 @@ async function demoTick() {
                 _updateSweepPanel(null, _searchStartTime);
             }
         }
+    }
+
+    // ── Sweep panel update ──
+    if (!_testRunning && typeof _updateSweepPanel === 'function' && _sweepActive) {
+        _updateSweepPanel(null, _searchStartTime);
     }
 
     // ── Council replay: suppress all rewinds during the happy path ──

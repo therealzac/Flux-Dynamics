@@ -68,6 +68,18 @@ ALL UNIT TESTS CAN BE PROGRAMATICALLY VERIFIED AND PROGRAMATICALLY VIOLATED, AND
 ### Speed sanity check
 If a change causes the Planck-second counter to run ~25x faster than normal, **you probably broke the physics solver.** The solver is the bottleneck — if the simulation suddenly flies, it means constraints are no longer being enforced and the results are meaningless. Treat unexpected speedups as a regression, not an improvement.
 
+### ⛔⛔⛔ NEVER suppress guards to make replay work ⛔⛔⛔
+**Guards exist to detect corruption. If guards fail during replay, THE REPLAY IS CORRUPT — fix the replay pipeline, not the guards.** This includes:
+- ❌ NEVER add `if (replaying) skip guards` or `if (redoDrain) return` conditions
+- ❌ NEVER silently reset failed guards during replay to let corrupt data pass
+- ❌ NEVER argue "guards don't make sense during replay" — they absolutely do; they validate that saved data is physically correct
+- ❌ NEVER disable movement guards (T20, T26, T27) because "snapshot restores aren't incremental" — the fix is proper prev-state tracking, not guard suppression
+- ✅ If guards fail during redo drain, the snapshot data or restore logic is broken — FIX THAT
+- ✅ Guards during replay are the ONLY defense against saving and replaying corrupt garbage
+- ✅ The replay pipeline must produce tick-to-tick state that is indistinguishable from live play
+
+**This is the same principle as "never modify tests." Suppressing guards during replay IS modifying tests — it's just doing it at the call site instead of the test definition.**
+
 ### NEVER gut the framework to bypass tests
 **We want to find RULES that make the tests always pass — not change the underlying framework.** If a test fails, the fix is better choreography logic, not replacing a real `Map` with a no-op object, disabling checks, or making data structures lie. The framework (SC sets, solver, etc.) is the physics engine. The rules (movement heuristics, assignment logic, lookahead) are what we tune. **NEVER replace a framework data structure with a fake/no-op version.**
 
@@ -94,6 +106,12 @@ Every entry in `LIVE_GUARD_REGISTRY` is keyed by its `id` field (e.g. `'T90'`, `
 
 ### `_moveRecord` — useful audit tool, MUST NOT affect physics
 `_moveRecord` is a tick-level `Map` that records `destNode → fromNode` for every xon move each tick. It is useful for **auditing, playback, and debugging**. It **MUST NEVER affect physics** — no `.get()` calls to block, reject, or filter moves. `_moveRecord` is a passive observer that records what happened. If a test needs to detect swaps or other patterns, use the live guard snapshot system (`_liveGuardPrev`), not `_moveRecord`.
+
+---
+
+## Guiding Principle: Simplicity
+
+**Make it as simple as possible.** Simplifying the code clarifies the physics _and_ makes it easier to maintain. When choosing between approaches, prefer the one with fewer data structures, fewer code paths, and less indirection. Complexity is the enemy of correctness in a physics simulation — every unnecessary abstraction is a place where bugs hide.
 
 ---
 
@@ -502,6 +520,20 @@ A long straight trail line extends from node 0 through the oct to the opposite a
 
 ---
 
+## 10.6. Sweep Architecture Doctrine
+
+**Sweep mode is the ONLY execution mode. Period.**
+
+There is no separate "replay mode" or "test mode." The sweep (`_runTournament` is dead — use `startSweepTest` → `startDemoLoop` directly) is always running. The only difference between a fresh run and a council replay is that a council replay starts with pre-seeded moves (snapshots loaded from IDB onto the redo stack). That's it.
+
+**Council replay = sweep with pre-seeded redo stack.** The redo drain plays the saved snapshots, then live execution continues seamlessly. There is no mode transition, no separate controller.
+
+**The replay test pipeline (🧪 button) runs WITHIN the sweep**, not as a competing controller. It observes the sweep's behavior and validates guard integrity. The test infrastructure is temporary scaffolding that will be commented out once replay fidelity is proven.
+
+**NEVER create a parallel execution system that fights with the sweep for control of the demo.** One execution loop. One controller. One source of truth for what tick we're on.
+
+---
+
 ## 11. Development Conventions
 
 - **Cache busting**: After editing any `src/*.js` file, bump `?v=N` in `flux-v2.html` script tag
@@ -529,6 +561,25 @@ Keys for IndexedDB storage (blacklist, autosave, council) are built by **concate
 - Adding a new rule to the codebase doesn't break existing keys (OFF = absent = same key as before).
 
 Pattern: `let k = base; if (rule) k += '|tag'; return k;`
+
+### Blacklist Bucket System
+
+The blacklist records "dead end" state fingerprints from previous sweep seeds. **Too large to fit in memory**, so it's split into time-windowed buckets that load on-demand from IndexedDB.
+
+**Fingerprint**: Canonical string of all xon moves at a tick (`"X0:5->9|X1:stay@0|..."`, computed by `_computeTickFingerprint()`).
+
+**Bucket**: Contains all fingerprints for ticks `[i*64, i*64+63]` (64-tick window, one demo cycle). Each bucket is a separate IDB key: `baseKey|bl|bucketIdx`.
+
+**Data flow**:
+1. **Startup**: `_blIDBLoad()` loads metadata only (total count, bucket count), NOT fingerprints. Returns empty `_sweepBlacklist` Map.
+2. **Prefetch**: `_blPrefetchBucket(lvl, bucketIdx)` loads one bucket's fingerprints from IDB → merges into `_sweepBlacklist`. Bucket 0 is eagerly prefetched; others loaded when a tick in their range is reached.
+3. **Check**: `_btRecordFingerprint()` checks `_sweepBlacklist.get(tick).has(fp)`. If hit → state is dead, skip it. Increments `_sweepBlacklistHits` / `_sweepBlacklistHitsSeed`.
+4. **Blacklist**: At seed end, all `_btTriedFingerprints` are promoted into `_sweepBlacklist`.
+5. **Save**: `_blIDBSaveBlacklist()` partitions `_sweepBlacklist` back into buckets and writes to IDB. Debounced to 2s.
+
+**Memory model**: Only loaded buckets are in RAM (typically 1-2 buckets = a few MB). Full dataset stays in IDB (can grow to 10s of MB). `_blLoadedBuckets` Set tracks which are in memory — each loaded exactly once per session.
+
+**Bypass during replay**: Blacklist check is skipped during council replay until past the member's recorded peak (`_sweepReplayActive && tick <= peak`). This allows deterministic replay without blacklist interference.
 
 ---
 
@@ -611,6 +662,12 @@ Fermions never form on larger lattices. Investigate whether compute-load shortcu
 
 Display both. Swap the current naming: what was "tick" becomes the above definition.
 
+**⚠️ CURRENT NAMING IS SWAPPED IN CODE vs UI:**
+- UI shows `_demoTick` as "Planck Seconds" and `_planckSeconds` as "Flux Events"
+- In code: `_planckSeconds` = flux events (SC deformations), `_demoTick` = total ticks
+- When polling programmatically, use `_demoTick` to match the number displayed as "Planck Seconds" on screen
+- The replay test pipeline uses `_demoTick` for milestones (100/200/300) to match what the user sees
+
 ### 12.8 Re-Center Lattice Around Nuclear Octa
 
 Currently centered around a single node. Should be centered around the nuclear octa itself, giving symmetrical space above and below the nucleus for weak force operation.
@@ -668,3 +725,32 @@ Streamline onboarding for anyone working on replay correctness. The replay pipel
 - **flux-tests.js**: `_serializeSnapshot`, `_deserializeSnapshot`, `_blIDBSaveCouncilMember`, `_saveCurrentRunToCouncil` — IDB persistence
 - **flux-demo.js**: `_councilSnapArchive` population (inside `_demoTick > _maxTickReached` block), autosave milestone trigger
 - **flux-demo-state.js**: `_btSnapshots`, `_councilSnapArchive` declarations
+
+---
+
+### Trail Color Invariant
+**The color of an xon's most recent trail segment is always the same color as the xon.** Enforced by live guard T93. `_trailPush` records `_xonRole(xon)` as the entry's `.role`; `_trailRecolor` updates it on mode transitions. At tick end, `trail[trail.length-1].role === _xonRole(xon)` must hold for every alive xon.
+
+### Replay Integrity Test (🧪 button)
+Automated pipeline: record→save→reload→replay w/guards→scrub→extend, targeting tick milestones 100→200→300. Uses `_demoTick` (not `_planckSeconds`) to match the "Planck Seconds" number shown on screen. When polling simulation state programmatically, always cross-check with a screenshot — the variable names in code do NOT match the UI labels (see §12.7).
+
+**⚠️ Auto-retry best is enabled during the test.** The recording phase runs a normal sweep with auto-retry-best checked. This means the sweep may restart from a council replay mid-recording (when a new best surpasses the old one). This could be a source of replay corruption — the `_councilSnapArchive` may contain spliced snapshots from multiple runs/seeds. Investigate whether auto-retry-best introduces snapshot discontinuities.
+
+### 2026-03-16: Trail Architecture Simplification & Replay Fidelity (In Progress)
+
+**What changed**: Replaced 4 parallel trail arrays (`trail[]`, `trailColHistory[]`, `_trailRoleHistory[]`, `_trailFrozenPos[]`) with a single unified array of `{node, role, pos}` entry objects. Color is now derived at render time via `_roleToColor(entry.role)` — never stored. Snapshot format changed from broken `_tNode/_tCol/_tRole/_tPos` single-entry fields to `_tDelta` (array of all entries pushed this tick) + `_tRecolor` (role-only wash). `_trailLenAtTickStart` set once per tick drives delta computation.
+
+**Two replay paths exist — they diverge on trail data**:
+
+| Path | Source | Trail data | Status |
+|------|--------|-----------|--------|
+| **Dropdown replay** (IDB → `_hydrateCouncilMember` → redo drain) | `_councilSnapArchive` (tick-END snapshots with correct `_tDelta`) | Full trail arrays reconstructed during hydration | Working |
+| **Scrub-to-t=0** (`_timelineScrubTo` → redo drain) | `_btSnapshots` (tick-START snapshots, `_tDelta` always null) | Trail reconstruction added to `resumeDemo()` before drain | Under test |
+
+**Root cause of scrub-to-t=0 failures**: `_btSnapshots` are created at tick START (before choreography runs). At that point, `_tDelta` is correctly null (no moves yet) and `trailLen` reflects the trail length BEFORE moves. During redo forward replay, the delta-based restore path in `_btRestoreSnapshot` can't grow trails because there are no deltas. The fix: `resumeDemo()` now iterates the redo stack chronologically before draining and reconstructs full trail arrays by replaying `trailLen` growth + deltas (same pattern as IDB hydration).
+
+**Safety nets in `_btRestoreSnapshot`**: (1) `while (x.trail.length < tLen)` pads missing entries with xon's current node. (2) Ensures trail head always matches `s.node`. These catch any remaining delta gaps but can create non-unit-distance segments.
+
+**What's validated**: T59 (trail head matches node) passes. T57 (segment length) is the remaining risk — synthetic trail entries from padding may span non-adjacent nodes. The `resumeDemo()` reconstruction should eliminate this by building trails incrementally from chronological snapshots.
+
+**What still needs testing**: (1) Fresh 100+ run → scrub to t=0 → play → verify T57/T59 pass and live continuation works. (2) Dropdown replay of same run → verify trails match. (3) Auto-retry-best on reload → verify redo drain completes cleanly.

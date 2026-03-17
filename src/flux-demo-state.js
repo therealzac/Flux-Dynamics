@@ -26,7 +26,7 @@ let _lastMoviePos = null;      // previous tick's pos[][] for delta compression
 let _playbackMode = false;     // true during imported movie playback
 let _playbackFrame = 0;        // current frame index in playback
 let _importedMovie = null;     // parsed movie JSON during playback
-let _redoStack = [];           // snapshots saved during rewind for instant step-forward
+let _replayCursor = -1;        // -1 = live play, >= 0 = replaying _btSnapshots[_replayCursor]
 let _rlActiveModel = null;     // active RL model for oct scoring (null = use heuristic)
 // PPO training state
 let _ppoTraining = false;       // true during PPO training (enables trajectory collection)
@@ -397,7 +397,7 @@ let _globalModeStats = { oct: 0, tet: 0, idle_tet: 0, weak: 0, gluon: 0 }; // ru
 // ── Rule switches (switchboard) ────────────────────────────────────────────
 let _ruleRelinquishSCs = false; // When true, SCs actively removed after loops. When false, persist until vacuum severs.
 let _ruleGluonMediatedSC = true; // When true, gluon xons physically maintain tet face SCs instead of code-based relinquishment.
-let _ruleBareTetrahedra = true; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
+let _ruleBareTetrahedra = false; // When true, actualized tets with no edge contributors are violations (T86). When false, bare tets are allowed — they simply don't count as quarks.
 let _demoPrevFaces = new Set();   // faces active in previous window (for relinquishing)
 let _idleTetManifested = false;   // set by _startIdleTetLoop when new SCs are materialised
 let T79_MAX_FULL_TICKS = 1;       // T79: max consecutive ticks allowed with all 6 xons on oct nodes
@@ -578,7 +578,8 @@ let _searchLastCandidates = null;    // snapshot of PHASE 2 candidates before ma
 
 // ── Sweep mode: sequential seeds with cross-seed fingerprint blacklist ──
 let _sweepActive = false;            // true during multi-seed sweep
-let _sweepSeedIdx = 0;               // current seed index (0, 1, 2, ...)
+let _sweepSeedIdx = 0;               // current take number (0, 1, 2, ...)
+let _sweepUsedSeeds = new Set();     // Set of seeds already tried (prevents reuse)
 let _sweepBlacklist = new Map();     // Map<tick, Set<fingerprint>> — cross-seed dead states
 let _sweepResults = [];              // per-seed summary results
 let _sweepTotalBlacklisted = 0;      // running count of blacklisted fingerprints
@@ -603,6 +604,7 @@ let _sweepReplayActive = false;      // true during council member replay
 let _sweepReplayMember = null;       // council member being replayed {peak, seed, moves}
 let _replayAncestorPeak = -1;        // ancestor's peak tick when extending a replay (-1 = fresh run)
 let _councilReplayMode = false;      // true when replaying via snapshot playback (pause at end)
+let _guardHardStop = false;        // when true, guards halt replay on failure instead of silent reset
 
 function _goldenCouncilSize() {
     return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));
@@ -619,8 +621,7 @@ function _fnv1aHash(str) {
 let _lastAutosavePeak = 0;          // last _maxTickReached at which autosave fired
 const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
-let _btSnapshots = [];               // stack of state snapshots (one per tick)
-let _councilSnapArchive = [];        // forward-only archive: one snapshot per max-tick advance (never popped)
+let _btSnapshots = [];               // stack of state snapshots (one per tick) — source of truth for IDB saves
 let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
 let _btActive = false;               // true while inside a backtrack retry loop
 
@@ -819,25 +820,12 @@ function _recomputeColors(phase) {
     GLUON_COLOR      = _getWheelColor(COLOR_ROLE_OFFSETS.gluon + phase);
     WEAK_FORCE_COLOR = _getWheelColor(COLOR_ROLE_OFFSETS.weak + phase);
 
-    // Update live xon visuals + sync trailColHistory from role history
+    // Update live xon spark colors — trail colors are derived at render time from entry.role
     if (typeof _demoXons !== 'undefined' && _demoXons) {
         for (const xon of _demoXons) {
             if (!xon || !xon.alive) continue;
-            // Update xon.col to current phase
             xon.col = _roleToColor(_xonRole(xon));
             if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
-            // Rebuild trailColHistory from role history so T24 sees valid current-phase colors
-            if (xon._trailRoleHistory && xon.trailColHistory) {
-                for (let i = 0; i < xon._trailRoleHistory.length; i++) {
-                    xon.trailColHistory[i] = _roleToColor(xon._trailRoleHistory[i]);
-                }
-            }
-            // Also rebuild frozen colors (used during playback/death animation)
-            if (xon._frozenRoles && xon._frozenColors) {
-                for (let i = 0; i < xon._frozenRoles.length; i++) {
-                    xon._frozenColors[i] = _roleToColor(xon._frozenRoles[i]);
-                }
-            }
         }
     }
     // Refresh shapes (tet void colors) to match new phase

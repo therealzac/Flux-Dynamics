@@ -870,8 +870,6 @@ function _executeOctMove(xon, target) {
     // Update xonic movement balance counters
     _updateDirBalance(xon, fromNode, target.node);
 
-    // Push trail history + per-segment color, start tween
-    _trailPush(xon, target.node, xon.col);
     xon.tweenT = 0;
     if (_flashEnabled) xon.flashT = 1.0;
     return true;
@@ -1032,7 +1030,7 @@ function _releaseGluon(face) {
     gluonXon._gluonClientXon = null;
     gluonXon._mode = 'oct';
     gluonXon.col = 0xffffff;
-    _trailRecolor(gluonXon);
+
     if (gluonXon.sparkMat) gluonXon.sparkMat.color.setHex(0xffffff);
 }
 
@@ -1084,7 +1082,7 @@ function _assignXonToTet(xon, face, quarkType) {
     xon._loopSeq = seq;
     xon._loopStep = 0;
     xon.col = col;
-    _trailRecolor(xon); // immediate trail color on mode change
+    // trail role captured at tick-end by _trailPush (T94: no retroactive edits)
 
     // Update spark color
     if (xon.sparkMat) xon.sparkMat.color.setHex(col);
@@ -1191,7 +1189,6 @@ function _walkToFace(xon, targetNodes) {
     _moveRecord.set(step, fromWF);
     _traceMove(xon, fromWF, step, 'walkToFace');
 
-    _trailPush(xon, step, xon.col);
     xon.tweenT = 0;
 
     // Return the target if we reached it in one hop, otherwise null (still walking)
@@ -1252,7 +1249,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
-        _trailRecolor(xon);
+    
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
 
@@ -1263,7 +1260,6 @@ function _returnXonToOct(xon, occupied) {
         _moveRecord.set(target.node, fromRTO);
         _traceMove(xon, fromRTO, target.node, 'returnToOct');
         if (occupied) { _occDel(occupied, fromRTO); _occAdd(occupied, target.node); }
-        _trailPush(xon, target.node, xon.col);
     } else {
         // Already at an oct node — just switch mode
         _relinquishFaceSCs(xon);
@@ -1275,7 +1271,7 @@ function _returnXonToOct(xon, occupied) {
         xon._loopSeq = null;
         xon._loopStep = 0;
         xon.col = 0xffffff;
-        _trailRecolor(xon);
+    
         if (_flashEnabled) xon.flashT = 1.0;
         if (xon.sparkMat) xon.sparkMat.color.setHex(0xffffff);
     }
@@ -1341,7 +1337,7 @@ function _startIdleTetLoop(xon, occupied) {
                 xon._quarkType = qType;
                 xon._loopType = LOOP_TYPE_NAMES[qType];
                 xon.col = QUARK_COLORS[qType];
-                _trailRecolor(xon);
+            
                 if (_flashEnabled) xon.flashT = 1.0;
                 if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
                 // Gluon-mediated: assign companion gluon for idle_tet face
@@ -1370,7 +1366,7 @@ function _startIdleTetLoop(xon, occupied) {
             xon._quarkType = bestType;
             xon._loopType = bestType ? LOOP_TYPE_NAMES[bestType] : null;
             xon.col = bestType ? QUARK_COLORS[bestType] : 0x888888;
-            _trailRecolor(xon);
+        
             if (_flashEnabled) xon.flashT = 1.0;
             if (xon.sparkMat) xon.sparkMat.color.setHex(xon.col);
             // Gluon-mediated: assign companion gluon for idle_tet face
