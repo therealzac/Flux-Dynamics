@@ -3500,6 +3500,12 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
         }, key);
         // Store moves separately under key|mv (lightweight read for golden boost)
         store.put({ seed, moves: movesArr }, key + '|mv');
+        // Wait for transaction to complete before returning — auto-retry-best
+        // needs the data committed before it can hydrate the new best.
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error);
+        });
         console.log(`%c[Council IDB] Saved member seed 0x${seed.toString(16).padStart(8,'0')} (${snapsArr.length} snapshots + ${movesArr.length} moves) to cold storage`, 'color:#66ccff');
     } catch (e) { console.warn('[Council IDB] Save failed:', e); }
 }
@@ -3915,7 +3921,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     existingMember.peak = Math.max(existingMember.peak, peak);
                     if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
                     else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
+                    await _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                 } else {
                     // Collect evicted seeds before trimming
@@ -3923,7 +3929,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
                     _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
                     if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                    _blIDBSaveCouncilMember(lvl, seed, _btSnapshots.slice(), _sweepSeedMoves);
+                    await _blIDBSaveCouncilMember(lvl, seed, _btSnapshots.slice(), _sweepSeedMoves);
                     // Delete evicted members from cold storage
                     for (const ps of prevSeeds) {
                         if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
