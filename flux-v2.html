@@ -43,7 +43,7 @@
             text-shadow: 0 1px 6px rgba(0,0,0,0.8); }
 
         /* ── Right panel ── */
-        #side-panel { position: fixed; top: 48px; right: 16px; width: 375px; z-index: 50;
+        #side-panel { position: fixed; top: 68px; right: 16px; width: 375px; z-index: 50;
             display: flex; flex-direction: column; gap: 0;
             font-size: 15px; letter-spacing: 0.02em; color: var(--text-2);
             user-select: none;
@@ -61,11 +61,11 @@
             text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
 
         /* ── Top bar ── */
-        #topbar { position: fixed; top: 0; left: 0; right: 0; height: 40px; z-index: 201;
+        #topbar { position: fixed; top: 0; left: 0; right: 0; height: 60px; z-index: 201;
             display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
             background: rgba(18, 22, 30, 0.65); backdrop-filter: blur(10px);
             border-bottom: 1px solid var(--border); pointer-events: auto; }
-        #topbar-title { font-family: var(--font-sans); font-size: 16px; font-weight: 600;
+        #topbar-title { font-family: var(--font-sans); font-size: 18px; font-weight: 600;
             color: var(--gold); letter-spacing: 0.06em; white-space: nowrap;
             position: absolute; left: 50%; transform: translateX(-50%); pointer-events: none; }
         .topbar-btn { background: none; border: none; color: var(--text-3); cursor: pointer;
@@ -303,7 +303,7 @@
         </button>
     </div>
     <!-- ═══ DEUTERON PANEL (replaces old legend tabs) ═══ -->
-    <div id="deuteron-panel" style="display:none; position:fixed; top:48px; left:16px;
+    <div id="deuteron-panel" style="display:none; position:fixed; top:68px; left:16px;
         font-size:15px; line-height:2.0; letter-spacing:0.02em; color:var(--text-2);
         user-select:none; text-shadow:0 1px 3px rgba(0,0,0,0.6); max-width:375px;
         pointer-events:auto; background:var(--surface);
@@ -365,6 +365,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -733,7 +734,7 @@
     <script src="src/flux-demo-backtrack.js?v=62"></script>
     <script src="src/flux-demo-planner.js?v=41"></script>
     <script src="src/flux-demo-ui.js?v=163"></script>
-    <script src="src/flux-demo.js?v=508"></script>
+    <script src="src/flux-demo.js?v=509"></script>
     <script src="src/flux-solver-render.js?v=43"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
