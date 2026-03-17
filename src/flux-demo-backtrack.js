@@ -97,7 +97,9 @@ function _btCreateSnapshot() {
 }
 
 // Save a full snapshot of choreography state before a tick executes.
+// Skips if the last snapshot already covers this tick (e.g. replay→live transition).
 function _btSaveSnapshot() {
+    if (_btSnapshots.length > 0 && _btSnapshots[_btSnapshots.length - 1].tick === _demoTick) return;
     _btSnapshots.push(_btCreateSnapshot());
 }
 
@@ -105,11 +107,6 @@ function _btSaveSnapshot() {
 function _btRestoreSnapshot(snap, reverse) {
     _demoTick = snap.tick;
     // Truncate archive when backtracker rewinds — corrupt ticks beyond
-    // snap.tick must be removed so the retried tick gets properly archived.
-    // Archive index 0 = tick 1, so length = snap.tick keeps ticks 1..snap.tick.
-    if (typeof _councilSnapArchive !== 'undefined' && snap.tick < _councilSnapArchive.length) {
-        _councilSnapArchive.length = snap.tick;
-    }
     // Curved reverse: capture current sprite positions BEFORE any state changes
     const fjReverse = _fjCurvature > 0 && reverse;
     const savedPositions = fjReverse ? _demoXons.map(x =>

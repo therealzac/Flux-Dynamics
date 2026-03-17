@@ -989,12 +989,13 @@ function _tickDemoXons(dt) {
                   if(d3x*d3x+d3y*d3y+d3z*d3z>1.44) cp3=cp2; }
                 const _tdx = cp2[0]-cp1[0], _tdy = cp2[1]-cp1[1], _tdz = cp2[2]-cp1[2];
                 const teleport = (_tdx*_tdx + _tdy*_tdy + _tdz*_tdz > 1.44);
-                // Segment color from unified trail entry
-                const segCol = _roleToColor(e1.role);
+                // Segment color from destination trail entry (e2) — the segment
+                // "belongs to" the tick that created the move, not the origin.
+                const segCol = _roleToColor(e2.role);
                 const scr = ((segCol >> 16) & 0xff) / 255;
                 const scg = ((segCol >> 8) & 0xff) / 255;
                 const scb = (segCol & 0xff) / 255;
-                const segRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e1.role] != null) ? _roleOpacity[e1.role] : 1;
+                const segRoleOp = (typeof _roleOpacity !== 'undefined' && _roleOpacity[e2.role] != null) ? _roleOpacity[e2.role] : 1;
                 // Emit FJ_SUBS vertices along curve (skip last to avoid duplicates)
                 for (let s = 0; s < FJ_SUBS && out < XON_TRAIL_VERTS; s++) {
                     const u = s / FJ_SUBS;
@@ -1373,12 +1374,11 @@ function startDemoLoop() {
     _bfsReset(); // fresh demo = clean BFS + ledger
     _lastAutosavePeak = 0; // autosave not cleared — new run overwrites naturally at tick 100
     _btSnapshots.length = 0;
-    _councilSnapArchive.length = 0;
     _tickLog.length = 0;
     _tickLogLastGuards = {};
     _movieFrames.length = 0;
     _lastMoviePos = null;
-    _redoStack.length = 0;
+    _replayCursor = -1;
     _demoReversing = false;
     if (_reverseInterval) { clearInterval(_reverseInterval); _reverseInterval = null; }
     _demoTetAssignments = 0;
@@ -3562,15 +3562,9 @@ async function demoTick() {
     if (_demoTick > _maxTickReached) {
         _maxTickReached = _demoTick;
     }
-    // Archive gate uses archive length, not _maxTickReached — after backtracker
-    // truncates the archive, re-played ticks must be re-archived even though
-    // _maxTickReached (display high-water) hasn't decreased.
-    if (_demoTick > _councilSnapArchive.length) {
-        _councilSnapArchive.push(_serializeSnapshot(_btCreateSnapshot()));
-        // Capture fingerprint of the tick that achieved the new high-water mark
-        if (typeof _computeTickFingerprint === 'function') {
-            _bestPathFingerprint = _computeTickFingerprint();
-        }
+    // Capture fingerprint of the tick that achieved the new high-water mark
+    if (_demoTick > _maxTickReached && typeof _computeTickFingerprint === 'function') {
+        _bestPathFingerprint = _computeTickFingerprint();
     }
 
     // Update tick + Planck-second ticker (both right-panel status and left-panel title)

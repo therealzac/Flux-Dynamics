@@ -883,74 +883,26 @@ function resumeDemo() {
     const _pb = document.getElementById('btn-nucleus-pause');
     if (_pb) { _pb.textContent = '\u23F8'; _pb.title = 'Pause simulation'; }
     if (_demoActive && !_demoInterval && !_demoUncappedId) {
-        if (_redoStack.length > 0) {
-            // Drain redo stack at playback speed (responsive to slider changes).
-            // Uses setTimeout chaining (like rewind) so speed adjustments take
-            // effect immediately — setInterval would lock to the initial rate.
+        if (_replayCursor >= 0 && _replayCursor < _btSnapshots.length - 1) {
+            // Cursor-based replay: advance through pre-loaded _btSnapshots.
+            // Uses setTimeout chaining so speed adjustments take effect immediately.
             let _lastForwardVisual = 0;
             const FWD_VISUAL_INTERVAL = 33; // ~30fps
-            function _forwardReplayStep() {
+            function _replayStep() {
                 if (_demoPaused || !_demoActive) {
                     _demoInterval = null;
                     return;
                 }
-                if (_redoStack.length > 0) {
-                    // Last redo entry: the state where the original run ended.
-                    // Switch to live mode BEFORE popping so guard failures on
-                    // this tick trigger backtracking, not corruption halt.
-                    if (_redoStack.length === 1 && _sweepReplayActive) {
-                        _sweepReplayActive = false;
-                        _sweepReplayMember = null;
-                        _guardHardStop = false;
-                        console.log(`%c[REPLAY] Final redo entry — replay validated, switching to live mode`, 'color:#66ccff;font-weight:bold');
-                    }
-                    _btSaveSnapshot(); // save current state so rewind can reach it
-                    let snap = _redoStack.pop();
-                    // Safety: skip any undefined/null entries (stale IDB data)
-                    while (!snap && _redoStack.length > 0) snap = _redoStack.pop();
-                    if (!snap) { _demoInterval = null; return; }
-                    // Guard snapshot BEFORE restore — captures previous tick's state
-                    // as "pre-move" analog. Mirrors live play: snapshot → moves → check.
-                    if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
-                    _btRestoreSnapshot(snap);
-                    // Archive replayed snapshots so _councilSnapArchive has full t=0→t=N
-                    // when auto-retry-best extends a replay run and saves back to IDB.
-                    if (_sweepReplayActive && typeof _serializeSnapshot === 'function') {
-                        _councilSnapArchive.push(_serializeSnapshot(snap));
-                    }
-                    simHalted = false;
-                    // Update tet coloring BEFORE guards — T58 reads _ruleAnnotations
-                    // which must reflect the restored SC sets, not the previous frame.
-                    if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
-                    // Guards always fire during replay — no exceptions.
-                    if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
-                    if (simHalted) {
-                        _demoInterval = null;
-                        // Update display so user sees the failure tick state
-                        _playbackUpdateDisplay();
-                        return;
-                    }
-                    // Throttle visual updates to ~30fps for buttery speed
-                    const now = performance.now();
-                    if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {
-                        _playbackUpdateDisplay();
-                        _lastForwardVisual = now;
-                    }
-                    // Re-read slider each step so speed changes take effect immediately
-                    const nextMs = Math.max(4, _getDemoIntervalMs());
-                    _demoInterval = setTimeout(_forwardReplayStep, nextMs);
-                } else {
-                    // Redo exhausted — seamless transition to live execution.
-                    // NO state clearing, NO guard resets. The restored state IS
-                    // the live state. Guards keep firing continuously.
+                _replayCursor++;
+                if (_replayCursor >= _btSnapshots.length) {
+                    // Past end — transition to live play
+                    _replayCursor = -1;
                     _demoInterval = null;
-                    if (_sweepActive && _sweepReplayActive) {
+                    if (_sweepReplayActive) {
                         _sweepReplayActive = false;
                         _sweepReplayMember = null;
-                        // Replay validated — switch from corruption-detection (hard halt)
-                        // to normal guard mode (backtracker handles failures).
                         _guardHardStop = false;
-                        console.log('%c[REPLAY] Redo drain complete — continuing live from tick ' + _demoTick, 'color:#66ccff;font-weight:bold');
+                        console.log('%c[REPLAY] Cursor exhausted — continuing live from tick ' + _demoTick, 'color:#66ccff;font-weight:bold');
                     }
                     _maxTickReached = _demoTick;
                     const liveMs = _getDemoIntervalMs();
@@ -959,11 +911,43 @@ function resumeDemo() {
                     } else {
                         _demoInterval = setInterval(demoTick, liveMs);
                     }
+                    return;
                 }
+                // On LAST snapshot: switch off hard-stop before restoring,
+                // so guard failures on this tick trigger backtracking, not corruption halt.
+                if (_replayCursor === _btSnapshots.length - 1 && _sweepReplayActive) {
+                    _sweepReplayActive = false;
+                    _sweepReplayMember = null;
+                    _guardHardStop = false;
+                    console.log(`%c[REPLAY] Final snapshot — switching to live mode`, 'color:#66ccff;font-weight:bold');
+                }
+                // Guard snapshot BEFORE restore — captures previous tick's state
+                if (typeof _liveGuardSnapshot === 'function') _liveGuardSnapshot();
+                _btRestoreSnapshot(_btSnapshots[_replayCursor]);
+                simHalted = false;
+                // Update tet coloring BEFORE guards — T58 reads _ruleAnnotations
+                if (typeof _applyTetColoring === 'function') _applyTetColoring(false);
+                // Guards always fire during replay — no exceptions.
+                if (typeof _liveGuardCheck === 'function') _liveGuardCheck();
+                if (simHalted) {
+                    _demoInterval = null;
+                    _playbackUpdateDisplay();
+                    return;
+                }
+                // Throttle visual updates to ~30fps
+                const now = performance.now();
+                if (now - _lastForwardVisual >= FWD_VISUAL_INTERVAL) {
+                    _playbackUpdateDisplay();
+                    _lastForwardVisual = now;
+                }
+                const nextMs = Math.max(4, _getDemoIntervalMs());
+                _demoInterval = setTimeout(_replayStep, nextMs);
             }
             const intervalMs = Math.max(4, _getDemoIntervalMs());
-            _demoInterval = setTimeout(_forwardReplayStep, intervalMs);
+            _demoInterval = setTimeout(_replayStep, intervalMs);
         } else {
+            // Live play (no replay cursor active)
+            _replayCursor = -1;
             const intervalMs = _getDemoIntervalMs();
             if (intervalMs === 0) {
                 _demoUncappedId = setTimeout(_demoUncappedLoop, 0);
@@ -995,7 +979,7 @@ function stopDemo() {
     _movieFrames.length = 0;
     _lastMoviePos = null;
     _stopMoviePlayback();
-    _redoStack.length = 0;
+    _replayCursor = -1;
     _openingPhase = false;
     const pbEl = document.getElementById('playback-controls');
     if (pbEl) pbEl.style.display = 'none';
@@ -1043,33 +1027,28 @@ function stopDemo() {
 // ══════════════════════════════════════════════════════════════════════════
 
 // Step back one tick by restoring the previous snapshot.
-// Snapshot {tick: N} = state before tick N ran = state after tick N-1 completed.
-// Pop it and restore → _demoTick becomes N, undoing tick N's effects.
-// Forward replay uses redo stack for deterministic replay of the same path.
+// Step back one tick. During replay: just decrement cursor. During live: truncate _btSnapshots.
 function _playbackStepBack() {
-    if (_tickInProgress || _btSnapshots.length < 1) return false;
+    if (_tickInProgress) return false;
     if (_demoTick <= 0) return false;
-    // Save current state to redo stack (for deterministic forward replay)
-    _btSaveSnapshot();
-    const redoSnap = _btSnapshots.pop(); // the one we just saved = current state
-    _redoStack.push(redoSnap);
-    // Now pop the actual previous state
-    const snap = _btSnapshots.pop();
-    if (!snap) {
-        // No snapshot available — put everything back
-        _redoStack.pop();
-        _btSnapshots.push(redoSnap);
-        return false;
+    if (_replayCursor > 0) {
+        // Replay mode: just move cursor backward
+        _replayCursor--;
+        _btRestoreSnapshot(_btSnapshots[_replayCursor], true);
+        simHalted = false;
+        _playbackUpdateDisplay();
+        return true;
     }
+    // Live mode: pop last snapshot, restore the one before it
+    if (_btSnapshots.length < 2) return false;
+    _btSnapshots.length--;  // discard current (last) snapshot
+    const snap = _btSnapshots[_btSnapshots.length - 1];
+    if (!snap) return false;
     _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
-    // Clear halt flag — rewind should always allow forward replay
     simHalted = false;
-    // Clear backtracker BFS state so forward replay starts clean
     _bfsReset();
     _btReset();
-    // Reset live guards to grace period — replayed choreography may diverge
     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();
-    // Also trim the tick log to match
     while (_tickLog.length > 0 && _tickLog[_tickLog.length - 1].tick >= _demoTick) {
         _tickLog.pop();
     }
@@ -1077,20 +1056,20 @@ function _playbackStepBack() {
     return true;
 }
 
-// Step forward one tick — instant from redo stack if available, else re-execute.
+// Step forward one tick. During replay: advance cursor. During live: re-execute tick.
 async function _playbackStepForward() {
     if (_tickInProgress || !_demoActive) return;
     simHalted = false;
-    if (_redoStack.length > 0) {
-        // Deterministic replay from redo stack (no solver, no choreography)
-        _btSaveSnapshot(); // save current state so rewind can reach it
-        const redoSnap = _redoStack.pop();
-        _btRestoreSnapshot(redoSnap);
+    if (_replayCursor >= 0 && _replayCursor < _btSnapshots.length - 1) {
+        // Replay mode: advance cursor
+        _replayCursor++;
+        _btRestoreSnapshot(_btSnapshots[_replayCursor]);
         simHalted = false;
         _playbackUpdateDisplay();
         return;
     }
-    // No redo available — re-execute tick (live path)
+    // Live mode or end of replay — re-execute tick
+    _replayCursor = -1;
     const wasPaused = _demoPaused;
     _demoPaused = false;
     await demoTick();
@@ -1103,23 +1082,28 @@ function startReverse() {
     if (_demoReversing) return;
     pauseDemo();
     _demoReversing = true;
-    // Throttle visual updates during reverse: restore state every tick but only
-    // rebuild 3D scene at ~30fps max to avoid expensive rebuildShortcutLines calls
     let _lastVisualUpdate = 0;
     const VISUAL_INTERVAL = 33; // ~30fps
     function _reverseStep() {
         if (!_demoReversing) return;
-        if (_btSnapshots.length < 1 || _demoTick <= 0) {
+        if (_demoTick <= 0) {
             stopReverse();
             return;
         }
-        // Save current state to redo stack before restoring
-        _btSaveSnapshot();
-        _redoStack.push(_btSnapshots.pop());
-        // Restore previous state
-        const snap = _btSnapshots.pop();
-        if (!snap) { stopReverse(); return; }
-        _btRestoreSnapshot(snap, true); // reverse=true for fighterjet reverse animation
+        if (_replayCursor > 0) {
+            // Replay mode: just decrement cursor
+            _replayCursor--;
+            _btRestoreSnapshot(_btSnapshots[_replayCursor], true);
+        } else if (_btSnapshots.length >= 2) {
+            // Live mode: truncate _btSnapshots
+            _btSnapshots.length--;
+            const snap = _btSnapshots[_btSnapshots.length - 1];
+            if (!snap) { stopReverse(); return; }
+            _btRestoreSnapshot(snap, true);
+        } else {
+            stopReverse();
+            return;
+        }
         simHalted = false;
         _bfsReset();
         _btReset();
@@ -1127,13 +1111,11 @@ function startReverse() {
         while (_tickLog.length > 0 && _tickLog[_tickLog.length - 1].tick >= _demoTick) {
             _tickLog.pop();
         }
-        // Only update visuals at throttled rate
         const now = performance.now();
         if (now - _lastVisualUpdate >= VISUAL_INTERVAL) {
             _playbackUpdateDisplay();
             _lastVisualUpdate = now;
         }
-        // Re-read slider each step so speed changes take effect immediately
         const nextMs = Math.max(4, _getDemoIntervalMs());
         _reverseInterval = setTimeout(_reverseStep, nextMs);
     }
@@ -1191,22 +1173,20 @@ function _playbackUpdateDisplay() {
 }
 
 // ── Timeline Scrubber ──
-// Updates the range slider to reflect current position in the snapshot timeline.
-// Total range = _btSnapshots.length (past) + _redoStack.length (future).
-// Current position = _btSnapshots.length (we're at the end of past snapshots).
+// Total range = _btSnapshots.length. Current position = cursor or end.
 function _updateTimelineScrubber() {
     const slider = document.getElementById('timeline-scrubber');
     const valEl = document.getElementById('timeline-val');
     if (!slider) return;
-    const total = (typeof _btSnapshots !== 'undefined' ? _btSnapshots.length : 0)
-                + (typeof _redoStack !== 'undefined' ? _redoStack.length : 0);
-    const pos = typeof _btSnapshots !== 'undefined' ? _btSnapshots.length : 0;
+    const total = typeof _btSnapshots !== 'undefined' ? _btSnapshots.length : 0;
+    const pos = _replayCursor >= 0 ? _replayCursor : total;
     slider.max = total;
     slider.value = pos;
     if (valEl) valEl.textContent = _demoTick;
 }
 
 // Seek to a specific position in the snapshot timeline.
+// Direct index into _btSnapshots — no push/pop gymnastics.
 function _timelineScrubTo(targetPos) {
     // Movie playback scrubbing
     if (_playbackMode && _importedMovie) {
@@ -1221,30 +1201,12 @@ function _timelineScrubTo(targetPos) {
     if (!_demoActive) return;
     if (_demoReversing && typeof stopReverse === 'function') stopReverse();
     if (!_demoPaused && typeof pauseDemo === 'function') pauseDemo();
-    const currentPos = _btSnapshots.length;
+    if (targetPos < 0 || targetPos >= _btSnapshots.length) return;
+    const currentPos = _replayCursor >= 0 ? _replayCursor : _btSnapshots.length - 1;
     if (targetPos === currentPos) return;
-
-    if (targetPos < currentPos) {
-        // Move backward: push snapshots to redo stack
-        const steps = currentPos - targetPos;
-        for (let i = 0; i < steps; i++) {
-            if (_btSnapshots.length === 0) break;
-            _btSaveSnapshot();
-            _redoStack.push(_btSnapshots.pop());
-            const snap = _btSnapshots.pop();
-            if (!snap) break;
-            _btRestoreSnapshot(snap);
-        }
-    } else {
-        // Move forward: pop from redo stack
-        const steps = targetPos - currentPos;
-        for (let i = 0; i < steps; i++) {
-            if (_redoStack.length === 0) break;
-            _btSaveSnapshot();
-            const snap = _redoStack.pop();
-            _btRestoreSnapshot(snap);
-        }
-    }
+    // Direct restore — just set cursor and restore snapshot
+    _replayCursor = targetPos;
+    _btRestoreSnapshot(_btSnapshots[targetPos]);
     if (typeof simHalted !== 'undefined') simHalted = false;
     _bfsReset(); _btReset();
     if (typeof _liveGuardResetForRewind === 'function') _liveGuardResetForRewind();

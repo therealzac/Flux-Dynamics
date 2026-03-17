@@ -26,7 +26,7 @@ let _lastMoviePos = null;      // previous tick's pos[][] for delta compression
 let _playbackMode = false;     // true during imported movie playback
 let _playbackFrame = 0;        // current frame index in playback
 let _importedMovie = null;     // parsed movie JSON during playback
-let _redoStack = [];           // snapshots saved during rewind for instant step-forward
+let _replayCursor = -1;        // -1 = live play, >= 0 = replaying _btSnapshots[_replayCursor]
 let _rlActiveModel = null;     // active RL model for oct scoring (null = use heuristic)
 // PPO training state
 let _ppoTraining = false;       // true during PPO training (enables trajectory collection)
@@ -621,8 +621,7 @@ function _fnv1aHash(str) {
 let _lastAutosavePeak = 0;          // last _maxTickReached at which autosave fired
 const _BT_MAX_SNAPSHOTS = Infinity; // no cap — must be able to rewind all the way to t=0
 const _BT_MAX_RETRIES = Infinity;   // no artificial cap — L2 lattice is inherently finite
-let _btSnapshots = [];               // stack of state snapshots (one per tick)
-let _councilSnapArchive = [];        // forward-only archive: one snapshot per max-tick advance (never popped)
+let _btSnapshots = [];               // stack of state snapshots (one per tick) — source of truth for IDB saves
 let _btRetryCount = 0;               // retries at current depth within a single demoTick() call
 let _btActive = false;               // true while inside a backtrack retry loop
 

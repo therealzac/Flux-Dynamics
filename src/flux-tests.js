@@ -3078,11 +3078,10 @@ function _isCouncilEligible() {
 }
 
 async function _autosaveToIDB() {
-    if (_councilSnapArchive.length === 0) return;
+    if (_btSnapshots.length === 0) return;
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
-    // Use forward-only archive (pre-serialized at each max-tick advance)
-    const allSnaps = _councilSnapArchive.slice();
+    const allSnaps = _btSnapshots.map(_serializeSnapshot);
     const lvl = typeof latticeLevel !== 'undefined' ? latticeLevel : 2;
     const key = _blacklistRuleKey(lvl);
     try {
@@ -3466,7 +3465,7 @@ function _blIDBSaveBlacklist(lvl) {
     } catch (e) { console.warn('[BL] Save failed:', e); }
 }
 
-async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak) {
+async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves) {
     if (!_blIDBReady) await _blIDBOpen();
     if (!_blIDB) return;
     const key = _blacklistRuleKey(lvl) + '|' + seed;
@@ -3483,50 +3482,7 @@ async function _blIDBSaveCouncilMember(lvl, seed, snapshots, moves, ancestorPeak
         }
     }
 
-    // ── Append-only save when extending a replay ──
-    // Keep ancestor's snapshots (perfect trail data), only append new ticks beyond ancestorPeak.
-    if (ancestorPeak >= 0) {
-        try {
-            const existingData = await new Promise((resolve) => {
-                const tx = _blIDB.transaction(_CS_IDB_STORE, 'readonly');
-                const req = tx.objectStore(_CS_IDB_STORE).get(key);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
-            });
-            if (existingData && existingData.snapshots && existingData.snapshots.length > 0) {
-                // Find where new data starts (ticks beyond ancestor's peak)
-                const newSnapshots = snapshots.filter(s => s.tick > ancestorPeak);
-                if (newSnapshots.length > 0) {
-                    let combinedSnaps = existingData.snapshots.concat(newSnapshots.map(_serializeSnapshot));
-                    // Trim to last contiguous run (existing IDB may have stale multi-run data)
-                    { let ls = 0; for (let i = 1; i < combinedSnaps.length; i++) { if (combinedSnaps[i].tick <= combinedSnaps[i-1].tick) ls = i; } if (ls > 0) combinedSnaps = combinedSnaps.slice(ls); }
-                    const movesArr = [];
-                    for (const [tick, moveMap] of moves) {
-                        movesArr.push([tick, [...moveMap.entries()]]);
-                    }
-                    const tx2 = _blIDB.transaction(_CS_IDB_STORE, 'readwrite');
-                    const store = tx2.objectStore(_CS_IDB_STORE);
-                    store.put({
-                        seed, snapshots: combinedSnaps, moves: movesArr,
-                        snapshotVersion: _SNAPSHOT_VERSION,
-                        timestamp: new Date().toISOString(),
-                    }, key);
-                    store.put({ seed, moves: movesArr }, key + '|mv');
-                    console.log(`%c[Council IDB] Extended member seed 0x${seed.toString(16).padStart(8,'0')} — kept ${existingData.snapshots.length} ancestor snapshots, appended ${newSnapshots.length} new (total ${combinedSnaps.length})`, 'color:#66ccff');
-                } else {
-                    console.log(`%c[Council IDB] No new snapshots beyond ancestor peak t${ancestorPeak} — skip`, 'color:#cccc66');
-                }
-                return; // done — don't fall through to full overwrite
-            }
-        } catch (e) { console.warn('[Council IDB] Append-only read failed, falling back to full save:', e); }
-    }
-
-    // NOTE: blacklist is cross-seed — do NOT GC based on one member's cold set.
-    // Fingerprints from seed A at tick N must still block seed B at tick N.
-
-    // Serialize for IDB — no trail reconstruction needed.
-    // _serializeSnapshot strips trail arrays; _t* fields (per-tick trail entry)
-    // survive serialization and drive forward restore on replay load.
+    // Full overwrite — _btSnapshots IS the complete traversal.
     const snapsArr = snapshots.map(_serializeSnapshot);
     const movesArr = [];
     for (const [tick, moveMap] of moves) {
@@ -3744,14 +3700,14 @@ async function startSweepSeed(seed, replayMember, lvl, _startupLog) {
     startDemoLoop();
     _startupLog('startDemoLoop() done');
 
-    // 6. If replaying: populate redo stack, start redo drain
+    // 6. If replaying: load snapshots into _btSnapshots, restore t=0
     if (replaySnapshots) {
-        _redoStack.length = 0;
-        for (let i = replaySnapshots.length - 1; i >= 0; i--) {
-            _redoStack.push(replaySnapshots[i]);
-        }
-        console.log(`%c[REPLAY] Loaded ${replaySnapshots.length} snapshots from cold storage — save game mode`, 'color:#66ccff;font-weight:bold');
-        // Kill the live tick loop so resumeDemo() starts redo drain instead
+        _btSnapshots.length = 0;
+        _btSnapshots.push(...replaySnapshots);
+        _replayCursor = 0;
+        _btRestoreSnapshot(_btSnapshots[0]);
+        console.log(`%c[REPLAY] Loaded ${replaySnapshots.length} snapshots into _btSnapshots — cursor at 0`, 'color:#66ccff;font-weight:bold');
+        // Kill the live tick loop so resumeDemo() starts cursor-based replay
         if (_demoInterval) { clearInterval(_demoInterval); _demoInterval = null; }
         if (_demoUncappedId) { clearTimeout(_demoUncappedId); _demoUncappedId = null; }
         // Council-grade runs have already revealed the oct — force it so
@@ -3947,16 +3903,14 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             if (avgPeak > 0 && peak < avgPeak) {
                 console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below council avg (t${Math.round(avgPeak)})`, 'color:#cc6666');
             } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
-                const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
+                // _btSnapshots IS the traversal — serialize directly, no archive needed
+                const snapsCopy = _btSnapshots.slice();
                 // Dedup: if this seed already exists in council, update it instead of pushing a duplicate
                 const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
                 if (existingMember) {
                     existingMember.peak = Math.max(existingMember.peak, peak);
                     if (!existingMember.moves) existingMember.moves = _sweepSeedMoves;
                     else { for (const [tick, tickMap] of _sweepSeedMoves) { if (!existingMember.moves.has(tick)) existingMember.moves.set(tick, tickMap); } }
-                    // Full overwrite — the successor's _councilSnapArchive already has
-                    // the complete history (redo-drained ancestor ticks + live extension).
-                    // No append-only stitching needed.
                     _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                 } else {
@@ -3965,7 +3919,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                     _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
                     _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
                     if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
-                    _blIDBSaveCouncilMember(lvl, seed, snapsCopy, _sweepSeedMoves);
+                    _blIDBSaveCouncilMember(lvl, seed, _btSnapshots.slice(), _sweepSeedMoves);
                     // Delete evicted members from cold storage
                     for (const ps of prevSeeds) {
                         if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
@@ -4102,8 +4056,8 @@ function _saveCurrentRunToCouncil() {
     } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak || existingMember) {
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
-        // Use forward-only archive (pre-serialized, never popped by backtracking)
-        const snapsCopy = _councilSnapArchive.map(s => _deserializeSnapshot(s));
+        // _btSnapshots IS the traversal — serialize directly, no archive needed
+        const snapsCopy = _btSnapshots.slice();
         if (existingMember) {
             // Only update if current run surpasses the existing peak (most mature wins)
             if (peak <= existingMember.peak) {
@@ -4112,7 +4066,6 @@ function _saveCurrentRunToCouncil() {
             }
             existingMember.peak = peak;
             existingMember.moves = movesCopy;
-            // Full overwrite — successor's archive has complete history from redo drain + live extension
             _blIDBSaveCouncilMember(lvl, seed, snapsCopy, existingMember.moves);
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
@@ -4820,13 +4773,10 @@ function _exportBfsTestResults() {
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
-        // Pop all snapshots into redo stack until we reach t=0
-        while (_btSnapshots.length > 0 && _demoTick > 0) {
-            _btSaveSnapshot();
-            _redoStack.push(_btSnapshots.pop());
-            const snap = _btSnapshots.pop();
-            if (!snap) break;
-            _btRestoreSnapshot(snap);
+        // Jump to t=0: restore first snapshot, set cursor
+        if (_btSnapshots.length > 0) {
+            _replayCursor = 0;
+            _btRestoreSnapshot(_btSnapshots[0]);
         }
         simHalted = false;
         _bfsReset(); _btReset();
@@ -4849,11 +4799,10 @@ function _exportBfsTestResults() {
         if (!_demoActive) return;
         if (_demoReversing) stopReverse();
         if (!_demoPaused) pauseDemo();
-        // Restore all redo snapshots instantly
-        while (_redoStack.length > 0) {
-            _btSaveSnapshot();
-            const snap = _redoStack.pop();
-            _btRestoreSnapshot(snap);
+        // Jump to end: restore last snapshot, clear cursor
+        if (_btSnapshots.length > 0) {
+            _replayCursor = -1;
+            _btRestoreSnapshot(_btSnapshots[_btSnapshots.length - 1]);
         }
         simHalted = false;
         _bfsReset(); _btReset();
@@ -5132,8 +5081,8 @@ async function _replayTestReplayPhase(q) {
                 resolve();
                 return;
             }
-            // Redo drain done — replay passed, proceed to extend
-            if (_demoActive && !_sweepReplayActive && _redoStack.length === 0) {
+            // Replay cursor exhausted — replay passed, proceed to extend
+            if (_demoActive && !_sweepReplayActive && _replayCursor === -1) {
                 clearInterval(pollId);
                 _replayTestLog(`Replay phase passed — reached tick ${_demoTick}`);
                 _guardHardStop = false;
