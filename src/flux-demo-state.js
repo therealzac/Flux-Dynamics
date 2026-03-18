@@ -608,7 +608,7 @@ let _guardHardStop = false;        // when true, guards halt replay on failure i
 
 function _goldenCouncilSize() {
     const topScore = _sweepGoldenCouncil.length > 0 ? _sweepGoldenCouncil[0].peak : 0;
-    return Math.max(1, Math.floor(Math.sqrt(topScore / 10)));
+    return Math.max(1, Math.floor(Math.sqrt(topScore / 100)));
 }
 
 function _fnv1aHash(str) {

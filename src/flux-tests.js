@@ -3786,6 +3786,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         _sweepUsedSeeds = new Set(cached.usedSeeds || []);
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
+            // Trim to current max size (may have grown under older code)
+            const _maxC = _goldenCouncilSize();
+            if (_sweepGoldenCouncil.length > _maxC) _sweepGoldenCouncil.length = _maxC;
         }
         const councilStr = _sweepGoldenCouncil.length > 0
             ? `council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]` : 'no council';
@@ -4180,6 +4183,9 @@ async function _populateCouncilDropdown() {
         }
         // Persist loaded stubs so replay can find them by index
         _sweepGoldenCouncil = council;
+        // Trim to current max size
+        const _maxC2 = _goldenCouncilSize();
+        if (_sweepGoldenCouncil.length > _maxC2) _sweepGoldenCouncil.length = _maxC2;
     }
 
     // Sort by peak descending
@@ -4306,20 +4312,7 @@ function _updateSweepPanel(message, sweepStartTime) {
     const dlBtn = document.getElementById('btn-sweep-download');
     if (dlBtn) dlBtn.addEventListener('click', _downloadSweepLog);
 
-    // Clear Cache button (replaces Stop Sweep)
-    let clearBtn = document.getElementById('btn-clear-cache');
-    if (!clearBtn) {
-        clearBtn = document.createElement('button');
-        clearBtn.id = 'btn-clear-cache';
-        clearBtn.textContent = 'Clear Memory for Ruleset';
-        clearBtn.style.cssText = 'margin-top:6px;padding:8px 10px;font-size:13px;cursor:pointer;' +
-            'background:#4a1a1a;color:#ff8866;border:1px solid #7a3a3a;border-radius:3px;display:block;width:100%;';
-        clearBtn.addEventListener('click', _clearCacheConfirm);
-        el.parentElement.appendChild(clearBtn);
-    }
-    // Hide confirm row if it exists and we're not in confirm state
-    const confirmRow = document.getElementById('clear-cache-confirm');
-    if (confirmRow && !confirmRow.dataset.active) confirmRow.style.display = 'none';
+    // Clear cache button removed from choreographer panel — use the standalone button instead
 
     // Hide old traversal log button during sweep
     const oldDlBtn = document.getElementById('btn-traversal-log');
@@ -5118,6 +5111,9 @@ async function _replayTestReplayPhase(q) {
         _sweepUsedSeeds = new Set(cached.usedSeeds || []);
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
+            // Trim to current max size
+            const _maxC3 = _goldenCouncilSize();
+            if (_sweepGoldenCouncil.length > _maxC3) _sweepGoldenCouncil.length = _maxC3;
         }
         if (_blBucketVersion >= 1) await _blPrefetchBucket(lvl, 0);
     }
