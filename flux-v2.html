@@ -395,7 +395,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-736c534</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-1362258</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -966,77 +966,44 @@
         _buildPoleToggles('oct-pole4-scs', 4);
         _updatePoleDisabled();
 
-        // ── Enumerate all valid pole SC permutations ──
-        // 8 pole SCs: 4 from node 0 + 4 from node 4
-        const _excludePerms = new Set([2, 3, 23]);
-        const pole0SCs = (scByVert[0] || []).filter(sc => {
-            const other = sc.a === 0 ? sc.b : sc.a;
-            return other !== 0 && other !== 4 && !_excludePerms.has(sc.id);
-        });
-        const pole4SCs = (scByVert[4] || []).filter(sc => {
-            const other = sc.a === 4 ? sc.b : sc.a;
-            return other !== 0 && other !== 4 && !_excludePerms.has(sc.id);
-        });
-        const allPoleSCs = [...pole0SCs, ...pole4SCs];
+        // ── Hardcoded valid pole SC permutations (pre-computed via lookahead solver) ──
+        // 40 of 255 combinations don't create additional oct voids on L2.
+        // SC mapping: S1=SC0(0↔1), S2=SC1(0↔2), S5=SC4(0↔5), S6=SC5(0↔6)
+        //             N26=SC21(4↔26), N48=SC22(4↔48), N97=SC24(4↔97), N102=SC25(4↔102)
+        const _VALID_PERMS = [
+            {label:'S1',scIds:[0]},{label:'S2',scIds:[1]},{label:'S1 S2',scIds:[0,1]},
+            {label:'S5',scIds:[4]},{label:'S6',scIds:[5]},{label:'S5 S6',scIds:[4,5]},
+            {label:'N26',scIds:[21]},{label:'S1 N26',scIds:[0,21]},{label:'S2 N26',scIds:[1,21]},
+            {label:'S5 N26',scIds:[4,21]},{label:'S6 N26',scIds:[5,21]},{label:'S5 S6 N26',scIds:[4,5,21]},
+            {label:'N48',scIds:[22]},{label:'S1 N48',scIds:[0,22]},{label:'S2 N48',scIds:[1,22]},
+            {label:'S5 N48',scIds:[4,22]},{label:'S6 N48',scIds:[5,22]},{label:'S5 S6 N48',scIds:[4,5,22]},
+            {label:'N26 N48',scIds:[21,22]},{label:'S5 N26 N48',scIds:[4,21,22]},
+            {label:'S6 N26 N48',scIds:[5,21,22]},{label:'S5 S6 N26 N48',scIds:[4,5,21,22]},
+            {label:'N97',scIds:[24]},{label:'S1 N97',scIds:[0,24]},{label:'S2 N97',scIds:[1,24]},
+            {label:'S1 S2 N97',scIds:[0,1,24]},{label:'S6 N97',scIds:[5,24]},{label:'S5 S6 N97',scIds:[4,5,24]},
+            {label:'N102',scIds:[25]},{label:'S1 N102',scIds:[0,25]},{label:'S2 N102',scIds:[1,25]},
+            {label:'S1 S2 N102',scIds:[0,1,25]},{label:'S5 N102',scIds:[4,25]},{label:'S6 N102',scIds:[5,25]},
+            {label:'N97 N102',scIds:[24,25]},{label:'S1 N97 N102',scIds:[0,24,25]},
+            {label:'S2 N97 N102',scIds:[1,24,25]},{label:'S1 S2 N97 N102',scIds:[0,1,24,25]},
+            {label:'S5 N97 N102',scIds:[4,24,25]},{label:'S5 S6 N97 N102',scIds:[4,5,24,25]}
+        ];
         const equatorialSCs = [48, 51, 53, 68];
         const permContainer = document.getElementById('oct-permutations');
-        if (permContainer && allPoleSCs.length > 0) {
-            // Save state
-            const savedActive = new Set(activeSet);
-            const savedImplied = new Set(impliedSet);
-            // Get baseline oct count with just equatorial
-            activeSet.clear();
-            equatorialSCs.forEach(id => activeSet.add(id));
-            bumpState(); detectImplied();
-            const baseOctCount = _countActualizedOcts();
-            // Restore
-            activeSet.clear(); for (const id of savedActive) activeSet.add(id);
-            impliedSet.clear(); for (const id of savedImplied) impliedSet.add(id);
-            bumpState();
-
-            const validPerms = [];
-            const total = 1 << allPoleSCs.length; // 2^8 = 256
-            for (let mask = 1; mask < total; mask++) {
-                const combo = [];
-                for (let bit = 0; bit < allPoleSCs.length; bit++) {
-                    if (mask & (1 << bit)) combo.push(allPoleSCs[bit]);
-                }
-                // Test this combo
-                activeSet.clear();
-                equatorialSCs.forEach(id => activeSet.add(id));
-                combo.forEach(sc => activeSet.add(sc.id));
-                bumpState(); detectImplied();
-                const octCount = _countActualizedOcts();
-                // Restore
-                activeSet.clear(); for (const id of savedActive) activeSet.add(id);
-                impliedSet.clear(); for (const id of savedImplied) impliedSet.add(id);
-                bumpState();
-
-                if (octCount <= baseOctCount) {
-                    validPerms.push({ mask, scs: combo });
-                }
-            }
-            // Build buttons
+        if (permContainer) {
             permContainer.innerHTML = '';
             const countLabel = document.createElement('div');
             countLabel.style.cssText = 'font-size:9px; color:var(--text-3); margin-bottom:4px; width:100%;';
-            countLabel.textContent = `${validPerms.length} of ${total - 1} combinations valid`;
+            countLabel.textContent = `${_VALID_PERMS.length} valid permutations`;
             permContainer.appendChild(countLabel);
 
-            for (const perm of validPerms) {
+            for (const perm of _VALID_PERMS) {
                 const btn = document.createElement('button');
-                const label = perm.scs.map(sc => {
-                    const other = sc.a === 0 || sc.a === 4 ? sc.b : sc.a;
-                    const pole = sc.a === 0 || sc.b === 0 ? 'S' : 'N';
-                    return `${pole}${other}`;
-                }).join(' ');
-                btn.textContent = label;
+                btn.textContent = perm.label;
                 btn.style.cssText = 'padding:3px 6px; font-size:9px; font-family:var(--font-mono); background:rgba(100,160,255,0.08); border:1px solid rgba(100,160,255,0.2); color:var(--blue); border-radius:3px; cursor:pointer; white-space:nowrap;';
                 btn.addEventListener('click', () => {
-                    // Clear pole SCs, keep equatorial
                     activeSet.clear();
                     equatorialSCs.forEach(id => activeSet.add(id));
-                    perm.scs.forEach(sc => activeSet.add(sc.id));
+                    perm.scIds.forEach(id => activeSet.add(id));
                     bumpState();
                     const p = detectImplied();
                     applyPositions(p);
@@ -1046,7 +1013,7 @@
                     updateSpheres();
                     if (typeof updateSidePanel === 'function') updateSidePanel();
                     // Sync pole checkboxes
-                    const activeIds = new Set(perm.scs.map(sc => sc.id));
+                    const activeIds = new Set(perm.scIds);
                     document.querySelectorAll('#oct-pole0-scs input, #oct-pole4-scs input').forEach(cb => {
                         cb.checked = activeIds.has(+cb.dataset.scId);
                     });
