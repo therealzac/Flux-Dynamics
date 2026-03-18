@@ -3908,8 +3908,31 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             _replayOnFirstSeed = _sweepGoldenCouncil[0]; // best = highest peak (sorted)
         }
 
+        // Seed backtrack: when a run hits a wall, save a shorter version
+        // (chop last 100 steps) so auto-retry tries a different path from earlier
+        let _seedBacktracked = false;
+        const _sbChk = document.getElementById('chk-seed-backtrack');
+        if (_sbChk && _sbChk.checked && simHalted && _btSnapshots.length > 100) {
+            const chopCount = Math.min(100, Math.floor(_btSnapshots.length * 0.5));
+            const shorterSnaps = _btSnapshots.slice(0, _btSnapshots.length - chopCount);
+            const shorterPeak = shorterSnaps.length > 0 ? shorterSnaps[shorterSnaps.length - 1].tick : 0;
+            // Only save if the shorter version is still meaningful (> 10 ticks)
+            if (shorterPeak > 10) {
+                const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
+                if (existingMember) {
+                    // Overwrite with shorter version — forces retry from earlier point
+                    existingMember.peak = shorterPeak;
+                    await _blIDBSaveCouncilMember(lvl, seed, shorterSnaps, existingMember.moves);
+                    _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+                    console.log(`%c[SEED BACKTRACK] Seed ${seed} chopped ${chopCount} steps: t${shorterPeak + chopCount} → t${shorterPeak}`, 'color:#ff9944;font-weight:bold');
+                    _seedBacktracked = true;
+                }
+            }
+        }
+
         // Golden council: insert this seed if it qualifies
-        if (_sweepSeedMoves && _sweepSeedMoves.size > 0) {
+        // Skip if seed backtrack just saved a shorter version — don't overwrite
+        if (!_seedBacktracked && _sweepSeedMoves && _sweepSeedMoves.size > 0) {
             const maxSize = _goldenCouncilSize();
             // Peak = last snapshot tick (actual traversal), not _maxTickReached (stale after backtracking)
             const peak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : (result.maxTick || 0);
