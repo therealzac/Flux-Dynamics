@@ -395,7 +395,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-e7b0609</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-0c2212e</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -710,6 +710,14 @@
             <div id="violation-msg"></div>
             <button class="btn-secondary" id="btn-copy-violation" style="width:100%; color:var(--error); border-color:rgba(248,113,113,0.4);">Copy State</button>
         </div>
+        <!-- Oct Explorer: pole shortcut toggles -->
+        <div id="oct-explorer-panel" class="panel-section" style="display:none; margin-top:8px; pointer-events:all;">
+            <div class="panel-section-header">Pole Shortcuts</div>
+            <div style="font-size:10px; font-weight:600; color:var(--blue); margin-bottom:4px;">Node 0 (South Pole)</div>
+            <div id="oct-pole0-scs" style="display:flex; flex-direction:column; gap:3px; margin-bottom:10px;"></div>
+            <div style="font-size:10px; font-weight:600; color:var(--blue); margin-bottom:4px;">Node 4 (North Pole)</div>
+            <div id="oct-pole4-scs" style="display:flex; flex-direction:column; gap:3px;"></div>
+        </div>
         <!-- V1 controls (hidden in nucleus mode) -->
         <div id="v1-controls">
             <div id="side-actions">
@@ -831,10 +839,10 @@
         if (_scCtx) { _scCtx.style.display = 'block'; _scCtx.style.maxHeight = 'none'; _scCtx.style.overflow = 'visible'; }
         const _scList = document.getElementById('side-shortcuts');
         if (_scList) _scList.classList.remove('empty');
-        // Switch to L1 lattice with equatorial oct SCs activated
+        // Switch to L2 lattice with equatorial oct SCs activated
         const slider = document.getElementById('lattice-slider');
-        if (slider) { slider.value = 1; slider.dispatchEvent(new Event('input')); }
-        if (typeof updateLatticeLevel === 'function') updateLatticeLevel(1);
+        if (slider) { slider.value = 2; slider.dispatchEvent(new Event('input')); }
+        if (typeof updateLatticeLevel === 'function') updateLatticeLevel(2);
         // Set visualization defaults for explorer: shapes visible, spheres dim
         const _setSlider = (id, val) => { const el = document.getElementById(id); if (el) { el.value = val; el.dispatchEvent(new Event('input')); } };
         _setSlider('sphere-opacity-slider', 1);
@@ -843,8 +851,8 @@
         _setSlider('graph-opacity-slider', 30);
         applySphereOpacity();
         // Activate equatorial SCs and solve
-        // SC28: 9↔13, SC30: 9↔10, SC31: 10↔14, SC37: 13↔14
-        [28, 30, 31, 37].forEach(id => activeSet.add(id));
+        // L2 SC IDs: SC48: 9↔13, SC51: 9↔10, SC53: 10↔14, SC68: 13↔14
+        [48, 51, 53, 68].forEach(id => activeSet.add(id));
         bumpState();
         const pSolved = detectImplied();
         applyPositions(pSolved);
@@ -856,6 +864,100 @@
         updateSpheres();
         updateCandidates();
         if (typeof updateSidePanel === 'function') updateSidePanel();
+        // Show and populate pole shortcut toggles
+        document.getElementById('oct-explorer-panel').style.display = '';
+        function _buildPoleToggles(containerId, poleNode) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.innerHTML = '';
+            const _excludeSCs = new Set([2, 3, 23]); // SC2: 0↔3, SC3: 0↔4 (pole-to-pole), SC23: 4↔118 — not tet-face SCs
+            const scs = (scByVert[poleNode] || []).filter(sc => {
+                const other = sc.a === poleNode ? sc.b : sc.a;
+                return other !== 0 && other !== 4 && !_excludeSCs.has(sc.id); // exclude pole-to-pole + non-tet
+            });
+            for (const sc of scs) {
+                const other = sc.a === poleNode ? sc.b : sc.a;
+                const isActive = activeSet.has(sc.id);
+                const row = document.createElement('label');
+                row.style.cssText = 'display:flex; align-items:center; gap:6px; cursor:pointer; font-size:11px; padding:2px 0;';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = isActive;
+                cb.style.cssText = 'margin:0; cursor:pointer; accent-color:var(--blue);';
+                cb.dataset.scId = sc.id;
+                cb.addEventListener('change', function() {
+                    if (this.checked) {
+                        activeSet.add(sc.id);
+                    } else {
+                        activeSet.delete(sc.id);
+                    }
+                    // Solve with new SC config
+                    bumpState();
+                    const p = detectImplied();
+                    applyPositions(p);
+                    // Bump + update voids (don't rebuild — just re-evaluate actualization)
+                    bumpState();
+                    updateVoidSpheres();
+                    rebuildShortcutLines();
+                    updateSpheres();
+                    if (typeof updateSidePanel === 'function') updateSidePanel();
+                    // _updatePoleDisabled(); // disabled temporarily
+                });
+                const lbl = document.createElement('span');
+                lbl.textContent = `v${poleNode} \u2194 v${other}`;
+                lbl.style.cssText = 'color:var(--text-2); font-family:var(--font-mono); font-size:11px;';
+                const stype = document.createElement('span');
+                stype.textContent = `s${sc.stype}`;
+                stype.style.cssText = 'font-size:9px; color:var(--text-3); margin-left:auto; font-family:var(--font-mono);';
+                row.appendChild(cb);
+                row.appendChild(lbl);
+                row.appendChild(stype);
+                container.appendChild(row);
+            }
+        }
+        // Count currently actualized oct voids
+        function _countActualizedOcts() {
+            let count = 0;
+            const allOpen = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
+            for (const v of voidNeighborData) {
+                if (!v || v.type !== 'oct' || !v.cycles) continue;
+                // An oct is actualized if _isSquare(cycles) — check if all cycle SCs are open
+                let allActive = true;
+                for (const cycle of v.cycles) {
+                    if (!cycle.scIds.every(id => allOpen.has(id))) { allActive = false; break; }
+                }
+                if (allActive) count++;
+            }
+            return count;
+        }
+        // Update disabled state of all pole checkboxes
+        function _updatePoleDisabled() {
+            const baseOctCount = _countActualizedOcts();
+            // Save state before lookahead
+            const savedImplied = new Set(impliedSet);
+            const savedActive = new Set(activeSet);
+            document.querySelectorAll('#oct-pole0-scs input, #oct-pole4-scs input').forEach(cb => {
+                if (cb.checked) { cb.disabled = false; return; }
+                const scId = +cb.dataset.scId;
+                // Lookahead: temporarily add this SC
+                activeSet.add(scId);
+                bumpState();
+                detectImplied();
+                const newOctCount = _countActualizedOcts();
+                // Restore to saved state
+                activeSet.clear(); for (const id of savedActive) activeSet.add(id);
+                impliedSet.clear(); for (const id of savedImplied) impliedSet.add(id);
+                bumpState();
+                // Disable if new oct would form
+                const wouldCreateOct = newOctCount > baseOctCount;
+                cb.disabled = wouldCreateOct;
+                cb.parentElement.style.opacity = wouldCreateOct ? '0.35' : '1';
+                cb.parentElement.title = wouldCreateOct ? 'Would create a new oct void' : '';
+            });
+        }
+        _buildPoleToggles('oct-pole0-scs', 0);
+        _buildPoleToggles('oct-pole4-scs', 4);
+        // _updatePoleDisabled(); // disabled temporarily — uncomment to re-enable lookahead
     });
 
     // ── Slider fill + step buttons ─────────────────
