@@ -395,7 +395,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-63902e6</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-2002d48</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -983,21 +983,36 @@
         // Solver: 20k iterations, 1e-8 imply threshold, 1e-9 convergence.
         // SC mapping: S1=SC0(0↔1), S2=SC1(0↔2), S5=SC4(0↔5), S6=SC5(0↔6)
         //             N26=SC21(4↔26), N48=SC22(4↔48), N97=SC24(4↔97), N102=SC25(4↔102)
+        // Grouped by rotational equivalence families (90° equator rotation: S1↔S5↔S2↔S6, N26↔N97↔N48↔N102)
         const _VALID_PERMS = [
-            {label:'S1',scIds:[0]},{label:'S2',scIds:[1]},{label:'S1 S2',scIds:[0,1]},
-            {label:'S5',scIds:[4]},{label:'S6',scIds:[5]},{label:'S5 S6',scIds:[4,5]},
-            {label:'N26',scIds:[21]},{label:'S1 N26',scIds:[0,21]},{label:'S2 N26',scIds:[1,21]},{label:'S1 S2 N26',scIds:[0,1,21]},
-            {label:'S5 N26',scIds:[4,21]},{label:'S6 N26',scIds:[5,21]},{label:'S5 S6 N26',scIds:[4,5,21]},
-            {label:'N48',scIds:[22]},{label:'S1 N48',scIds:[0,22]},{label:'S2 N48',scIds:[1,22]},{label:'S1 S2 N48',scIds:[0,1,22]},
-            {label:'S5 N48',scIds:[4,22]},{label:'S6 N48',scIds:[5,22]},{label:'S5 S6 N48',scIds:[4,5,22]},
-            {label:'N26 N48',scIds:[21,22]},{label:'S1 N26 N48',scIds:[0,21,22]},{label:'S2 N26 N48',scIds:[1,21,22]},{label:'S1 S2 N26 N48',scIds:[0,1,21,22]},
-            {label:'S5 N26 N48',scIds:[4,21,22]},{label:'S6 N26 N48',scIds:[5,21,22]},{label:'S5 S6 N26 N48',scIds:[4,5,21,22]},
-            {label:'N97',scIds:[24]},{label:'S1 N97',scIds:[0,24]},{label:'S2 N97',scIds:[1,24]},{label:'S1 S2 N97',scIds:[0,1,24]},
-            {label:'S5 N97',scIds:[4,24]},{label:'S6 N97',scIds:[5,24]},{label:'S5 S6 N97',scIds:[4,5,24]},
-            {label:'N102',scIds:[25]},{label:'S1 N102',scIds:[0,25]},{label:'S2 N102',scIds:[1,25]},{label:'S1 S2 N102',scIds:[0,1,25]},
-            {label:'S5 N102',scIds:[4,25]},{label:'S6 N102',scIds:[5,25]},{label:'S5 S6 N102',scIds:[4,5,25]},
-            {label:'N97 N102',scIds:[24,25]},{label:'S1 N97 N102',scIds:[0,24,25]},{label:'S2 N97 N102',scIds:[1,24,25]},{label:'S1 S2 N97 N102',scIds:[0,1,24,25]},
-            {label:'S5 N97 N102',scIds:[4,24,25]},{label:'S6 N97 N102',scIds:[5,24,25]},{label:'S5 S6 N97 N102',scIds:[4,5,24,25]}
+            // ── 1 shortcut (8) — 2 families ──
+            // Family: single south pole
+            {label:'S1',scIds:[0]},{label:'S5',scIds:[4]},{label:'S2',scIds:[1]},{label:'S6',scIds:[5]},
+            // Family: single north pole
+            {label:'N26',scIds:[21]},{label:'N97',scIds:[24]},{label:'N48',scIds:[22]},{label:'N102',scIds:[25]},
+            // ── 2 shortcuts (20) — 5 families ──
+            // Family: same-pole pairs
+            {label:'S1 S2',scIds:[0,1]},{label:'S5 S6',scIds:[4,5]},{label:'N26 N48',scIds:[21,22]},{label:'N97 N102',scIds:[24,25]},
+            // Family: cross-pole diagonal A
+            {label:'S1 N26',scIds:[0,21]},{label:'S6 N102',scIds:[5,25]},{label:'S5 N97',scIds:[4,24]},{label:'S2 N48',scIds:[1,22]},
+            // Family: cross-pole diagonal B
+            {label:'S2 N26',scIds:[1,21]},{label:'S5 N102',scIds:[4,25]},{label:'S1 N48',scIds:[0,22]},{label:'S6 N97',scIds:[5,24]},
+            // Family: cross-pole diagonal C
+            {label:'S5 N26',scIds:[4,21]},{label:'S1 N102',scIds:[0,25]},{label:'S6 N48',scIds:[5,22]},{label:'S2 N97',scIds:[1,24]},
+            // Family: cross-pole diagonal D
+            {label:'S6 N26',scIds:[5,21]},{label:'S2 N102',scIds:[1,25]},{label:'S5 N48',scIds:[4,22]},{label:'S1 N97',scIds:[0,24]},
+            // ── 3 shortcuts (12) — 3 families ──
+            // Family: 2 south + 1 north
+            {label:'S1 S2 N26',scIds:[0,1,21]},{label:'S5 S6 N97',scIds:[4,5,24]},{label:'S1 S2 N48',scIds:[0,1,22]},{label:'S5 S6 N102',scIds:[4,5,25]},
+            // Family: 1 south + 2 north
+            {label:'S1 N26 N48',scIds:[0,21,22]},{label:'S5 N97 N102',scIds:[4,24,25]},{label:'S2 N26 N48',scIds:[1,21,22]},{label:'S6 N97 N102',scIds:[5,24,25]},
+            // Family: cross-pole triple
+            {label:'S5 N26 N48',scIds:[4,21,22]},{label:'S1 N97 N102',scIds:[0,24,25]},{label:'S6 N26 N48',scIds:[5,21,22]},{label:'S2 N97 N102',scIds:[1,24,25]},
+            // ── 4 shortcuts (4) — 2 families ──
+            // Family: same-side 2+2
+            {label:'S1 S2 N26 N48',scIds:[0,1,21,22]},{label:'S5 S6 N97 N102',scIds:[4,5,24,25]},
+            // Family: cross-side 2+2
+            {label:'S1 S2 N97 N102',scIds:[0,1,24,25]},{label:'S5 S6 N26 N48',scIds:[4,5,21,22]}
         ];
         const equatorialSCs = [48, 51, 53, 68];
         const permContainer = document.getElementById('oct-permutations');
@@ -1120,7 +1135,15 @@
                 permContainer.appendChild(groupLabel);
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; flex-wrap:wrap; gap:5px; width:100%;';
-                for (const perm of groups[n]) {
+                let familyCount = 0;
+                for (let pi = 0; pi < groups[n].length; pi++) {
+                const perm = groups[n][pi];
+                // Add family separator every 4 permutations (rotational equivalence family)
+                if (pi > 0 && pi % 4 === 0) {
+                    const sep = document.createElement('div');
+                    sep.style.cssText = 'width:100%; height:1px; background:rgba(255,255,255,0.06); margin:3px 0;';
+                    row.appendChild(sep);
+                }
                     const btn = document.createElement('button');
                     btn.textContent = perm.label;
                     btn.style.cssText = 'padding:6px 10px; font-size:10px; font-family:var(--font-mono); background:rgba(100,160,255,0.08); border:1px solid rgba(100,160,255,0.2); color:var(--blue); border-radius:4px; cursor:pointer; white-space:nowrap;';
