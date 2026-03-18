@@ -3899,14 +3899,18 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             _sweepReplayActive = false;
             _sweepReplayMember = null;
         }
-        // Auto-retry worst: if checkbox checked and council has members,
-        // replay the worst council member next (gives every seed a chance to improve)
+        // Auto-retry worst: if checkbox checked, replay worst council member
+        // BUT if council isn't full yet, start a new seed to fill it first
         const _arbChk = document.getElementById('chk-auto-retry-best');
-        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
-            const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1]; // worst = lowest peak (sorted desc)
-            if (worst.peak > 0) {
-                _replayOnFirstSeed = worst;
+        const maxSize = _goldenCouncilSize();
+        if (_arbChk && _arbChk.checked) {
+            if (_sweepGoldenCouncil.length >= maxSize && _sweepGoldenCouncil.length > 0) {
+                const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1];
+                if (worst.peak > 0) {
+                    _replayOnFirstSeed = worst;
+                }
             }
+            // else: council not full — fall through to new seed
         }
         let _seedBacktracked = false;
 
