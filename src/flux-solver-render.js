@@ -557,7 +557,7 @@ const activeSet=new Set();
 const impliedSet=new Set();
 const impliedBy=new Map();
 const xonImpliedSet=new Set();
-const IMPLY_THRESHOLD=1e-6;
+const IMPLY_THRESHOLD=1e-8;
 
 // ─── Void duality classification ──────────────────────────────────────────────
 // The void lattice is provably bipartite: every base edge connects one
@@ -721,7 +721,7 @@ let _solveCallCountPerTick = 0;
 let _solveTotalMs = 0;
 let _solveMaxMs = 0;
 let _solveIterTotal = 0;
-function _solve(scPairs,iters=5000,noBailout=false){
+function _solve(scPairs,iters=20000,noBailout=false){
     _solveCallCount++;
     _solveCallCountPerTick++;
     const _t0 = performance.now();

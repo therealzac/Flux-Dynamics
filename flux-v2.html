@@ -395,7 +395,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-0118af6</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-a176114</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -782,7 +782,7 @@
     <script src="src/flux-demo-planner.js?v=41"></script>
     <script src="src/flux-demo-ui.js?v=163"></script>
     <script src="src/flux-demo.js?v=512"></script>
-    <script src="src/flux-solver-render.js?v=43"></script>
+    <script src="src/flux-solver-render.js?v=44"></script>
     <script src="src/flux-tournament.js?v=2"></script>
     <!-- flux-rl.js, flux-rules-v2.js: stubbed out, not loaded -->
     <script src="src/flux-ui.js?v=20"></script>
@@ -969,70 +969,26 @@
         _buildPoleToggles('oct-pole4-scs', 4);
         _updatePoleDisabled();
 
-        // ── Hardcoded valid pole SC permutations (pre-computed via lookahead solver) ──
-        // 158 of 255 combinations don't create non-central oct voids on L2.
+        // ── Hardcoded valid pole SC permutations (pre-computed via high-accuracy solver) ──
+        // 48 of 255 combinations don't create additional oct voids on L2.
+        // Solver: 20k iterations, 1e-8 imply threshold, 1e-9 convergence.
         // SC mapping: S1=SC0(0↔1), S2=SC1(0↔2), S5=SC4(0↔5), S6=SC5(0↔6)
         //             N26=SC21(4↔26), N48=SC22(4↔48), N97=SC24(4↔97), N102=SC25(4↔102)
         const _VALID_PERMS = [
             {label:'S1',scIds:[0]},{label:'S2',scIds:[1]},{label:'S1 S2',scIds:[0,1]},
-            {label:'S5',scIds:[4]},{label:'S6',scIds:[5]},{label:'S2 S6',scIds:[1,5]},{label:'S5 S6',scIds:[4,5]},
-            {label:'S1 S2 S5 S6',scIds:[0,1,4,5]},
+            {label:'S5',scIds:[4]},{label:'S6',scIds:[5]},{label:'S5 S6',scIds:[4,5]},
             {label:'N26',scIds:[21]},{label:'S1 N26',scIds:[0,21]},{label:'S2 N26',scIds:[1,21]},{label:'S1 S2 N26',scIds:[0,1,21]},
-            {label:'S5 N26',scIds:[4,21]},{label:'S1 S5 N26',scIds:[0,4,21]},{label:'S1 S2 S5 N26',scIds:[0,1,4,21]},
-            {label:'S6 N26',scIds:[5,21]},{label:'S1 S6 N26',scIds:[0,5,21]},{label:'S1 S2 S6 N26',scIds:[0,1,5,21]},{label:'S2 S5 S6 N26',scIds:[1,4,5,21]},
+            {label:'S5 N26',scIds:[4,21]},{label:'S6 N26',scIds:[5,21]},{label:'S5 S6 N26',scIds:[4,5,21]},
             {label:'N48',scIds:[22]},{label:'S1 N48',scIds:[0,22]},{label:'S2 N48',scIds:[1,22]},{label:'S1 S2 N48',scIds:[0,1,22]},
-            {label:'S5 N48',scIds:[4,22]},{label:'S2 S5 N48',scIds:[1,4,22]},{label:'S1 S2 S5 N48',scIds:[0,1,4,22]},
-            {label:'S6 N48',scIds:[5,22]},{label:'S2 S6 N48',scIds:[1,5,22]},{label:'S5 S6 N48',scIds:[4,5,22]},{label:'S1 S5 S6 N48',scIds:[0,4,5,22]},
+            {label:'S5 N48',scIds:[4,22]},{label:'S6 N48',scIds:[5,22]},{label:'S5 S6 N48',scIds:[4,5,22]},
             {label:'N26 N48',scIds:[21,22]},{label:'S1 N26 N48',scIds:[0,21,22]},{label:'S2 N26 N48',scIds:[1,21,22]},{label:'S1 S2 N26 N48',scIds:[0,1,21,22]},
-            {label:'S5 N26 N48',scIds:[4,21,22]},{label:'S1 S5 N26 N48',scIds:[0,4,21,22]},
-            {label:'S6 N26 N48',scIds:[5,21,22]},{label:'S1 S6 N26 N48',scIds:[0,5,21,22]},{label:'S1 S2 S6 N26 N48',scIds:[0,1,5,21,22]},
-            {label:'S5 S6 N26 N48',scIds:[4,5,21,22]},{label:'S1 S5 S6 N26 N48',scIds:[0,4,5,21,22]},{label:'S2 S5 S6 N26 N48',scIds:[1,4,5,21,22]},
-            {label:'N97',scIds:[24]},{label:'S1 N97',scIds:[0,24]},{label:'S2 N97',scIds:[1,24]},
-            {label:'S5 N97',scIds:[4,24]},{label:'S1 S5 N97',scIds:[0,4,24]},{label:'S2 S5 N97',scIds:[1,4,24]},
-            {label:'S6 N97',scIds:[5,24]},{label:'S1 S2 S6 N97',scIds:[0,1,5,24]},{label:'S5 S6 N97',scIds:[4,5,24]},
-            {label:'S1 S5 S6 N97',scIds:[0,4,5,24]},{label:'S2 S5 S6 N97',scIds:[1,4,5,24]},
-            {label:'N26 N97',scIds:[21,24]},{label:'S1 N26 N97',scIds:[0,21,24]},{label:'S1 S2 N26 N97',scIds:[0,1,21,24]},
-            {label:'S5 N26 N97',scIds:[4,21,24]},{label:'S1 S5 N26 N97',scIds:[0,4,21,24]},{label:'S2 S5 N26 N97',scIds:[1,4,21,24]},
-            {label:'S1 S2 S5 N26 N97',scIds:[0,1,4,21,24]},{label:'S1 S2 S6 N26 N97',scIds:[0,1,5,21,24]},
-            {label:'S5 S6 N26 N97',scIds:[4,5,21,24]},{label:'S1 S5 S6 N26 N97',scIds:[0,4,5,21,24]},{label:'S2 S5 S6 N26 N97',scIds:[1,4,5,21,24]},
-            {label:'N48 N97',scIds:[22,24]},{label:'S2 N48 N97',scIds:[1,22,24]},
-            {label:'S5 N48 N97',scIds:[4,22,24]},{label:'S2 S5 N48 N97',scIds:[1,4,22,24]},{label:'S1 S2 S5 N48 N97',scIds:[0,1,4,22,24]},
-            {label:'S2 S6 N48 N97',scIds:[1,5,22,24]},{label:'S1 S2 S6 N48 N97',scIds:[0,1,5,22,24]},
-            {label:'S5 S6 N48 N97',scIds:[4,5,22,24]},{label:'S1 S5 S6 N48 N97',scIds:[0,4,5,22,24]},{label:'S2 S5 S6 N48 N97',scIds:[1,4,5,22,24]},
-            {label:'S1 N26 N48 N97',scIds:[0,21,22,24]},{label:'S2 N26 N48 N97',scIds:[1,21,22,24]},{label:'S1 S2 N26 N48 N97',scIds:[0,1,21,22,24]},
-            {label:'S1 S5 N26 N48 N97',scIds:[0,4,21,22,24]},{label:'S2 S5 N26 N48 N97',scIds:[1,4,21,22,24]},
-            {label:'S6 N26 N48 N97',scIds:[5,21,22,24]},{label:'S1 S6 N26 N48 N97',scIds:[0,5,21,22,24]},{label:'S2 S6 N26 N48 N97',scIds:[1,5,21,22,24]},
-            {label:'S5 S6 N26 N48 N97',scIds:[4,5,21,22,24]},{label:'S1 S5 S6 N26 N48 N97',scIds:[0,4,5,21,22,24]},{label:'S2 S5 S6 N26 N48 N97',scIds:[1,4,5,21,22,24]},
-            {label:'N102',scIds:[25]},{label:'S1 N102',scIds:[0,25]},{label:'S2 N102',scIds:[1,25]},
-            {label:'S5 N102',scIds:[4,25]},{label:'S1 S2 S5 N102',scIds:[0,1,4,25]},
-            {label:'S6 N102',scIds:[5,25]},{label:'S1 S6 N102',scIds:[0,5,25]},{label:'S2 S6 N102',scIds:[1,5,25]},
-            {label:'S5 S6 N102',scIds:[4,5,25]},{label:'S1 S5 S6 N102',scIds:[0,4,5,25]},{label:'S2 S5 S6 N102',scIds:[1,4,5,25]},
-            {label:'N26 N102',scIds:[21,25]},{label:'S1 N26 N102',scIds:[0,21,25]},{label:'S1 S2 N26 N102',scIds:[0,1,21,25]},
-            {label:'S1 S2 S5 N26 N102',scIds:[0,1,4,21,25]},{label:'S6 N26 N102',scIds:[5,21,25]},
-            {label:'S1 S6 N26 N102',scIds:[0,5,21,25]},{label:'S1 S2 S6 N26 N102',scIds:[0,1,5,21,25]},
-            {label:'S5 S6 N26 N102',scIds:[4,5,21,25]},{label:'S1 S5 S6 N26 N102',scIds:[0,4,5,21,25]},{label:'S2 S5 S6 N26 N102',scIds:[1,4,5,21,25]},
-            {label:'N48 N102',scIds:[22,25]},{label:'S2 N48 N102',scIds:[1,22,25]},
-            {label:'S1 S2 S5 N48 N102',scIds:[0,1,4,22,25]},{label:'S6 N48 N102',scIds:[5,22,25]},
-            {label:'S2 S6 N48 N102',scIds:[1,5,22,25]},{label:'S1 S2 S6 N48 N102',scIds:[0,1,5,22,25]},
-            {label:'S1 S5 S6 N48 N102',scIds:[0,4,5,22,25]},{label:'S2 S5 S6 N48 N102',scIds:[1,4,5,22,25]},
-            {label:'S1 N26 N48 N102',scIds:[0,21,22,25]},{label:'S2 N26 N48 N102',scIds:[1,21,22,25]},{label:'S1 S2 N26 N48 N102',scIds:[0,1,21,22,25]},
-            {label:'S5 N26 N48 N102',scIds:[4,21,22,25]},{label:'S1 S5 N26 N48 N102',scIds:[0,4,21,22,25]},{label:'S2 S5 N26 N48 N102',scIds:[1,4,21,22,25]},
-            {label:'S1 S6 N26 N48 N102',scIds:[0,5,21,22,25]},{label:'S2 S6 N26 N48 N102',scIds:[1,5,21,22,25]},{label:'S1 S2 S6 N26 N48 N102',scIds:[0,1,5,21,22,25]},
-            {label:'S5 S6 N26 N48 N102',scIds:[4,5,21,22,25]},{label:'S1 S5 S6 N26 N48 N102',scIds:[0,4,5,21,22,25]},{label:'S2 S5 S6 N26 N48 N102',scIds:[1,4,5,21,22,25]},
-            {label:'N97 N102',scIds:[24,25]},{label:'S1 N97 N102',scIds:[0,24,25]},{label:'S2 N97 N102',scIds:[1,24,25]},
-            {label:'S1 S2 N97 N102',scIds:[0,1,24,25]},{label:'S5 N97 N102',scIds:[4,24,25]},
-            {label:'S1 S5 N97 N102',scIds:[0,4,24,25]},{label:'S2 S5 N97 N102',scIds:[1,4,24,25]},{label:'S1 S2 S5 N97 N102',scIds:[0,1,4,24,25]},
-            {label:'S6 N97 N102',scIds:[5,24,25]},{label:'S1 S6 N97 N102',scIds:[0,5,24,25]},{label:'S2 S6 N97 N102',scIds:[1,5,24,25]},
-            {label:'S1 S2 S6 N97 N102',scIds:[0,1,5,24,25]},{label:'S5 S6 N97 N102',scIds:[4,5,24,25]},
-            {label:'S2 N26 N97 N102',scIds:[1,21,24,25]},{label:'S1 S2 N26 N97 N102',scIds:[0,1,21,24,25]},
-            {label:'S5 N26 N97 N102',scIds:[4,21,24,25]},{label:'S1 S5 N26 N97 N102',scIds:[0,4,21,24,25]},{label:'S2 S5 N26 N97 N102',scIds:[1,4,21,24,25]},
-            {label:'S1 S2 S5 N26 N97 N102',scIds:[0,1,4,21,24,25]},{label:'S1 S6 N26 N97 N102',scIds:[0,5,21,24,25]},
-            {label:'S2 S6 N26 N97 N102',scIds:[1,5,21,24,25]},{label:'S1 S2 S6 N26 N97 N102',scIds:[0,1,5,21,24,25]},
-            {label:'S1 N48 N97 N102',scIds:[0,22,24,25]},{label:'S5 N48 N97 N102',scIds:[4,22,24,25]},
-            {label:'S1 S5 N48 N97 N102',scIds:[0,4,22,24,25]},{label:'S2 S5 N48 N97 N102',scIds:[1,4,22,24,25]},
-            {label:'S1 S2 S5 N48 N97 N102',scIds:[0,1,4,22,24,25]},{label:'S6 N48 N97 N102',scIds:[5,22,24,25]},
-            {label:'S1 S6 N48 N97 N102',scIds:[0,5,22,24,25]},{label:'S2 S6 N48 N97 N102',scIds:[1,5,22,24,25]},
-            {label:'S1 S2 S6 N48 N97 N102',scIds:[0,1,5,22,24,25]},{label:'N26 N48 N97 N102',scIds:[21,22,24,25]}
+            {label:'S5 N26 N48',scIds:[4,21,22]},{label:'S6 N26 N48',scIds:[5,21,22]},{label:'S5 S6 N26 N48',scIds:[4,5,21,22]},
+            {label:'N97',scIds:[24]},{label:'S1 N97',scIds:[0,24]},{label:'S2 N97',scIds:[1,24]},{label:'S1 S2 N97',scIds:[0,1,24]},
+            {label:'S5 N97',scIds:[4,24]},{label:'S6 N97',scIds:[5,24]},{label:'S5 S6 N97',scIds:[4,5,24]},
+            {label:'N102',scIds:[25]},{label:'S1 N102',scIds:[0,25]},{label:'S2 N102',scIds:[1,25]},{label:'S1 S2 N102',scIds:[0,1,25]},
+            {label:'S5 N102',scIds:[4,25]},{label:'S6 N102',scIds:[5,25]},{label:'S5 S6 N102',scIds:[4,5,25]},
+            {label:'N97 N102',scIds:[24,25]},{label:'S1 N97 N102',scIds:[0,24,25]},{label:'S2 N97 N102',scIds:[1,24,25]},{label:'S1 S2 N97 N102',scIds:[0,1,24,25]},
+            {label:'S5 N97 N102',scIds:[4,24,25]},{label:'S6 N97 N102',scIds:[5,24,25]},{label:'S5 S6 N97 N102',scIds:[4,5,24,25]}
         ];
         const equatorialSCs = [48, 51, 53, 68];
         const permContainer = document.getElementById('oct-permutations');
