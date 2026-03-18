@@ -3902,19 +3902,6 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             _sweepReplayActive = false;
             _sweepReplayMember = null;
         }
-        // Auto-retry worst: if checkbox checked, replay worst council member
-        // BUT if council isn't full yet, start a new seed to fill it first
-        const _arbChk = document.getElementById('chk-auto-retry-best');
-        const maxSize = _goldenCouncilSize();
-        if (_arbChk && _arbChk.checked) {
-            if (_sweepGoldenCouncil.length >= maxSize && _sweepGoldenCouncil.length > 0) {
-                const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1];
-                if (worst.peak > 0) {
-                    _replayOnFirstSeed = worst;
-                }
-            }
-            // else: council not full — fall through to new seed
-        }
         let _seedBacktracked = false;
 
         // Golden council: insert this seed if it qualifies
@@ -3962,6 +3949,21 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
         // Persist blacklist + council index to IndexedDB after each seed
         _blIDBSave(lvl);
+
+        // Auto-retry worst: AFTER council save so we pick from the updated council
+        // (not a member that was just evicted)
+        const _arbChk = document.getElementById('chk-auto-retry-best');
+        if (_arbChk && _arbChk.checked) {
+            const _arMaxSize = _goldenCouncilSize();
+            if (_sweepGoldenCouncil.length >= _arMaxSize && _sweepGoldenCouncil.length > 0) {
+                const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1];
+                if (worst.peak > 0) {
+                    _replayOnFirstSeed = worst;
+                    console.log(`%c[AUTO-RETRY WORST] Next seed will replay worst council member (t${worst.peak}, seed 0x${worst.seed.toString(16).padStart(8,'0')})`, 'color:#ff9944;font-weight:bold');
+                }
+            }
+            // else: council not full — fall through to new seed
+        }
 
         // If NOT canary (rules satisfiable!), stop sweep
         if (!simHalted) {
