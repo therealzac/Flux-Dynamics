@@ -217,7 +217,9 @@ const NucleusSimulator = (function(){
         const dp = document.getElementById('deuteron-panel');
         const leftVis = typeof _isLeftSidebarVisible === 'function' ? _isLeftSidebarVisible() : true;
         if(dp && leftVis) dp.style.display = 'block';
-        // bottom-stats stays as fixed overlay — positioning handled by sidebar toggle logic
+        // Show bottom-stats overlay for H-2 mode
+        const bs = document.getElementById('bottom-stats');
+        if (bs) bs.style.display = '';
         // Populate quark color legend once on enter
         _populateDeuteronQuarkLegend();
 
@@ -245,9 +247,9 @@ const NucleusSimulator = (function(){
         // Hide the deuteron panel + pattern demo
         const dp = document.getElementById('deuteron-panel');
         if(dp) dp.style.display = 'none';
-        // Move bottom-stats back to body as standalone fixed panel
+        // Hide bottom-stats and move back to body
         const bs = document.getElementById('bottom-stats');
-        if(bs) { document.body.appendChild(bs); bs.classList.remove('inline'); }
+        if(bs) { bs.style.display = 'none'; document.body.appendChild(bs); bs.classList.remove('inline'); }
         if (_demoActive) stopDemo();
         // Slider defaults are set in HTML — don't override user preferences on exit.
     }
