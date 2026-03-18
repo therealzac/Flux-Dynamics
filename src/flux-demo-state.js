@@ -607,7 +607,7 @@ let _councilReplayMode = false;      // true when replaying via snapshot playbac
 let _guardHardStop = false;        // when true, guards halt replay on failure instead of silent reset
 
 function _goldenCouncilSize() {
-    return Math.min(10, Math.max(1, Math.floor(Math.sqrt(_sweepSeedIdx + 1))));
+    return 5;
 }
 
 function _fnv1aHash(str) {
