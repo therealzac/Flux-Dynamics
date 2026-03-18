@@ -395,7 +395,7 @@
             </div>
             <button id="btn-bfs-export" style="display:none; margin-top:6px; padding:5px 10px; font-size:10px; font-weight:600; background:rgba(100,220,160,0.12); border:1px solid rgba(100,220,160,0.25); color:#7ac0a0; border-radius:3px; cursor:pointer; letter-spacing:0.04em;">Export Results</button>
         </div>
-        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-f8c8313</div>
+        <div style="text-align:center; padding:8px 0 2px; font-size:10px; color:var(--text-3); opacity:0.5; letter-spacing:0.04em;">v0.2.0-5c0c439</div>
     </div>
     <style>
         @keyframes dp-alarm { from{opacity:0.5} to{opacity:1.0} }
@@ -915,13 +915,16 @@
                 container.appendChild(row);
             }
         }
-        // Count currently actualized oct voids
+        // Count actualized oct voids that include central nucleus nodes.
+        // Only checks octs touching nodes 0,4,9,10,13,14 — ignores distant lattice octs.
+        const _centralNodes = new Set([0, 4, 9, 10, 13, 14]);
         function _countActualizedOcts() {
             let count = 0;
             const allOpen = new Set([...activeSet, ...impliedSet, ...xonImpliedSet]);
             for (const v of voidNeighborData) {
                 if (!v || v.type !== 'oct' || !v.cycles) continue;
-                // An oct is actualized if _isSquare(cycles) — check if all cycle SCs are open
+                // Only count octs that touch at least one central node
+                if (!v.nbrs || !v.nbrs.some(n => _centralNodes.has(n))) continue;
                 let allActive = true;
                 for (const cycle of v.cycles) {
                     if (!cycle.scIds.every(id => allOpen.has(id))) { allActive = false; break; }
