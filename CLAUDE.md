@@ -754,3 +754,9 @@ Automated pipeline: record→save→reload→replay w/guards→scrub→extend, t
 **What's validated**: T59 (trail head matches node) passes. T57 (segment length) is the remaining risk — synthetic trail entries from padding may span non-adjacent nodes. The `resumeDemo()` reconstruction should eliminate this by building trails incrementally from chronological snapshots.
 
 **What still needs testing**: (1) Fresh 100+ run → scrub to t=0 → play → verify T57/T59 pass and live continuation works. (2) Dropdown replay of same run → verify trails match. (3) Auto-retry-best on reload → verify redo drain completes cleanly.
+
+---
+
+## 15. Pre-Push Checklist
+
+**Always bump the version number before pushing.** The pre-commit hook in `.git/hooks/pre-commit` auto-updates the version string in `flux-v2.html` on each commit. Verify the version changed after committing.
