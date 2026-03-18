@@ -759,4 +759,15 @@ Automated pipeline: record→save→reload→replay w/guards→scrub→extend, t
 
 ## 15. Pre-Push Checklist
 
-**Always bump the version number before pushing.** The pre-commit hook in `.git/hooks/pre-commit` auto-updates the version string in `flux-v2.html` on each commit. Verify the version changed after committing.
+**Always manually bump the version number before pushing.** This is intentionally manual to track deliberate pushes vs accidental ones.
+
+**Version format**: `v{major}.{minor}.{patch}` — displayed at bottom of left panel in `flux-v2.html`.
+
+**Incrementing rules**:
+- Increment patch: `v0.2.0` → `v0.2.1`
+- Patch rolls over at 99: `v0.2.99` → `v0.3.1`
+- Minor rolls over at 99: `v0.99.99` → `v1.0.1`
+
+**Process**: Before every push to GitHub, find the version string in `flux-v2.html` (bottom of left panel div) and increment the patch number. Do NOT automate this — the manual step ensures every push is intentional.
+
+**Remove the pre-commit hook** — version bumping is manual only.
