@@ -3912,19 +3912,25 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         // (chop last 100 steps) so auto-retry tries a different path from earlier
         let _seedBacktracked = false;
         const _sbChk = document.getElementById('chk-seed-backtrack');
-        if (_sbChk && _sbChk.checked && simHalted && _btSnapshots.length > 100) {
-            const chopCount = Math.min(100, Math.floor(_btSnapshots.length * 0.5));
-            const shorterSnaps = _btSnapshots.slice(0, _btSnapshots.length - chopCount);
-            const shorterPeak = shorterSnaps.length > 0 ? shorterSnaps[shorterSnaps.length - 1].tick : 0;
-            // Only save if the shorter version is still meaningful (> 10 ticks)
-            if (shorterPeak > 10) {
-                const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
-                if (existingMember) {
-                    // Overwrite with shorter version — forces retry from earlier point
+        if (_sbChk && _sbChk.checked && simHalted) {
+            const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
+            if (existingMember && existingMember.peak > 100) {
+                // Chop from the SAVED peak, not the current run's end.
+                // This way successive backtracks walk progressively earlier.
+                const chopCount = Math.min(100, Math.floor(existingMember.peak * 0.5));
+                const cutTick = existingMember.peak - chopCount;
+                // Find the snapshot index closest to cutTick
+                let cutIdx = _btSnapshots.length;
+                for (let i = _btSnapshots.length - 1; i >= 0; i--) {
+                    if (_btSnapshots[i].tick <= cutTick) { cutIdx = i + 1; break; }
+                }
+                const shorterSnaps = _btSnapshots.slice(0, cutIdx);
+                const shorterPeak = shorterSnaps.length > 0 ? shorterSnaps[shorterSnaps.length - 1].tick : 0;
+                if (shorterPeak > 10 && shorterPeak < existingMember.peak) {
                     existingMember.peak = shorterPeak;
                     await _blIDBSaveCouncilMember(lvl, seed, shorterSnaps, existingMember.moves);
                     _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-                    console.log(`%c[SEED BACKTRACK] Seed ${seed} chopped ${chopCount} steps: t${shorterPeak + chopCount} → t${shorterPeak}`, 'color:#ff9944;font-weight:bold');
+                    console.log(`%c[SEED BACKTRACK] Seed ${seed} chopped from t${shorterPeak + chopCount} → t${shorterPeak} (saved peak walked back)`, 'color:#ff9944;font-weight:bold');
                     _seedBacktracked = true;
                 }
             }
