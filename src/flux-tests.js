@@ -3900,41 +3900,16 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             _sweepReplayActive = false;
             _sweepReplayMember = null;
         }
-        // Auto-retry best: if checkbox checked and council has members,
-        // replay the best council member next (blacklist ensures divergence)
+        // Auto-retry worst: if checkbox checked and council has members,
+        // replay the worst council member next (gives every seed a chance to improve)
         const _arbChk = document.getElementById('chk-auto-retry-best');
-        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0
-            && _sweepGoldenCouncil[0].peak >= 30) {
-            _replayOnFirstSeed = _sweepGoldenCouncil[0]; // best = highest peak (sorted)
-        }
-
-        // Seed backtrack: when a run hits a wall, save a shorter version
-        // (chop last 100 steps) so auto-retry tries a different path from earlier
-        let _seedBacktracked = false;
-        const _sbChk = document.getElementById('chk-seed-backtrack');
-        if (_sbChk && _sbChk.checked && simHalted) {
-            const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
-            if (existingMember && existingMember.peak > 100) {
-                // Chop from the SAVED peak, not the current run's end.
-                // This way successive backtracks walk progressively earlier.
-                const chopCount = Math.min(100, Math.floor(existingMember.peak * 0.5));
-                const cutTick = existingMember.peak - chopCount;
-                // Find the snapshot index closest to cutTick
-                let cutIdx = _btSnapshots.length;
-                for (let i = _btSnapshots.length - 1; i >= 0; i--) {
-                    if (_btSnapshots[i].tick <= cutTick) { cutIdx = i + 1; break; }
-                }
-                const shorterSnaps = _btSnapshots.slice(0, cutIdx);
-                const shorterPeak = shorterSnaps.length > 0 ? shorterSnaps[shorterSnaps.length - 1].tick : 0;
-                if (shorterPeak > 10 && shorterPeak < existingMember.peak) {
-                    existingMember.peak = shorterPeak;
-                    await _blIDBSaveCouncilMember(lvl, seed, shorterSnaps, existingMember.moves);
-                    _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-                    console.log(`%c[SEED BACKTRACK] Seed ${seed} chopped from t${shorterPeak + chopCount} → t${shorterPeak} (saved peak walked back)`, 'color:#ff9944;font-weight:bold');
-                    _seedBacktracked = true;
-                }
+        if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
+            const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1]; // worst = lowest peak (sorted desc)
+            if (worst.peak >= 10) {
+                _replayOnFirstSeed = worst;
             }
         }
+        let _seedBacktracked = false;
 
         // Golden council: insert this seed if it qualifies
         // Skip if seed backtrack just saved a shorter version — don't overwrite
