@@ -3904,7 +3904,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         const _arbChk = document.getElementById('chk-auto-retry-best');
         if (_arbChk && _arbChk.checked && _sweepGoldenCouncil.length > 0) {
             const worst = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1]; // worst = lowest peak (sorted desc)
-            if (worst.peak >= 10) {
+            if (worst.peak > 0) {
                 _replayOnFirstSeed = worst;
             }
         }
