@@ -4648,6 +4648,29 @@ function _exportBfsTestResults() {
 (function(){
     NucleusSimulator.populateModelSelect();
 
+    // Static clear cache button (always visible in H-2 panel)
+    document.getElementById('btn-clear-cache-static')?.addEventListener('click', async function() {
+        if (this.dataset.confirming) return;
+        this.dataset.confirming = '1';
+        const origText = this.textContent;
+        this.textContent = 'Confirm? Click again to clear';
+        this.style.background = 'rgba(255,60,60,0.2)';
+        const timeout = setTimeout(() => {
+            delete this.dataset.confirming;
+            this.textContent = origText;
+            this.style.background = '';
+        }, 3000);
+        this.addEventListener('click', async function onConfirm() {
+            this.removeEventListener('click', onConfirm);
+            clearTimeout(timeout);
+            delete this.dataset.confirming;
+            await _clearCacheExecute();
+            this.textContent = 'Cache cleared!';
+            this.style.background = '';
+            setTimeout(() => { this.textContent = origText; }, 2000);
+        }, { once: true });
+    });
+
     // Play button — new run or council replay depending on dropdown selection
     document.getElementById('btn-simulate-nucleus')?.addEventListener('click', function(){
         if (_sweepActive || _bfsTestActive || _demoActive) return;
