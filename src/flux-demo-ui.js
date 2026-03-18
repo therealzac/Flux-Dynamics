@@ -57,7 +57,8 @@ function _updateBottomStats() {
     if (planckEl) planckEl.textContent = _planckSeconds;
     const ticksEl = document.getElementById('st-ticks');
     if (ticksEl) ticksEl.textContent = _demoTick;
-    const totalOpen = activeSet.size + impliedSet.size + (typeof xonImpliedSet !== 'undefined' ? xonImpliedSet.size : 0);
+    const _allSCs = new Set([...activeSet, ...impliedSet, ...(typeof xonImpliedSet !== 'undefined' ? xonImpliedSet : [])]);
+    const totalOpen = _allSCs.size;
     const scEl = document.getElementById('st-sc');
     if (scEl) scEl.textContent = totalOpen + ' / ' + ALL_SC.length;
     const densEl = document.getElementById('st-dens');
