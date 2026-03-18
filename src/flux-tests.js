@@ -3071,12 +3071,11 @@ function _isCouncilEligible() {
     const currentSeed = _forceSeed || _runSeed || 0;
     // Current seed already in council → still eligible (keep autosaving updates)
     if (_sweepGoldenCouncil.some(m => m.seed === currentSeed)) return true;
-    // Must exceed average council score to be admitted
-    const avgPeak = _sweepGoldenCouncil.length > 0
-        ? _sweepGoldenCouncil.reduce((s, m) => s + m.peak, 0) / _sweepGoldenCouncil.length : 0;
-    if (avgPeak > 0 && _maxTickReached < avgPeak) return false;
+    // Council not full → always eligible
     if (_sweepGoldenCouncil.length < maxSize) return true;
-    return _maxTickReached > _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak;
+    // Must beat the lowest council member to be admitted
+    const lowestPeak = _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak;
+    return _maxTickReached > lowestPeak;
 }
 
 async function _autosaveToIDB() {
@@ -3919,11 +3918,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
             const peak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : (result.maxTick || 0);
             const lowestPeak = _sweepGoldenCouncil.length >= maxSize
                 ? _sweepGoldenCouncil[_sweepGoldenCouncil.length - 1].peak : -1;
-            const avgPeak = _sweepGoldenCouncil.length > 0
-                ? _sweepGoldenCouncil.reduce((s, m) => s + m.peak, 0) / _sweepGoldenCouncil.length : 0;
-            if (avgPeak > 0 && peak < avgPeak) {
-                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below council avg (t${Math.round(avgPeak)})`, 'color:#cc6666');
-            } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak) {
+            if (_sweepGoldenCouncil.length >= maxSize && peak <= lowestPeak) {
+                console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) rejected — below lowest council member (t${lowestPeak})`, 'color:#cc6666');
+            } else {
                 // _btSnapshots IS the traversal — serialize directly, no archive needed
                 const snapsCopy = _btSnapshots.slice();
                 // Dedup: if this seed already exists in council, update it instead of pushing a duplicate
@@ -4074,12 +4071,10 @@ function _saveCurrentRunToCouncil() {
     for (const [tick, tickMap] of _sweepSeedMoves) {
         movesCopy.set(tick, new Map(tickMap));
     }
-    const avgPeak = _sweepGoldenCouncil.length > 0
-        ? _sweepGoldenCouncil.reduce((s, m) => s + m.peak, 0) / _sweepGoldenCouncil.length : 0;
-    // Existing seed already in council can always update (don't gate updates on avg rule)
+    // Existing seed already in council can always update
     const existingMember = _sweepGoldenCouncil.find(m => m.seed === seed);
-    if (!existingMember && avgPeak > 0 && peak < avgPeak) {
-        console.log(`%c[SAVE] Current run (peak t${peak}) rejected — below council avg (t${Math.round(avgPeak)})`, 'color:#cc6666');
+    if (!existingMember && _sweepGoldenCouncil.length >= maxSize && peak <= lowestPeak) {
+        console.log(`%c[SAVE] Current run (peak t${peak}) rejected — below lowest council member (t${lowestPeak})`, 'color:#cc6666');
     } else if (_sweepGoldenCouncil.length < maxSize || peak > lowestPeak || existingMember) {
         const slider = document.getElementById('lattice-slider');
         const lvl = slider ? +slider.value : 2;
