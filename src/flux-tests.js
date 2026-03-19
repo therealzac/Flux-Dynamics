@@ -3063,6 +3063,22 @@ async function _migrateOldKeys() {
     if (migrated > 0) console.log(`[IDB] Migrated ${migrated} keys to new format`);
 }
 
+// ── Council trim — enforce maxSize, delete evicted from IDB ──
+function _trimCouncil(lvl) {
+    const maxSize = _goldenCouncilSize();
+    if (_sweepGoldenCouncil.length <= maxSize) return;
+    _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
+    const evicted = _sweepGoldenCouncil.splice(maxSize);
+    for (const m of evicted) {
+        _blIDBDeleteCouncilMember(lvl, m.seed);
+    }
+    if (evicted.length > 0) {
+        console.log(`%c[COUNCIL] Trimmed ${evicted.length} members (max ${maxSize}): evicted [${evicted.map(m => 't' + m.peak).join(', ')}]`, 'color:#ff8866');
+        _blIDBSave(lvl);
+        _populateCouncilDropdown();
+    }
+}
+
 // ── Autosave helpers (council-eligible crash recovery) ──
 
 function _isCouncilEligible() {
@@ -3787,8 +3803,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
             // Trim to current max size (may have grown under older code)
-            const _maxC = _goldenCouncilSize();
-            if (_sweepGoldenCouncil.length > _maxC) _sweepGoldenCouncil.length = _maxC;
+            _trimCouncil(lvl);
         }
         const councilStr = _sweepGoldenCouncil.length > 0
             ? `council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]` : 'no council';
@@ -3931,18 +3946,9 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
                         console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) updated in council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}]`, 'color:#ffcc00;font-weight:bold');
                     }
                 } else {
-                    // Collect evicted seeds before trimming
-                    const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
                     _sweepGoldenCouncil.push({ peak, seed, moves: _sweepSeedMoves, _cold: true });
-                    _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-                    if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
                     await _blIDBSaveCouncilMember(lvl, seed, _btSnapshots.slice(), _sweepSeedMoves);
-                    // Delete evicted members from cold storage
-                    for (const ps of prevSeeds) {
-                        if (!_sweepGoldenCouncil.find(m => m.seed === ps)) {
-                            _blIDBDeleteCouncilMember(lvl, ps);
-                        }
-                    }
+                    _trimCouncil(lvl);
                     console.log(`%c[GOLDEN COUNCIL] Seed ${seed} (peak t${peak}) joined council [${_sweepGoldenCouncil.map(m => 't' + m.peak).join(', ')}] (${_btSnapshots.length} snapshots → cold)`, 'color:#ffcc00;font-weight:bold');
                 }
             }
@@ -3983,6 +3989,7 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
     // Flush blacklist to IndexedDB immediately on sweep end
     if (_blIDBSaveTimer) { clearTimeout(_blIDBSaveTimer); _blIDBSaveTimer = null; }
     _blIDBSaveBlacklist(lvl);
+    _trimCouncil(lvl);
     _updateSweepPanel('Sweep complete', sweepStartTime);
     _populateCouncilDropdown();  // refresh dropdown with any new council members
 }
@@ -4104,16 +4111,9 @@ function _saveCurrentRunToCouncil() {
         } else {
             const prevSeeds = new Set(_sweepGoldenCouncil.map(m => m.seed));
             _sweepGoldenCouncil.push({ peak, seed, moves: movesCopy, _cold: true });
-            _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-            if (_sweepGoldenCouncil.length > maxSize) _sweepGoldenCouncil.length = maxSize;
             _blIDBSaveCouncilMember(lvl, seed, snapsCopy, movesCopy);
-            for (const ps of prevSeeds) {
-                if (!_sweepGoldenCouncil.find(m => m.seed === ps)) _blIDBDeleteCouncilMember(lvl, ps);
-            }
         }
-        _sweepGoldenCouncil.sort((a, b) => b.peak - a.peak);
-        _blIDBSave(lvl);
-        _populateCouncilDropdown();
+        _trimCouncil(lvl);
         console.log(`%c[SAVE] Saved current run (seed 0x${seed.toString(16).padStart(8,'0')}, peak t${peak}) to council (${snapsCopy.length} snapshots → cold, ${existingMember ? 'updated' : 'new'})`, 'color:#66cc88;font-weight:bold');
     } else {
         console.log(`%c[SAVE] Current run (peak t${peak}) doesn't beat lowest council member (t${lowestPeak})`, 'color:#cc8866');
@@ -5114,9 +5114,7 @@ async function _replayTestReplayPhase(q) {
         _sweepUsedSeeds = new Set(cached.usedSeeds || []);
         if (cached.goldenCouncil && cached.goldenCouncil.length > 0) {
             _sweepGoldenCouncil = cached.goldenCouncil;
-            // Trim to current max size
-            const _maxC3 = _goldenCouncilSize();
-            if (_sweepGoldenCouncil.length > _maxC3) _sweepGoldenCouncil.length = _maxC3;
+            _trimCouncil(lvl);
         }
         if (_blBucketVersion >= 1) await _blPrefetchBucket(lvl, 0);
     }
