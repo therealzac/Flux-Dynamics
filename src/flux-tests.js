@@ -3906,7 +3906,8 @@ async function startSweepTest(latticeLevel, replayMemberIdx) {
 
         // Golden council: insert this seed if it qualifies
         // Skip if seed backtrack just saved a shorter version — don't overwrite
-        if (!_seedBacktracked && _sweepSeedMoves && _sweepSeedMoves.size > 0) {
+        const _seedPeak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : 0;
+        if (!_seedBacktracked && _sweepSeedMoves && _sweepSeedMoves.size > 0 && _seedPeak > 0) {
             const maxSize = _goldenCouncilSize();
             // Peak = last snapshot tick (actual traversal), not _maxTickReached (stale after backtracking)
             const peak = _btSnapshots.length > 0 ? _btSnapshots[_btSnapshots.length - 1].tick : (result.maxTick || 0);
