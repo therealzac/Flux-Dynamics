@@ -505,6 +505,17 @@
     return Object.values(paths).sort((x, y) => x.hops.length - y.hops.length);
   }
   window._hopReposition = hopReposition;
+  // Every legal in-tet state of a class: (vertex the xon is on, vertex it came
+  // from), the pairs being unit apart. Four by four minus the impossible ones.
+  function hopStates(cls) {
+    const verts = HOP_CLS[cls], rods = hRods(cls), out = [];
+    for (const a of verts) for (const f of verts) {
+      if (hvK(a) === hvK(f) || !hUnit(rods, f, a)) continue;
+      out.push({ at: hvK(a), prev: hvK(f) });
+    }
+    return out;
+  }
+  window._hopStates = hopStates;
 
   // ---- the tumble ---------------------------------------------------------
   // A STEP is a chain of one or more face-flips run back to back. The
@@ -1290,8 +1301,97 @@
       return { steps, disp: best.D, cos: +best.cos.toFixed(6),
                nRail: best.Y, nP: best.a, nQ: best.b };
     };
-    let LOOPFIT = null, loopIdx = 0;
-    if (opt.fit) LOOPFIT = solveLoop(v);
+    // ---- CLOSING THE LOOP -------------------------------------------------
+    // solveLoop says WHICH moves the loop is made of. This says in what ORDER,
+    // and it is the step that makes the pattern actually repeat.
+    //
+    // The xon inside its tet is a state: (class, vertex it is on, vertex it
+    // came from). Each move carries that state into the next tet's frame --
+    // hopTable records the exit -- and every move flips the class, so a closed
+    // loop needs an EVEN number of moves. Repositioning walks the state inside
+    // one tet without spending a displacement.
+    //
+    // So closing the loop is finding a CYCLE in a 32-state machine that spends
+    // exactly the multiset of displacements solveLoop asked for and returns to
+    // the state it began in. Then the tet has moved by one lattice translation
+    // with the xon congruent to where it started, and the whole hop pattern
+    // repeats verbatim -- forever, with nothing recomputed.
+    //
+    // Bounded and exact: 32 states times the product of the move counts. This
+    // enumerates orderings of a known multiset, it does not search the lattice.
+    const closeLoop = (steps, ch) => {
+      if (!steps || !steps.length) return null;
+      const T = hopTable();
+      const need0 = {};
+      for (const st of steps) { const k = st.d.join(',');
+        need0[k] = (need0[k] || 0) + 1; }
+      const dk = Object.keys(need0);
+      const cnt0 = dk.map(k => need0[k]);
+      const flip = c => c === 'U' ? 'D' : 'U';
+      const sk = (cls, at, prev) => cls + '|' + at + '<' + prev;
+      // in-tet states reachable without spending a move, including staying put
+      const reach = {};
+      const reachOf = (cls, at, prev) => {
+        const k = sk(cls, at, prev);
+        if (reach[k]) return reach[k];
+        const out = [{ at, prev, hops: 0 }];
+        for (const p of hopReposition(cls, ch, at, prev))
+          out.push({ at: p.at, prev: p.from, hops: p.hops.length });
+        return (reach[k] = out);
+      };
+      const entryOf = (cls, d) => (T[cls + '|' + d + '|' + ch] || { res: [] }).res;
+      // BFS over (state, remaining counts). Shortest in moves, then in hops.
+      for (const s0 of hopStates('U').map(x => ({ cls: 'U', ...x }))
+                     .concat(hopStates('D').map(x => ({ cls: 'D', ...x })))) {
+        const start = sk(s0.cls, s0.at, s0.prev);
+        const seen = new Set([start + '#' + cnt0.join('.')]);
+        let front = [{ cls: s0.cls, at: s0.at, prev: s0.prev,
+                       cnt: cnt0.slice(), seq: [] }];
+        let found = null;
+        for (let depth = 0; depth < steps.length && front.length && !found; depth++) {
+          const nxt = [];
+          for (const st of front) {
+            for (let i = 0; i < dk.length && !found; i++) {
+              if (!st.cnt[i]) continue;
+              const d = dk[i], ents = entryOf(st.cls, d);
+              if (!ents.length) continue;
+              for (const r of reachOf(st.cls, st.at, st.prev)) {
+                const hit = ents.find(e => e.start === r.at && e.prev === r.prev);
+                if (!hit) continue;
+                const cnt = st.cnt.slice(); cnt[i]--;
+                const ncls = flip(st.cls);
+                const seq = st.seq.concat([{ d: d.split(',').map(Number),
+                  entryAt: r.at, entryPrev: r.prev, repHops: r.hops }]);
+                if (cnt.every(z => z === 0)) {
+                  if (sk(ncls, hit.exitAt, hit.exitFrom) === start)
+                    { found = { start: s0, seq }; }
+                  continue;
+                }
+                const key = sk(ncls, hit.exitAt, hit.exitFrom) + '#' + cnt.join('.');
+                if (seen.has(key)) continue; seen.add(key);
+                nxt.push({ cls: ncls, at: hit.exitAt, prev: hit.exitFrom, cnt, seq });
+              }
+            }
+          }
+          front = nxt;
+        }
+        if (found) return found;
+      }
+      return null;
+    };
+    let LOOPFIT = null, loopIdx = 0, LOOPSEQ = null;
+    if (opt.fit) {
+      LOOPFIT = solveLoop(v);
+      // A closed loop repeats verbatim; an unclosed one is re-derived every
+      // iteration and drifts. If the exact multiset will not close, try it
+      // DOUBLED -- twice round the same displacements points the same way and
+      // gives the ordering room to return to its own start state.
+      if (LOOPFIT) {
+        LOOPSEQ = closeLoop(LOOPFIT.steps, chirality || 'A');
+        if (!LOOPSEQ && LOOPFIT.steps.length <= 12)
+          LOOPSEQ = closeLoop(LOOPFIT.steps.concat(LOOPFIT.steps), chirality || 'A');
+      }
+    }
     const fitStats = { steps: 0, railDone: 0, steerDone: 0,
                        railMissing: 0, steerMissing: 0, routeFail: 0 };
 
@@ -1385,6 +1485,36 @@
       xon = bx; prevNode = bp;
     }
     wake.length = 0; wake.push(xon);
+
+      // ENTER THE START TET IN THE STATE THE LOOP BEGINS IN. Otherwise the
+      // very first step asks for a state the run never occupied and the whole
+      // traversal dies at tick 0 with an empty trace -- which is exactly what
+      // happened. The cycle alternates class every move, so rotating it by one
+      // flips which class it starts in; that is all the alignment needed.
+      if (LOOPSEQ) {
+        // dvec/axisOf are declared further down, so the axis test is inlined.
+        const axOf0 = r => { const d = [0,1,2].map(k => NODE[r[1]][k] - NODE[r[0]][k]);
+          return d[0] ? 'X' : (d[1] ? 'Y' : 'Z'); };
+        const X = live.find(r => axOf0(r) === 'X'), Z = live.find(r => axOf0(r) === 'Z');
+        if (X && Z) {
+          const lexLess0 = (a2, b2) => { for (let k = 0; k < 3; k++)
+            if (NODE[a2][k] !== NODE[b2][k]) return NODE[a2][k] < NODE[b2][k];
+            return false; };
+          const o0 = lexLess0(X[0], X[1]) ? X[0] : X[1];
+          const rel0 = n => [0, 1, 2].map(k => NODE[n][k] - NODE[o0][k]);
+          const cls0 = rel0(Z[0])[1] > 0 ? 'U' : 'D';
+          if (LOOPSEQ.start.cls !== cls0 && LOOPSEQ.seq.length > 1)
+            LOOPSEQ = { start: { cls: cls0 }, seq: LOOPSEQ.seq.slice(1)
+                          .concat([LOOPSEQ.seq[0]]) };
+          const want = LOOPSEQ.seq[0];
+          const at = KEY.get([0,1,2].map(k => NODE[o0][k]
+                       + (+want.entryAt.split(',')[k])).join(','));
+          const pv = KEY.get([0,1,2].map(k => NODE[o0][k]
+                       + (+want.entryPrev.split(',')[k])).join(','));
+          if (at !== undefined && pv !== undefined) { xon = at; prevNode = pv;
+            wake.length = 0; wake.push(xon); }
+        }
+      }
 
     await runExperiment(
       `momentum xon — no line, v=${v.map(x => x.toFixed(3)).join(',')}`,
@@ -1634,6 +1764,24 @@
           }
           return { hops: outHops, kind: ent.kind };
         };
+        // Walk to a NAMED state. Used by the closed loop, which knows exactly
+        // which state its next move enters from.
+        const analyticRepositionTo = (wantAt, wantPrev) => {
+          const F = frameOf(); if (!F) return null;
+          const ch = chirality || 'A';
+          const xr = F.rel(xon).join(','), pr = F.rel(prevNode).join(',');
+          for (const path of hopReposition(F.cls, ch, xr, pr)) {
+            if (path.at !== wantAt || path.from !== wantPrev) continue;
+            const hops = []; let bad = false;
+            for (const h of path.hops) {
+              const to = nodeAt([0, 1, 2].map(k => NODE[F.o][k] + h.to[k]));
+              if (to === undefined) { bad = true; break; }
+              hops.push({ to, kind: h.kind });
+            }
+            if (!bad && hops.length) return hops;
+          }
+          return null;
+        };
         // The one repositioning hop, also tabulated.
         const analyticReposition = (disp) => {
           const F = frameOf(); if (!F) return null;
@@ -1667,30 +1815,60 @@
         // A move whose entry state does not match takes ONE tabulated
         // repositioning hop first -- also a lookup, since chirality and the
         // 60-degree rule leave at most one legal choice inside the tet.
-        if (lockAxes && LOOPFIT && LOOPFIT.steps.length && !chainQ.length
+        // THE CLOSED LOOP, REPLAYED. LOOPSEQ is a cycle in the state machine:
+        // it spends exactly the displacements solveLoop asked for and returns
+        // the (class, xon, prev) state to where it began, so one iteration
+        // leaves the tet translated and the xon congruent. Replaying it is the
+        // whole traversal -- nothing is recomputed, and each entry already
+        // names the state to enter the move from.
+        if (lockAxes && LOOPSEQ && LOOPSEQ.seq.length && !chainQ.length
             && live.length === 2) {
-          let placed = false;
-          for (let tries = 0; tries < LOOPFIT.steps.length * 2 && !placed; tries++) {
-            const st = LOOPFIT.steps[loopIdx % LOOPFIT.steps.length];
+          const st = LOOPSEQ.seq[loopIdx % LOOPSEQ.seq.length];
+          const F = frameOf();
+          if (!F) { done = true; stopped = 'noframe'; pending = null; return; }
+          const xr = F.rel(xon).join(','), pr = F.rel(prevNode).join(',');
+          if (xr !== st.entryAt || pr !== st.entryPrev) {
+            // Not yet in the state this step enters from: walk there. The path
+            // is a lookup in the 16-state closure, and the loop guarantees such
+            // a path exists -- it was checked when the cycle was built.
+            const rep = analyticRepositionTo(st.entryAt, st.entryPrev);
+            if (rep) { chainQ = rep; fitStats.repositions =
+              (fitStats.repositions || 0) + 1; }
+            else { done = true; stopped = 'lostState'; pending = null; return; }
+          } else {
             const got = analyticMove(st.d);
             if (got && got.hops) {
-              chainQ = got.hops; biasActive = st.kind === 'steer';
+              chainQ = got.hops;
+              biasActive = Math.abs(st.d[0]) + Math.abs(st.d[2]) > 0;
               fitStats.steps++;
-              if (st.kind === 'rail') fitStats.railDone++; else fitStats.steerDone++;
-              loopIdx++; placed = true; break;
+              if (st.d[0] === 0 && st.d[2] === 0) fitStats.railDone++;
+              else fitStats.steerDone++;
+              loopIdx++;
+            } else {
+              // The move is legal in the abstract but its tet is off the edge
+              // of this lattice. That is the end of the traversal, not a fault.
+              done = true; stopped = 'traversed'; pending = null; return;
             }
-            if (got && got.reposition) {
-              const rep = analyticReposition(st.d);
+          }
+        } else if (lockAxes && LOOPFIT && !LOOPSEQ && LOOPFIT.steps.length
+                   && !chainQ.length && live.length === 2) {
+          // NO CLOSED CYCLE for this multiset. Fall back to the open schedule
+          // and SAY SO in `stopped` rather than pretending the loop repeats.
+          let placed = false;
+          for (let tries = 0; tries < LOOPFIT.steps.length * 2 && !placed; tries++) {
+            const st2 = LOOPFIT.steps[loopIdx % LOOPFIT.steps.length];
+            const got = analyticMove(st2.d);
+            if (got && got.hops) { chainQ = got.hops;
+              biasActive = st2.kind === 'steer'; fitStats.steps++;
+              if (st2.kind === 'rail') fitStats.railDone++; else fitStats.steerDone++;
+              loopIdx++; placed = true; break; }
+            if (got && got.reposition) { const rep = analyticReposition(st2.d);
               if (rep) { chainQ = rep; fitStats.repositions =
-                (fitStats.repositions || 0) + 1; placed = true; break; }
-            }
-            // Not available from here: the lattice has run out in that
-            // direction. Advance the loop rather than substituting a move the
-            // CA chose for itself.
-            if (st.kind === 'rail') fitStats.railMissing++; else fitStats.steerMissing++;
+                (fitStats.repositions || 0) + 1; placed = true; break; } }
+            if (st2.kind === 'rail') fitStats.railMissing++; else fitStats.steerMissing++;
             loopIdx++;
           }
-          if (!placed) { done = true; stopped = 'loopblocked'; pending = null; return; }
+          if (!placed) { done = true; stopped = 'openloopblocked'; pending = null; return; }
         }
         // ---- DRAIN ------------------------------------------------------
         // One hop per tick. Adds land BEFORE severs so a tet is closed on every
@@ -1896,7 +2074,8 @@
     const mt = (() => { let s = 0, n = 0;
       for (const [a, c] of Object.entries(turns)) { s += (+a) * c; n += c; } return n ? s / n : 0; })();
     const out = { chirality, chiralBlocked, mode: LOCK,
-      biasStats,
+      biasStats, loopClosed: !!LOOPSEQ,
+      loopSeq: LOOPSEQ && LOOPSEQ.seq.map(x => x.d.join(',') + '@' + x.entryAt),
       loop: LOOPFIT && { steps: LOOPFIT.steps.map(x => x.kind + ' ' + x.d.join(',')),
         disp: LOOPFIT.disp, cos: LOOPFIT.cos,
         nRail: LOOPFIT.nRail, nP: LOOPFIT.nP, nQ: LOOPFIT.nQ }, fitStats,
