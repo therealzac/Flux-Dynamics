@@ -314,6 +314,198 @@
   }
   window._modeChains = modeChains;
 
+  // ---- THE HOP TABLE ------------------------------------------------------
+  // FULLY ANALYTIC. Built once by integer vector arithmetic over the TWO
+  // canonical XZ tet orientations. It touches no lattice, no graph and no
+  // search -- the same status as a multiplication table, and the runtime does
+  // nothing but look up and translate.
+  //
+  // WHY TWO CLASSES IS THE WHOLE STORY. Canonicalise an XZ tet by putting the
+  // lexicographically smaller endpoint of its X rod at the origin. Measured
+  // over all 464 XZ tets of the lattice, exactly TWO signatures result:
+  //   U   (0,0,0) (2,0,0) (1, 1,1) (1, 1,-1)      Z rod above
+  //   D   (0,0,0) (2,0,0) (1,-1,1) (1,-1,-1)      Z rod below
+  // mirror images in Y, 232 members each. Each offers exactly SIX moves --
+  // rail (0,+-1,0) and steer (+-1,0,+-1) -- and EVERY move flips the class,
+  // U->D->U without exception. So orientation has period two and the whole
+  // sublattice is described by 12 entries.
+  //
+  // WHY THE HOPS ARE FORCED, NOT FOUND. Measured over the same 464 tets:
+  //   rail  -- both endpoints of the new rod are EXACTLY one base hop from the
+  //            tet, 1648 of 1648. Never inside it, never two away.
+  //   steer -- each new rod has one endpoint IN the tet and one exactly one hop
+  //            away, 3040 and 3040. The shared base edge's two vertices ARE the
+  //            two in-tet endpoints.
+  // So the xon is never routed anywhere. Chirality then picks the sense and the
+  // 60-degree rule picks the pivot, and what is left is a fixed hop list:
+  // TWO hops for a rail, FOUR for a steer.
+  const HOP_CH = { A: ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'] };
+  HOP_CH.B = HOP_CH.A.map(t => t.split(',').map(n => -(+n)).join(','));
+  const HOP_CLS = { U: [[0,0,0],[2,0,0],[1,1,1],[1,1,-1]],
+                    D: [[0,0,0],[2,0,0],[1,-1,1],[1,-1,-1]] };
+  // Where the NEXT tet's canonical origin sits, in this tet's frame.
+  const HOP_TO = { 'U|0,1,0':[0,2,0], 'U|0,-1,0':[0,0,0], 'U|1,0,-1':[1,1,-1],
+    'U|1,0,1':[1,1,1], 'U|-1,0,-1':[-1,1,-1], 'U|-1,0,1':[-1,1,1],
+    'D|0,-1,0':[0,-2,0], 'D|0,1,0':[0,0,0], 'D|1,0,-1':[1,-1,-1],
+    'D|1,0,1':[1,-1,1], 'D|-1,0,-1':[-1,-1,-1], 'D|-1,0,1':[-1,-1,1] };
+  const HOP_MOV = {
+    U: [{ k:'rail', disp:[0,1,0],  add:[[0,2,0],[2,2,0]],   sev:[[0,0,0],[2,0,0]] },
+        { k:'rail', disp:[0,-1,0], add:[[1,-1,-1],[1,-1,1]],sev:[[1,1,-1],[1,1,1]] },
+        { k:'steer',disp:[1,0,-1], b:[[[1,1,-1],[3,1,-1]],[[2,0,0],[2,0,-2]]] },
+        { k:'steer',disp:[1,0,1],  b:[[[1,1,1],[3,1,1]],  [[2,0,0],[2,0,2]]] },
+        { k:'steer',disp:[-1,0,-1],b:[[[-1,1,-1],[1,1,-1]],[[0,0,-2],[0,0,0]]] },
+        { k:'steer',disp:[-1,0,1], b:[[[-1,1,1],[1,1,1]],  [[0,0,0],[0,0,2]]] }],
+    D: [{ k:'rail', disp:[0,-1,0],add:[[0,-2,0],[2,-2,0]], sev:[[0,0,0],[2,0,0]] },
+        { k:'rail', disp:[0,1,0], add:[[1,1,-1],[1,1,1]],  sev:[[1,-1,-1],[1,-1,1]] },
+        { k:'steer',disp:[1,0,-1], b:[[[1,-1,-1],[3,-1,-1]],[[2,0,0],[2,0,-2]]] },
+        { k:'steer',disp:[1,0,1],  b:[[[1,-1,1],[3,-1,1]], [[2,0,0],[2,0,2]]] },
+        { k:'steer',disp:[-1,0,-1],b:[[[-1,-1,-1],[1,-1,-1]],[[0,0,-2],[0,0,0]]] },
+        { k:'steer',disp:[-1,0,1], b:[[[-1,-1,1],[1,-1,1]],[[0,0,0],[0,0,2]]] }] };
+  const hvK = v => v.join(',');
+  const hvSub = (a, b) => [0,1,2].map(k => a[k] - b[k]);
+  const hvBase = v => v.every(z => Math.abs(z) === 1);
+  const hRods = c => c === 'U' ? [[[0,0,0],[2,0,0]], [[1,1,1],[1,1,-1]]]
+                               : [[[0,0,0],[2,0,0]], [[1,-1,1],[1,-1,-1]]];
+  const hSame = (x, y) => (hvK(x[0]) === hvK(y[0]) && hvK(x[1]) === hvK(y[1]))
+                       || (hvK(x[0]) === hvK(y[1]) && hvK(x[1]) === hvK(y[0]));
+  const hUnit = (rods, a, b) => hvBase(hvSub(b, a))
+    || rods.some(r => (hvK(r[0]) === hvK(a) && hvK(r[1]) === hvK(b))
+                   || (hvK(r[0]) === hvK(b) && hvK(r[1]) === hvK(a)));
+  const HOP_BD = []; for (const x of [-1,1]) for (const y of [-1,1])
+    for (const z of [-1,1]) HOP_BD.push([x,y,z]);
+  let _HOPT = null;
+  function hopTable() {
+    if (_HOPT) return _HOPT;
+    const out = {};
+    for (const c of ['U','D']) for (const m of HOP_MOV[c]) for (const ch of ['A','B']) {
+      const R0 = hRods(c);
+      // The agreed severance order: for a steer, ADD BEFORE SEVER so a tet is
+      // closed on every tick. Rods pair by axis, b[0] with the old X rod and
+      // b[1] with the old Z, which is what keeps the leftover rod from closing
+      // a second tet with an incoming one.
+      const plan = m.k === 'rail' ? [{ add:m.add, sev:m.sev }]
+        : [{ add:m.b[0], sev:null }, { add:m.b[1], sev:R0[0] },
+           { add:null, sev:R0[1] }];
+      const newTet = m.k === 'rail'
+        ? [...new Set(R0.filter(r => !hSame(r, m.sev)).concat([m.add])
+            .reduce((a, r) => a.concat(r), []).map(hvK))].map(t => t.split(',').map(Number))
+        : [...new Set(m.b.reduce((a, r) => a.concat(r), []).map(hvK))]
+            .map(t => t.split(',').map(Number));
+      const res = [];
+      for (const start of HOP_CLS[c]) for (const prev of HOP_CLS[c]) {
+        if (hvK(start) === hvK(prev) || !hUnit(R0, prev, start)) continue;
+        let at = start, from = prev, rods = R0.map(r => [r[0].slice(), r[1].slice()]);
+        const hops = []; let ok = true;
+        for (const step of plan) {
+          if (step.add) {
+            let did = false;
+            for (const [p2, q2] of [[step.add[0], step.add[1]], [step.add[1], step.add[0]]]) {
+              const pre = [];
+              if (hvK(at) !== hvK(p2)) {
+                const d = hvSub(p2, at);
+                if (!hvBase(d) || HOP_CH[ch].indexOf(hvK(d)) < 0) continue;
+                if (hvK(p2) === hvK(from) || !hUnit(rods, from, p2)) continue;
+                pre.push({ to: p2.slice(), kind: 'base' });
+              }
+              const f2 = pre.length ? at : from;
+              if (hvK(q2) === hvK(f2)) continue;
+              if (!hUnit(rods.concat([[p2, q2]]), f2, q2)) continue;   // 60 degrees
+              for (const h of pre) hops.push(h);
+              hops.push({ to: q2.slice(), kind: 'sc', add: [p2.slice(), q2.slice()],
+                          sev: step.sev ? step.sev.map(z => z.slice()) : null });
+              rods = rods.concat([[p2.slice(), q2.slice()]]);
+              if (step.sev) rods = rods.filter(r => !hSame(r, step.sev));
+              from = pre.length ? p2 : at; at = q2; did = true; break;
+            }
+            if (!did) { ok = false; break; }
+          } else {
+            let fin = null;
+            for (const pass of [0, 1]) { if (fin) break;
+              for (const d of HOP_BD) {
+                if (HOP_CH[ch].indexOf(hvK(d)) < 0) continue;
+                const to = [at[0]+d[0], at[1]+d[1], at[2]+d[2]];
+                if (pass === 0 && !newTet.some(v => hvK(v) === hvK(to))) continue;
+                if (hvK(to) === hvK(from) || !hUnit(rods, from, to)) continue;
+                fin = to; break;
+              } }
+            if (!fin) { ok = false; break; }
+            hops.push({ to: fin.slice(), kind: 'base', sev: step.sev.map(z => z.slice()) });
+            rods = rods.filter(r => !hSame(r, step.sev));
+            from = at; at = fin;
+          }
+        }
+        if (!ok) continue;
+        const o2 = HOP_TO[c + '|' + hvK(m.disp)];
+        res.push({ start: hvK(start), prev: hvK(prev), hops,
+                   exitAt: hvK(hvSub(at, o2)), exitFrom: hvK(hvSub(from, o2)) });
+      }
+      out[c + '|' + hvK(m.disp) + '|' + ch] = { kind: m.k, res };
+    }
+    _HOPT = out;
+    return out;
+  }
+  window._hopTable = hopTable;
+  // REPOSITIONING, as the CLOSURE OF A 16-STATE MACHINE.
+  //
+  // A xon inside its tet is fully described by (which vertex it is on, which
+  // vertex it came from) -- four by four, sixteen states, and the legal
+  // transitions between them are fixed by chirality, the 60-degree rule and
+  // the no-a-b-a rule. Both base edges and ROD TRAVERSALS are transitions:
+  // rail entry demands arriving along the kept rod itself, which no base hop
+  // can supply, and under one chirality that costs three hops rather than two.
+  // Capping the walk at two was why every rail move came back unavailable.
+  //
+  // This enumerates the whole closure once per (class, chirality) and caches
+  // it. It is the transitive closure of a sixteen-entry table -- the lattice is
+  // never consulted, and the result is a lookup from then on.
+  const _HOPR = {};
+  function hopReposition(cls, ch, atRel, fromRel) {
+    const ck = cls + '|' + ch;
+    if (!_HOPR[ck]) {
+      const verts = HOP_CLS[cls], rods = hRods(cls);
+      const outs = (at, from) => {
+        const o = [];
+        for (const v of verts) {
+          if (hvK(v) === hvK(at) || hvK(v) === hvK(from)) continue;  // no a-b-a
+          if (!hUnit(rods, from, v)) continue;                       // 60 degrees
+          const d = hvSub(v, at);
+          if (hvBase(d)) {
+            if (HOP_CH[ch].indexOf(hvK(d)) < 0) continue;            // chirality
+            o.push({ to: v.slice(), kind: 'base' });
+          } else if (rods.some(r => hSame(r, [at, v]))) {
+            o.push({ to: v.slice(), kind: 'sc' });                   // along a rod
+          }
+        }
+        return o;
+      };
+      const tbl = {};
+      for (const a0 of verts) for (const f0 of verts) {
+        if (hvK(a0) === hvK(f0) || !hUnit(rods, f0, a0)) continue;
+        const src = hvK(a0) + '<' + hvK(f0);
+        const seen = new Set([src]), paths = {};
+        let front = [{ at: a0, from: f0, hops: [] }];
+        for (let d = 0; d < 6 && front.length; d++) {
+          const nxt = [];
+          for (const st of front) for (const o of outs(st.at, st.from)) {
+            const k = hvK(o.to) + '<' + hvK(st.at);
+            if (seen.has(k)) continue; seen.add(k);
+            const hops = st.hops.concat([o]);
+            paths[k] = { hops, at: hvK(o.to), from: hvK(st.at) };
+            nxt.push({ at: o.to, from: st.at, hops });
+          }
+          front = nxt;
+        }
+        tbl[src] = paths;
+      }
+      _HOPR[ck] = tbl;
+    }
+    const src = atRel + '<' + fromRel;
+    const paths = _HOPR[ck][src];
+    if (!paths) return [];
+    return Object.values(paths).sort((x, y) => x.hops.length - y.hops.length);
+  }
+  window._hopReposition = hopReposition;
+
   // ---- the tumble ---------------------------------------------------------
   // A STEP is a chain of one or more face-flips run back to back. The
   // neutrino's chain is one flip; the electron's is two, because two is the
@@ -988,20 +1180,18 @@
     //
     // That is the whole electron/neutrino distinction: the neutrino's chain is
     // length 1 and never returns, so its mode tumbles XY->XZ->YZ forever.
-    const lockMode = !!opt.lockMode;
     // opt.lockAxes: the STRICT reading. If the xon is born into mode YZ then
     // the only shortcuts it may ever touch are Y+ Y- Z+ Z-. X is forbidden for
     // life. This is a per-TICK invariant, not a per-step one.
     const modeOf = vs => { const sc = isTet(vs); return sc ? sc.map(s => s[2]).sort().join('') : null; };
-    const LOCK = (lockMode || lockAxes) ? modeOf(best.v) : null;
+    const LOCK = lockAxes ? modeOf(best.v) : null;
     const LOCKAX = LOCK ? LOCK.split('') : null;   // the two permitted axes
     // Use the TRUE 60-degree test (the unit triangle) rather than the stricter
     // tet-membership shorthand. Only the mode-locked walkers need it -- the free
     // neutrino's rod is always inside its own tet, it traverses 24/24 as it is,
     // and widening its move set is a change to a working control, not a fix.
-    const FREE60 = lockAxes || lockMode;
+    const FREE60 = lockAxes;
     let chainQ = [];            // remaining hops of the current step
-    const chainStats = { opts: 0, tried: 0, expandFail: 0, noOpts: 0 };
 
     // ---- THE BIAS ---------------------------------------------------------
     // A gen-locked electron runs a RAIL: holding the mode every tick admits
@@ -1022,25 +1212,6 @@
     // the tet IS its two rods, so moving it means swapping one, and a
     // mode-preserving swap is the dormant axis by construction.
     //
-    // opt.bias: a base direction [x,y,z] with all components +-1, or true to
-    // draw one at birth, or falsy for none (the pure rail).
-    const BASE111 = [[1,1,1],[-1,-1,1],[-1,1,-1],[1,-1,-1],
-                     [-1,-1,-1],[1,1,-1],[1,-1,1],[-1,1,1]];
-    let biasVec = null;
-    if (opt.bias) {
-      if (Array.isArray(opt.bias)) biasVec = opt.bias.slice();
-      else {
-        // Drawn from the CHIRALITY-ALLOWED four, not all eight. Handedness is
-        // already fixed at birth and picks out exactly one zero-sum sign set;
-        // biasing along a direction the xon may not itself traverse would be a
-        // second, unrelated handedness bolted on beside the first.
-        const pool = chiralSet ? BASE111.filter(d => chiralSet.has(d.join(',')))
-                               : BASE111;
-        const rb = _mul((opt.seed === undefined ? (Math.random() * 2147483647) | 0
-                                                : opt.seed) ^ 0x2f1b3c7d);
-        biasVec = pool[(rb() * pool.length) | 0].slice();
-      }
-    }
     // ---- THE TRAVERSAL LOOP, SOLVED AT BIRTH ------------------------------
     // opt.fit: fit the target line. The loop is COMPUTED, not searched for.
     //
@@ -1124,18 +1295,7 @@
     const fitStats = { steps: 0, railDone: 0, steerDone: 0,
                        railMissing: 0, steerMissing: 0, routeFail: 0 };
 
-    // Fires after this many rail moves. 1 = one bias per rail step (a 1:1
-    // rise:run). Larger values shallow the angle -- this is the Bresenham knob.
-    const BIAS_EVERY = opt.biasEvery === undefined ? 1 : opt.biasEvery;
-    let biasActive = false;     // draining a bias chain right now
-    let railSince = 0;          // rail moves since the last bias move
-    // The tet the bias plan has ALREADY failed for. Planning is a deterministic
-    // query of fixed geometry, so re-running it every tick on an unchanged tet
-    // recomputes an identical answer -- and with the widened tetWalk that is
-    // expensive enough to look like a hang. This does not narrow the search:
-    // the query is still exhaustive, it is simply not repeated on state that
-    // has not moved. Cleared the moment the tet changes.
-    let biasFailedAt = null;
+    let biasActive = false;     // draining a table move right now
     const biasStats = { planned: 0, done: 0, noChain: 0, expandFail: 0,
                         offModeTicks: 0, brokeTet: 0 };
     // The xon must START as though it had just arrived along a tet edge. Left
@@ -1430,441 +1590,148 @@
           }
           return bp;
         };
-        // ---- MODE-LOCKED STEP (the electron) ----------------------------
-        // Walk the xon inside the current tet to a chosen vertex, using only
-        // chirality-allowed base hops and traversals of live rods.
-        // THE WALK MUST BE ABLE TO LEAVE THE TET. It was gated on `verts`, the
-        // four vertices of the current tet, which is the same tet-membership
-        // shorthand the candidate list used -- and under a mode lock it is fatal
-        // rather than merely conservative. A mode-preserving step is a CHAIN of
-        // face-flips, and the rods those flips build lie outside the tet the xon
-        // is standing in, so a walk confined to that tet can never reach an
-        // endpoint of the very rod the chain exists to create. Every advancing
-        // chain then failed to expand and the run reported 'unroutable' at
-        // whatever fraction of the line it had got to -- 44% to 99%, which is
-        // exactly the scatter of "stops wherever routing first fails".
-        //
-        // The gate is now the rule itself: prev-pivot-next is a unit triangle.
-        // okArrive(fromNode): an optional condition on the node the xon must
-        // ARRIVE FROM. It belongs inside the search, not after it. Returning the
-        // shortest path and then rejecting it for arriving the wrong way threw
-        // away every longer path that would have arrived correctly -- measured,
-        // that alone killed 20 of 20 edge-flip attempts on one bias direction
-        // while the geometry was sitting there. Same mistake as gating the walk
-        // on tet membership, one level up.
-        const tetWalk = (start, cameFrom, target, rods, okArrive) => {
-          if (start === target && (!okArrive || okArrive(cameFrom)))
-            return { hops: [], from: cameFrom };
-          const seen = new Set([start + '|' + cameFrom]);
-          let front = [{ at: start, from: cameFrom, path: [] }];
-          for (let d = 0; d < 6 && front.length; d++) {
-            const nxt = [];
-            for (const st of front) {
-              const os = [];
-              for (const j of _baseNbr[st.at])
-                if (j !== st.from && unitIn(rods, st.from, j)
-                    && chiralOK(st.at, j)) os.push({ to: j, kind: 'base' });
-              for (const r of rods) {
-                const j = r[0] === st.at ? r[1] : (r[1] === st.at ? r[0] : null);
-                if (j === null) continue;
-                if (j !== st.from && unitIn(rods, st.from, j))
-                  os.push({ to: j, kind: 'sc', rod: r });
-              }
-              for (const o of os) {
-                const np = st.path.concat([o]);
-                if (o.to === target && (!okArrive || okArrive(st.at)))
-                  return { hops: np, from: st.at };
-                const k = o.to + '|' + st.at;
-                if (seen.has(k)) continue; seen.add(k);
-                nxt.push({ at: o.to, from: st.at, path: np });
-              }
+        // ---- THE ANALYTIC MOVER -----------------------------------------
+        // tetWalk is GONE. Every hop now comes from hopTable(), which is fixed
+        // integer geometry over the two canonical orientations. Nothing here
+        // searches: the tet is canonicalised, the move is looked up, the hop
+        // vectors are translated back to node ids, and that is the move.
+        const nodeAt = v => KEY.get(v[0] + ',' + v[1] + ',' + v[2]);
+        const lexLess = (a2, b2) => { for (let k = 0; k < 3; k++)
+          if (NODE[a2][k] !== NODE[b2][k]) return NODE[a2][k] < NODE[b2][k];
+          return false; };
+        // Canonical frame: origin = the lex-smaller endpoint of the X rod;
+        // class = whether the Z rod sits above or below it.
+        const frameOf = () => {
+          if (live.length !== 2) return null;
+          const ax = r => axisOf(dvec(r[0], r[1]));
+          const X = live.find(r => ax(r) === 'X'), Z = live.find(r => ax(r) === 'Z');
+          if (!X || !Z) return null;
+          const o = lexLess(X[0], X[1]) ? X[0] : X[1];
+          const rel = n => [0, 1, 2].map(k => NODE[n][k] - NODE[o][k]);
+          return { o, rel, cls: rel(Z[0])[1] > 0 ? 'U' : 'D' };
+        };
+        // Look the move up and translate it. Returns the hop list, or null if
+        // this tet's frame does not offer it (the lattice has run out that way).
+        const analyticMove = (disp) => {
+          const F = frameOf(); if (!F) return null;
+          const key = F.cls + '|' + disp.join(',') + '|' + (chirality || 'A');
+          const ent = hopTable()[key]; if (!ent) return null;
+          const xr = F.rel(xon).join(','), pr = F.rel(prevNode).join(',');
+          const hit = ent.res.find(r => r.start === xr && r.prev === pr);
+          if (!hit) return { reposition: true, cls: F.cls, at: xr, prev: pr, F };
+          const abs = v => nodeAt([0, 1, 2].map(k => NODE[F.o][k] + v[k]));
+          const outHops = [];
+          for (const h of hit.hops) {
+            const to = abs(h.to); if (to === undefined) return null;   // off lattice
+            const o2 = { to, kind: h.kind };
+            if (h.add) { const p = abs(h.add[0]), q = abs(h.add[1]);
+              if (p === undefined || q === undefined) return null;
+              o2.add = [p, q]; o2.rod = [p, q]; }
+            if (h.sev) { const p = abs(h.sev[0]), q = abs(h.sev[1]);
+              if (p === undefined || q === undefined) return null;
+              o2.sever = [p, q]; }
+            outHops.push(o2);
+          }
+          return { hops: outHops, kind: ent.kind };
+        };
+        // The one repositioning hop, also tabulated.
+        const analyticReposition = (disp) => {
+          const F = frameOf(); if (!F) return null;
+          const ch = chirality || 'A';
+          const key = F.cls + '|' + disp.join(',') + '|' + ch;
+          const ent = hopTable()[key]; if (!ent) return null;
+          const xr = F.rel(xon).join(','), pr = F.rel(prevNode).join(',');
+          for (const path of hopReposition(F.cls, ch, xr, pr)) {
+            // only worth taking if it LANDS in a state this move accepts
+            if (!ent.res.some(r => r.start === path.at && r.prev === path.from)) continue;
+            const hops = [];
+            let bad = false;
+            for (const h of path.hops) {
+              const to = nodeAt([0, 1, 2].map(k => NODE[F.o][k] + h.to[k]));
+              if (to === undefined) { bad = true; break; }
+              hops.push({ to, kind: h.kind,
+                          rod: h.kind === 'sc' ? [xon, to] : undefined });
             }
-            front = nxt;
+            if (!bad && hops.length) return hops;
           }
           return null;
         };
-        // Flatten a chain of tets into individual xon hops. Each flip becomes
-        // a walk to an endpoint of the rod it creates, then the shortcut hop
-        // itself -- so exactly ONE shortcut per tick, never more.
-        // What tet a flip leaves standing, given an explicit rod set. Needed
-        // because a chain's later flips act on rods that do not exist yet.
-        const afterWith = (rods, rod) => {
-          const kill = rods.find(r => r[0] === rod[0] || r[0] === rod[1]
-                                   || r[1] === rod[0] || r[1] === rod[1]);
-          const a = rods.filter(r => r !== kill).concat([rod]);
-          if (a.length !== 2) return null;
-          const n = [...new Set([].concat(...a))];
-          return (n.length === 4 && isTet(n)) ? n : null;
-        };
-        const expandChain = (chainVerts) => {
-          let at = xon, from = prevNode, rods = live.map(r => r.slice());
-          const out = [];
-          for (const nextV of chainVerts) {
-            const B = isTet(nextV); if (!B) return null;
-            // A chain is only as legal as its INTERMEDIATE tets. Checking the
-            // endpoint alone would let a banned axis be used in the middle and
-            // tidied away by the end -- the ban is per tick, not per step.
-            if (BAN && B.some(s => BAN.indexOf(s[2]) >= 0)) return null;
-            const made = B.map(s => [s[0], s[1]])
-                          .find(b => !rods.some(a => rodSame(a, b)));
-            if (!made) return null;
-            let bestSeq = null;
-            for (const [p, q] of [[made[0], made[1]], [made[1], made[0]]]) {
-              // THE 60-DEGREE RULE at the moment of creation: the vertex the
-              // xon arrived from must survive into the new tet. It is an
-              // ARRIVAL condition, so it goes into the walk -- checked after
-              // the fact it discards every longer path that would have worked.
-              const af = afterWith(rods, made);
-              if (!af) continue;
-              const w = tetWalk(at, from, p, rods, arr => af.includes(arr));
-              if (!w) continue;
-              const seq = w.hops.concat([{ to: q, kind: 'sc', rod: made }]);
-              if (!bestSeq || seq.length < bestSeq.seq.length)
-                bestSeq = { seq, endAt: q, endFrom: p };
-            }
-            if (!bestSeq) return null;
-            for (const h of bestSeq.seq) out.push(h);
-            const kill = rods.find(r => r[0] === made[0] || r[0] === made[1]
-                                     || r[1] === made[0] || r[1] === made[1]);
-            rods = rods.filter(r => r !== kill).concat([made]);
-            at = bestSeq.endAt; from = bestSeq.endFrom;
-          }
-          return out;
-        };
-        // ---- EDGE-FLIP PLANNING -----------------------------------------
-        // Validate a planned hop against the RULES at the moment it executes,
-        // rather than looking it up in `cand`. `cand` is built for 2-rod states
-        // and rejects everything mid-edge-flip, and re-deriving the rules here
-        // states them exactly once, in one place.
-        const hopLegal = (h) => {
-          if (h.to === prevNode) return false;                 // no a-b-a
-          if (h.kind === 'base') {
-            if (!_baseNbr[xon].includes(h.to)) return false;
-            if (!chiralOK(xon, h.to)) return false;
-            return unitIn(live, prevNode, h.to);               // 60 degrees
-          }
-          let isSC = false;
-          for (let a = 0; a < AXN.length; a++)
-            if (SCOPT.get(xon + ':' + a) === h.to) { isSC = true; break; }
-          if (!isSC) return false;
-          const ax = axisOf(dvec(xon, h.to));
-          if (BAN && BAN.indexOf(ax) >= 0) return false;       // the ban is absolute
-          if (LOCKAX && LOCKAX.indexOf(ax) < 0) return false;  // and so is the mode
-          const after = (h.add && !live.some(r => rodSame(r, h.add)))
-            ? live.concat([h.add]) : live;
-          return unitIn(after, prevNode, h.to);
-        };
-        // The same-mode, ban-clean tet whose centroid sits exactly at A's plus
-        // d. The loop names a DISPLACEMENT; this turns it into the tet that
-        // realises it. A lookup, not a search -- graph() caches the tet list.
-        // Indexed by centroid, built once per lattice. Scanning all 1392 tets
-        // per lookup cost 1.4-1.6 SECONDS on ticks where several loop steps
-        // were unavailable and each retry rescanned -- well past any pace the
-        // slider can ask for. Same answer, same exhaustiveness, one hash away.
-        // Centroids are exact halves, so a fixed-precision key is safe.
-        const tetAt = (A, d) => {
-          const g = graph();
-          if (!g._byCent) {
-            g._byCent = new Map();
-            for (const t of g.T)
-              g._byCent.set(t.c.map(z => z.toFixed(3)).join(','), t);
-          }
-          const c0 = centOf(A);
-          const t = g._byCent.get([0, 1, 2].map(k => (c0[k] + d[k]).toFixed(3)).join(','));
-          if (!t || t.mode !== LOCK) return null;
-          if (BAN && t.sc.some(sc => BAN.indexOf(sc[2]) >= 0)) return null;
-          return t;
-        };
-        // One planner for both families, told apart by how many rods change.
-        //   ONE rod  -> the RAIL. {kept, new} is already the next tet, so
-        //              sever and add land in the same tick and it never opens.
-        //   TWO rods -> the EDGE-FLIP, three ticks, add before sever.
-        const planFlip = (aRods, bRods) => {
-          const added = bRods.filter(b => !aRods.some(x => rodSame(x, b)));
-          const removed = aRods.filter(x => !bRods.some(b => rodSame(x, b)));
-          if (added.length === 1 && removed.length === 1) {
-            const rod = added[0], old = removed[0];
-            const after = aRods.filter(r => !rodSame(r, old)).concat([rod]);
-            for (const [p, q] of [[rod[0], rod[1]], [rod[1], rod[0]]]) {
-              const w = tetWalk(xon, prevNode, p, aRods, af => unitIn(after, af, q));
-              if (!w) continue;
-              return w.hops.concat([{ to: q, kind: 'sc', rod, add: rod, sever: old }]);
-            }
-            return null;
-          }
-          if (added.length === 2) return planEdgeFlip(aRods, bRods);
-          return null;
-        };
-        // Build the three-tick edge-flip from tet A's rods to tet B's.
-        // Rods are paired BY AXIS; both orderings of which axis swings first
-        // are tried, since only the xon's routing distinguishes them.
-        const planEdgeFlip = (aRods, bRods) => {
-          const axOf = r => axisOf(dvec(r[0], r[1]));
-          const Bnodes = [...new Set([].concat(...bRods))];
-          for (const first of [0, 1]) {
-            const bF = bRods[first], bS = bRods[1 - first];
-            const aF = aRods.find(r => axOf(r) === axOf(bF));
-            const aS = aRods.find(r => axOf(r) === axOf(bS));
-            if (!aF || !aS || aF === aS) { biasStats.whyPair = (biasStats.whyPair || 0) + 1; continue; }
-            let at = xon, from = prevNode;
-            let rods = aRods.map(r => r.slice());
-            const seq = [];
-            // Walk to an endpoint of `rod`, then cross it. The 60-degree rule
-            // at creation: the node the xon arrived from must be unit from the
-            // node it lands on, in the geometry that exists AFTER the add.
-            const cross = (rod) => {
-              for (const [p, q] of [[rod[0], rod[1]], [rod[1], rod[0]]]) {
-                const after = rods.concat([rod]);
-                const w = tetWalk(at, from, p, rods,
-                                  af => unitIn(after, af, q));
-                if (!w) continue;
-                return { hops: w.hops, from: w.from, p, q };
-              }
-              return null;
-            };
-            const c1 = cross(bF);
-            if (!c1) { biasStats.whyF = (biasStats.whyF || 0) + 1; continue; }
-            for (const h of c1.hops) seq.push(h);
-            seq.push({ to: c1.q, kind: 'sc', rod: bF, add: bF, sever: null });
-            at = c1.q; from = c1.p; rods = rods.concat([bF.slice()]);
-            const c2 = cross(bS);
-            if (!c2) { biasStats.whyS = (biasStats.whyS || 0) + 1; continue; }
-            for (const h of c2.hops) seq.push(h);
-            seq.push({ to: c2.q, kind: 'sc', rod: bS, add: bS, sever: aF });
-            at = c2.q; from = c2.p;
-            rods = rods.concat([bS.slice()]).filter(r => !rodSame(r, aF));
-            // Third tick: one legal hop, and the last old rod goes. Prefer a
-            // landing on B so the xon ends the move standing on its own tet.
-            let fin = null;
-            for (const pass of [0, 1]) {
-              if (fin) break;
-              for (const j of _baseNbr[at]) {
-                if (j === from || (pass === 0 && !Bnodes.includes(j))) continue;
-                if (!unitIn(rods, from, j) || !chiralOK(at, j)) continue;
-                fin = { to: j, kind: 'base', sever: aS }; break;
-              }
-              if (fin) break;
-              for (const r of rods) {
-                const j = r[0] === at ? r[1] : (r[1] === at ? r[0] : null);
-                if (j === null || j === from || (pass === 0 && !Bnodes.includes(j))) continue;
-                if (!unitIn(rods, from, j)) continue;
-                fin = { to: j, kind: 'sc', rod: r, sever: aS }; break;
-              }
-            }
-            if (!fin) { biasStats.whyFin = (biasStats.whyFin || 0) + 1; continue; }
-            seq.push(fin);
-            return seq;
-          }
-          return null;
-        };
-        if (lockMode) {
-          if (!chainQ.length) {
-            const T0 = tetNodes();
-            const opts = [];
-            for (const ch of modeChains(T0, LOCK, opt.chainMax || 4)) {
-              const c = centOf(ch.v), adv = alongC(c) - here;
-              // A step that does not advance but pulls the particle back onto
-              // the line is worth taking. Forbidding them outright meant the
-              // particle could only ever trade offset for progress, so error
-              // accumulated and never got paid back -- the bad runs drifted to
-              // offMax 5.8. Retreats are still barred; standing still is not.
-              if (adv < -1e-9) continue;
-              // Score the WHOLE route, not just where it lands. A chain is
-              // committed to once planned, so a chain that ends near the line
-              // after swinging wide in the middle is still a wide swing.
-              let worst = offC(c);
-              for (const iv of ch.chain) {
-                const o = offC(centOf(iv));
-                if (o > worst) worst = o;
-              }
-              opts.push({ ch, off: worst, land: offC(c), adv, len: ch.len });
-            }
-            // offset first, then advance, then the shortest route
-            opts.sort((a, b) => a.off - b.off || b.adv - a.adv || a.len - b.len);
-            let built = null, tried = 0;
-            for (const o of opts) { tried++; built = expandChain(o.ch.chain); if (built) break; }
-            chainStats.opts = opts.length; chainStats.tried += tried;
-            if (!built) {
-              // Distinguish "no advancing chain exists" (genuinely the end of
-              // the ray) from "chains exist but none could be expanded into xon
-              // hops" (the walk to the rod endpoint failed). Calling both
-              // 'traversed' hid a real routing failure behind a success label.
-              chainStats.expandFail += opts.length ? 1 : 0;
-              chainStats.noOpts += opts.length ? 0 : 1;
-              done = true;
-              stopped = opts.length ? 'unroutable' : 'traversed';
-              pending = null; return;
-            }
-            chainQ = built;
-          }
-          const want = chainQ[0];
-          const pick = cand.find(c => c.to === want.to && c.kind === want.kind);
-          if (!pick) { done = true; stopped = 'blocked'; pending = null; return; }
-          chainQ.shift();
-          pending = pick; pending.nCand = cand.length;
-          pending.nBase = cand.filter(c => c.kind === 'base').length;
-          pending.nSC = cand.filter(c => c.kind === 'sc').length;
-          pending.from = xon;
-          lastDir = dvec(xon, pick.to);
-          const dkm = dkey(xon, pick.to);
-          prev2 = prevNode; prevNode = xon;
-          xon = pick.to; wake.push(xon); if (wake.length > 40) wake.shift();
-          drawXon(xon, wake);
-          if (pick.kind === 'base') { baseHops++; useB[dkm] = (useB[dkm] || 0) + 1; return; }
-          useS[dkm] = (useS[dkm] || 0) + 1;
-          if (live.some(r => rodSame(r, pick.rod))) return;   // plain traversal
-          const km = killerOf(pick.rod);
-          if (km) { const k = scKeyOf(km[0], km[1]); if (k) active.delete(k[0]); }
-          const nkm = scKeyOf(pick.rod[0], pick.rod[1]);
-          if (nkm) active.set(nkm[0], nkm[1]);
-          pending.killed = km;
-          live = live.filter(r => r !== km).concat([pick.rod]);
-          events++; return;
-        }
         // ---- THE COMPUTED LOOP (e6) -------------------------------------
-        // The loop was solved at birth and is simply REPEATED. Each step names
-        // a displacement; tetAt turns it into a tet and planFlip routes the xon
-        // there. Nothing here searches for the traversal -- the only search is
-        // the xon's walk between rod endpoints, which is mechanism, not choice.
+        // The loop was solved at birth and is simply REPEATED, and every hop of
+        // it comes out of hopTable(). NOTHING here searches: the tet is
+        // canonicalised into one of two orientations, the move is looked up by
+        // (class, displacement, chirality, entry state), and the stored hop
+        // vectors are translated back into node ids. Two hops for a rail, four
+        // for a steer, fixed.
+        //
+        // A move whose entry state does not match takes ONE tabulated
+        // repositioning hop first -- also a lookup, since chirality and the
+        // 60-degree rule leave at most one legal choice inside the tet.
         if (lockAxes && LOOPFIT && LOOPFIT.steps.length && !chainQ.length
             && live.length === 2) {
           let placed = false;
-          for (let tries = 0; tries < LOOPFIT.steps.length && !placed; tries++) {
+          for (let tries = 0; tries < LOOPFIT.steps.length * 2 && !placed; tries++) {
             const st = LOOPFIT.steps[loopIdx % LOOPFIT.steps.length];
+            const got = analyticMove(st.d);
+            if (got && got.hops) {
+              chainQ = got.hops; biasActive = st.kind === 'steer';
+              fitStats.steps++;
+              if (st.kind === 'rail') fitStats.railDone++; else fitStats.steerDone++;
+              loopIdx++; placed = true; break;
+            }
+            if (got && got.reposition) {
+              const rep = analyticReposition(st.d);
+              if (rep) { chainQ = rep; fitStats.repositions =
+                (fitStats.repositions || 0) + 1; placed = true; break; }
+            }
+            // Not available from here: the lattice has run out in that
+            // direction. Advance the loop rather than substituting a move the
+            // CA chose for itself.
+            if (st.kind === 'rail') fitStats.railMissing++; else fitStats.steerMissing++;
             loopIdx++;
-            const B = tetAt(tetNodes(), st.d);
-            if (!B) { if (st.kind === 'rail') fitStats.railMissing++;
-                      else fitStats.steerMissing++; continue; }
-            const built = planFlip(live.map(r => r.slice()),
-                                   B.sc.map(sc => [sc[0], sc[1]]));
-            if (!built) { fitStats.routeFail++; continue; }
-            chainQ = built; biasActive = st.kind === 'steer';
-            fitStats.steps++;
-            if (st.kind === 'rail') fitStats.railDone++; else fitStats.steerDone++;
-            placed = true;
           }
-          // Every step of the loop tried and none available: the particle has
-          // run out of lattice in the direction the loop points. Ending here is
-          // the honest report -- falling back on a scored search would be the
-          // CA choosing its own route, which is the thing we are not doing.
           if (!placed) { done = true; stopped = 'loopblocked'; pending = null; return; }
         }
-        // ---- THE BIAS MOVE: AN EDGE-FLIP --------------------------------
-        // The tet shares an EDGE with the next step, not a face. Both rods
-        // swing, the incoming one is added BEFORE the outgoing one is severed,
-        // and a tet stays closed on every tick.
-        //
-        //   tick 1:  add b1            -> {a1, a2, b1}   tet A still closed
-        //   tick 2:  add b2, sever a1  -> {a2, b1, b2}   tet B now closed
-        //   tick 3:  sever a2          -> {b1, b2}       tet B
-        //
-        // Rods are paired BY AXIS -- a1/b1 both X, a2/b2 both Z -- so the
-        // leftover rod can never close a second tet with an incoming one: the
-        // same-axis pairs cannot, and the cross pairs meet at a vertex (3 nodes,
-        // measured 4560 of 4560). The tet is unambiguous at every tick.
-        //
-        // MEASURED over the lattice: 2280 same-mode edge-sharing pairs where
-        // both rods differ, displacing in the mode's OWN PLANE --
-        //   XZ: (1,0,+-1)   XY: (1,+-1,0)   YZ: (0,1,+-1)
-        // With the rail running the dormant axis, plane + axis is RANK 3. The
-        // generation is held every tick, no Y shortcut is ever touched, and one
-        // shortcut is created per tick. Nothing is traded away.
-        //
-        // Sever-then-add was the trap: it drops to a 3-node hinge with no tet.
-        // Add-then-sever costs the vacuum nothing -- 16 of 16 states legal on
-        // four probed pairs, minSep exactly 1.000, residuals at solver noise.
-        if (lockAxes && (biasVec || LOOPFIT)) {
-          const sig0 = tetNodes().slice().sort((a, b) => a - b).join('.');
-          if (biasFailedAt && biasFailedAt !== sig0) biasFailedAt = null;
-          if (!LOOPFIT && !chainQ.length && railSince >= BIAS_EVERY
-              && biasFailedAt !== sig0) {
-            const A = tetNodes(), c0 = centOf(A);
-            const aRods = live.map(r => r.slice());
-            // Candidate targets: every tet sharing exactly TWO vertices with A,
-            // same mode, both rods different. Enumerated from the lattice, not
-            // guessed -- for each pair of A's vertices, every tet on that edge.
-            const opts = [];
-            if (aRods.length === 2) for (const t of allTets()) {
-              if (t.mode !== LOCK) continue;
-              if (BAN && t.sc.some(s => BAN.indexOf(s[2]) >= 0)) continue;
-              const shared = t.v.filter(n => A.includes(n));
-              if (shared.length !== 2) continue;
-              const bRods = t.sc.map(s => [s[0], s[1]]);
-              if (bRods.some(x => aRods.some(y => rodSame(x, y)))) continue;
-              const c = centOf(t.v);
-              const d = [0, 1, 2].map(k => c[k] - c0[k]);
-              // Steer TOWARDS the bias: take the component along it. An exact
-              // match is impossible here -- the bias is a <111> and these
-              // displacements lie in the mode plane -- so the test is that the
-              // move carries the particle the way the bias points.
-              const dot = [0, 1, 2].reduce((s, k) => s + d[k] * biasVec[k], 0);
-              if (dot <= 1e-9) continue;
-              opts.push({ v: t.v, bRods, d, dot });
-            }
-            opts.sort((a, b) => b.dot - a.dot);
-            if (!opts.length) { biasStats.noChain++; biasFailedAt = sig0; }
-            else {
-              biasStats.planned++;
-              let built = null;
-              for (const o of opts) { built = planEdgeFlip(aRods, o.bRods); if (built) break; }
-              if (built) { chainQ = built; biasActive = true; railSince = 0; }
-              else { biasStats.expandFail++; biasFailedAt = sig0; }
-            }
+        // ---- DRAIN ------------------------------------------------------
+        // One hop per tick. Adds land BEFORE severs so a tet is closed on every
+        // tick of an edge-flip, and both are explicit on the hop rather than
+        // inferred from a killerOf rule -- inferring it is what produced a
+        // density violation once already.
+        if (lockAxes && chainQ.length) {
+          const want = chainQ.shift();
+          const lastHop = !chainQ.length;
+          pending = { to: want.to, kind: want.kind, rod: want.rod, bias: true,
+                      from: xon, nCand: cand.length,
+                      nBase: cand.filter(c => c.kind === 'base').length,
+                      nSC: cand.filter(c => c.kind === 'sc').length };
+          lastDir = dvec(xon, want.to);
+          const dkb = dkey(xon, want.to);
+          prev2 = prevNode; prevNode = xon;
+          xon = want.to; wake.push(xon); if (wake.length > 40) wake.shift();
+          drawXon(xon, wake);
+          if (want.add && !live.some(r => rodSame(r, want.add))) {
+            const nk = scKeyOf(want.add[0], want.add[1]);
+            if (nk) active.set(nk[0], nk[1]);
+            live = live.concat([want.add.slice()]);
+            events++;
           }
-          if (chainQ.length) {
-            const want = chainQ[0];
-            // VALIDATE AGAINST THE RULES, not against `cand`. The rail's
-            // candidate list is built for 2-rod states and rejects everything
-            // mid-edge-flip; checking the hop directly is both correct here and
-            // an exact statement of the rules it has to satisfy.
-            if (!hopLegal(want)) { chainQ = []; biasActive = false;
-              biasStats.abandoned = (biasStats.abandoned || 0) + 1; }
-            else {
-              chainQ.shift();
-              const lastHop = !chainQ.length;
-              pending = { to: want.to, kind: want.kind, rod: want.rod,
-                          bias: true, from: xon, nCand: cand.length,
-                          nBase: cand.filter(c => c.kind === 'base').length,
-                          nSC: cand.filter(c => c.kind === 'sc').length };
-              lastDir = dvec(xon, want.to);
-              const dkb = dkey(xon, want.to);
-              prev2 = prevNode; prevNode = xon;
-              xon = want.to; wake.push(xon); if (wake.length > 40) wake.shift();
-              drawXon(xon, wake);
-              // ADD FIRST. The rod set grows to three and only then shrinks --
-              // that ordering is what keeps a tet closed, so it is explicit
-              // here rather than inferred from a killerOf rule.
-              if (want.add && !live.some(r => rodSame(r, want.add))) {
-                const nk = scKeyOf(want.add[0], want.add[1]);
-                if (nk) active.set(nk[0], nk[1]);
-                live = live.concat([want.add.slice()]);
-                events++;
-              }
-              if (want.sever) {
-                const k = scKeyOf(want.sever[0], want.sever[1]);
-                if (k) active.delete(k[0]);
-                live = live.filter(r => !rodSame(r, want.sever));
-              }
-              pending.killed = want.sever || null;
-              pending.added = want.add || null;
-              if (want.kind === 'base') { baseHops++; useB[dkb] = (useB[dkb] || 0) + 1; }
-              else useS[dkb] = (useS[dkb] || 0) + 1;
-              // STRUCTURAL GUARD. A tet must be closed after EVERY tick of the
-              // edge-flip -- that is the whole claim being made, so it is
-              // checked rather than asserted. Loud on purpose: a hit is a
-              // coding fault, not a physics outcome.
-              const chk = tetOf(live);
-              if (!chk) { biasStats.brokeTet++;
-                console.error('EDGE-FLIP LEFT NO CLOSED TET',
-                  { rods: live, step: want, lastHop }); }
-              if (BAN && live.some(r => BAN.indexOf(axisOf(dvec(r[0], r[1]))) >= 0)) {
-                biasStats.bannedRod = (biasStats.bannedRod || 0) + 1;
-                console.error('EDGE-FLIP INSTALLED A BANNED ROD', { rods: live, step: want });
-              }
-              if (lastHop) { biasActive = false; biasStats.done++; }
-              return;
-            }
+          if (want.sever) {
+            const k = scKeyOf(want.sever[0], want.sever[1]);
+            if (k) active.delete(k[0]);
+            live = live.filter(r => !rodSame(r, want.sever));
           }
+          pending.killed = want.sever || null;
+          if (want.kind === 'base') { baseHops++; useB[dkb] = (useB[dkb] || 0) + 1; }
+          else useS[dkb] = (useS[dkb] || 0) + 1;
+          // STRUCTURAL GUARDS. A tet closed after every tick, and never a rod
+          // on a banned axis. Loud on purpose -- a hit is a coding fault.
+          if (!tetOf(live)) { biasStats.brokeTet++;
+            console.error('ANALYTIC MOVE LEFT NO CLOSED TET', { rods: live, step: want }); }
+          if (BAN && live.some(r => BAN.indexOf(axisOf(dvec(r[0], r[1]))) >= 0)) {
+            biasStats.bannedRod = (biasStats.bannedRod || 0) + 1;
+            console.error('ANALYTIC MOVE INSTALLED A BANNED ROD', { rods: live, step: want }); }
+          if (lastHop) biasActive = false;
+          return;
         }
         if (opt.plan !== false) {
           const bp = planBest();
@@ -1906,8 +1773,7 @@
               if (nk0) active.set(nk0[0], nk0[1]);
               pending.killed = kill0;
               live = live.filter(r => r !== kill0).concat([pick.rod]);
-              events++; railSince++;      // a RAIL step: the bias clock ticks
-              return;
+              events++; return;
             }
           }
         }
@@ -2029,8 +1895,8 @@
     const hops = trace.length;
     const mt = (() => { let s = 0, n = 0;
       for (const [a, c] of Object.entries(turns)) { s += (+a) * c; n += c; } return n ? s / n : 0; })();
-    const out = { chirality, chiralBlocked, chainStats, mode: LOCK,
-      bias: biasVec, biasEvery: biasVec ? BIAS_EVERY : null, biasStats,
+    const out = { chirality, chiralBlocked, mode: LOCK,
+      biasStats,
       loop: LOOPFIT && { steps: LOOPFIT.steps.map(x => x.kind + ' ' + x.d.join(',')),
         disp: LOOPFIT.disp, cos: LOOPFIT.cos,
         nRail: LOOPFIT.nRail, nP: LOOPFIT.nP, nQ: LOOPFIT.nQ }, fitStats,
@@ -3267,7 +3133,8 @@
     // birth generation for 561 of them, 62%, breaking in 10 of 10 runs. It
     // passed no-shuttling, chirality and the 60-degree rule cleanly and failed
     // "generation fixed at birth", so it was never an electron. It survives as
-    // _XONMOM({lockMode:true, dir}) for control runs; it is no longer a loop.
+    // Its chain machinery has now been removed outright along with tetWalk --
+    // e6 needs no router, so nothing was left to keep it alive.
 
     // THE NEUTRINO. Same automaton, mode UNLOCKED: it takes face-flips, whose
     // new rod is forced onto the third axis, so the mode cycles XY->XZ->YZ for
