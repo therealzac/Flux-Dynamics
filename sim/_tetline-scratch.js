@@ -3267,61 +3267,37 @@
     // patterns, drawn at spawn and fixed for the life of the particle;
     // shortcuts are unaffected. Measured, it costs the electron nothing --
     // which is what a chirality ought to look like.
-    const AXDIRS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-    // PINNED TO VERTICAL while steering is worked on -- one line, repeatable,
-    // easy to read off the screen. Restore `AXDIRS[(Math.random()*6)|0]` to go
-    // back to all six. Note this pins the GENERATION too, and not by choice:
-    // measured over 11 consecutive spawns the birth mode is forced by the
-    // direction of travel, one-to-one and without exception --
-    //   dir +-X -> YZ      dir +-Y -> XZ      dir +-Z -> XY
-    // each mode running on the one axis it does not use. So a vertical line is
-    // always an XZ electron. Handedness stays random per spawn.
-    const VERTICAL = AXDIRS[2];                       // [0,1,0]
-    // e6 gets a RANDOM orientation through the centre -- fitting an arbitrary
-    // line is the whole point of it, and a vertical one reduces to e5 anyway.
-    const randDirE6 = () => { let x, y, q;
+    const randDir = () => { let x, y, q;
       do { x = 2 * Math.random() - 1; y = 2 * Math.random() - 1; q = x * x + y * y; }
       while (q >= 1 || q === 0);
       const t = 2 * Math.sqrt(1 - q); return [x * t, y * t, 1 - 2 * q]; };
 
-    // THE ELECTRON -- lockAxes, the STRICT per-tick generation lock.
+    // e5 -- THE RAIL-ONLY ELECTRON -- IS RETIRED, because the electron below
+    // SUBSUMES it exactly rather than merely replacing it. On a vertical line
+    // the loop solver returns nRail = 1, nP = nQ = 0 by arithmetic, and the two
+    // then run hop for hop identically: 25 hops chirality A, 24 chirality B, 11
+    // flux events, 100%, offMax 1.00, net 0,11,0 in both. Keeping a second loop
+    // that is a special case of the first only invites them to drift apart.
     //
-    // Audited over 18 runs / 436 ticks, all six axes, both handednesses, all
-    // three generations:
-    //   no shuttling (a-b-a)      0 violations
-    //   chirality fixed at birth  0 violations
-    //   generation fixed at birth 0 mode breaks, 0 of 18 runs
-    //   60-degree motions only    436 of 436 turns
-    //   crossings                 100% x 18, offMax 1.00 every run
-    //   teleports / vacuum refusals   0 / 0
+    // What e5 established, and what still holds:
+    //   Holding the generation every tick admits ONLY edge-flips -- the new rod
+    //   goes on the same axis as the one it replaces, parallel and disjoint.
+    //   Measured exhaustively: 2472 such flips, 2472 preserve the mode, 0 lose
+    //   it. Their centroid displacement is +-1 along the DORMANT axis and
+    //   nothing else -- XZ moves Y, XY moves Z, YZ moves X, 824 each. Per-tet
+    //   rank is 1 in all 1392 tets and the same-mode tets fall into 156
+    //   mutually disconnected rails.
+    //   So a rail-only electron cannot be steered off its axis at any quality
+    //   of choreography. Steering needed the OTHER edge-flip family -- sharing
+    //   a base edge, both rods swinging -- which is what the electron below
+    //   uses. It survives as _XONMOM({lockAxes:true, dir:[0,1,0]}) for control
+    //   runs; it is no longer a loop.
     //
-    // THE LINE IS DRAWN FROM THE SIX LATTICE AXES, NOT THE SPHERE, and that is
-    // forced rather than chosen. Holding the mode every tick admits only
-    // edge-flips -- the new rod goes on the SAME axis as the one it replaces,
-    // parallel and disjoint. Measured exhaustively: 2472 such flips in the
-    // lattice, 2472 preserve the mode, 0 lose it, every one sharing exactly two
-    // vertices. Their centroid displacement is +-1 along the DORMANT axis and
-    // nothing else -- XZ moves Y, XY moves Z, YZ moves X, 824 each, no
-    // exceptions. Per-tet displacement rank is 1 in all 1392 tets, and the
-    // same-mode tets fall into 156 components under edge-flips, every one rank
-    // 1 and mutually disconnected. So there is no second axis to trade against
-    // and no neighbouring rail to hop to: a diagonal is not something a
-    // generation-locked electron can be steered onto, at any quality of
-    // choreography. An off-axis target is a NEUTRINO test.
-    window._registerLoop('electron', 'e5 — electron (gen-locked, rail only)',
-      'Generation FIXED at birth and held EVERY tick — only edge-flips preserve '
-      + 'it, and they move the tet along the one axis its mode does not use. '
-      + 'Line PINNED VERTICAL for now, which pins the generation to XZ; '
-      + 'handedness is still drawn at spawn. Every turn is 60°, no a-b-a, '
-      + '100% crossings at offMax 1.00.',
-      async (tok) => {
-        while (window._loopAlive(tok)) {
-          await window._XONMOM({ lockAxes: true, dir: VERTICAL,
-                                 alive: () => window._loopAlive(tok) });
-          await breathe();
-        }
-        cleanup();
-      });
+    // Also retired with it: the direction<->generation table. It is not gone,
+    // it is FORCED, and worth stating once -- the birth mode is fixed by the
+    // direction of travel, one-to-one and without exception:
+    //   dir +-X -> YZ      dir +-Y -> XZ      dir +-Z -> XY
+    // each generation running on the one axis it does not use.
 
     // THE BIASED ELECTRON -- the rail plus a second direction.
     //
@@ -3393,15 +3369,16 @@
     //   generations seen: XZ only          off-generation ticks: 0
     //   ticks with no closed tet: 0        banned rods installed: 0
     //   shuttling 0, teleports 0, vacuum refusals 0, turns 60 only
-    window._registerLoop('electron-bias', 'e6 — electron (gen-locked, line-fitting)',
-      'Steers while holding everything: generation XZ at every tick, a closed '
-      + 'tet at every tick, no Y shortcut ever. The bias is an EDGE-flip — the '
-      + 'next tet shares a base edge, both rods swing, and the incoming rod is '
-      + 'added BEFORE the outgoing one is severed so the tet never opens. '
-      + 'Net 4,9,4 for bias 1,1,1 against 0,11,0 for the pure rail.',
+    window._registerLoop('electron', 'electron',
+      'Line, generation and handedness each drawn at spawn and fixed for life. '
+      + 'No a-b-a, 60° motions only, a closed tet every tick, no Y shortcut '
+      + 'ever. The traversal is a PRE-COMPUTED loop replayed verbatim — solved '
+      + 'at birth, never searched for — and it steers by edge-flips that share '
+      + 'a base edge, adding the incoming rod before severing the outgoing one '
+      + 'so the tet never opens.',
       async (tok) => {
         while (window._loopAlive(tok)) {
-          await window._XONMOM({ lockAxes: true, dir: randDirE6(), fit: true,
+          await window._XONMOM({ lockAxes: true, dir: randDir(), fit: true,
                                  banAxis: 'Y', status: e6Status,
                                  alive: () => window._loopAlive(tok) });
           await breathe();
