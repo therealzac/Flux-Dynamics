@@ -1172,6 +1172,43 @@
     // item is still iterated after the traversal ends.
     const ticks = opt.ticks || Math.ceil((hi - lo) / 0.10) + STALL + 10;
 
+    // ---- EDGE DETECTION ---------------------------------------------------
+    // A tet is BORN touching the lattice bound. Once it has carried itself off
+    // the bound, the next time it touches again it has reached the far side and
+    // the run is over. Measured off the lattice rather than against a chosen
+    // threshold: a node is on the bound when it is missing base neighbours,
+    // i.e. when they would have fallen outside the ball.
+    //
+    // The test is per VERTEX, not per face. A face needs all three of its
+    // vertices on the bound at once, which a tet can avoid while plainly
+    // sitting on the edge -- two of the twelve runs came back bornAtBound
+    // false for exactly that reason. One vertex touching is touching.
+    const _maxDeg = _baseNbr.reduce((m, a2) => Math.max(m, a2.length), 0);
+    const onBound = n => _baseNbr[n].length < _maxDeg;
+    const tetAtBound = ns => !!ns && ns.length === 4 && ns.some(onBound);
+    let leftBound = false, bornAtBound = null;
+
+    // ---- THE TRAVERSAL LINE -----------------------------------------------
+    // The line of AVERAGE motion of the tet centre -- the first principal
+    // component of the centroid track, not simply last-minus-first, so a
+    // wobble in the middle counts against it the way it should. The angle
+    // between this and the target line is the number to drive to zero.
+    const fitAxis = pts => {
+      const n = pts.length; if (n < 2) return null;
+      const m = [0, 1, 2].map(k => pts.reduce((sm, q) => sm + q[k], 0) / n);
+      const C = [[0,0,0],[0,0,0],[0,0,0]];
+      for (const q of pts) { const d = [0,1,2].map(k => q[k] - m[k]);
+        for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i][j] += d[i] * d[j]; }
+      let u = [1, 1, 1];
+      for (let it = 0; it < 400; it++) {
+        const w = [0,1,2].map(i => C[i][0]*u[0] + C[i][1]*u[1] + C[i][2]*u[2]);
+        const nn = Math.hypot(...w); if (nn < 1e-12) return null;
+        u = w.map(z => z / nn);
+      }
+      return { dir: u, mean: m };
+    };
+    const track = [];        // tet centroid, one per tick
+
     const wake = [xon]; const turns = {}, useB = {}, useS = {}, useAxis = {};
     let lastDir = null, events = 0, baseHops = 0, refused = 0, stuck = 0, done = false;
     let pending = null, pendingBucket = null, prev2 = null, lastWasTransit = false;
@@ -1319,8 +1356,19 @@
     //
     // Bounded and exact: 32 states times the product of the move counts. This
     // enumerates orderings of a known multiset, it does not search the lattice.
-    const closeLoop = (steps, ch) => {
+    const closeLoop = (steps, ch, dir) => {
       if (!steps || !steps.length) return null;
+      // The cycle must not merely CLOSE, it must stay near the line the whole
+      // way round. Any closing order spends the same displacements and ends in
+      // the same place, but a run that meets the lattice edge part-way through
+      // only ever executes a PREFIX -- and a prefix of a badly ordered cycle is
+      // not parallel to anything. Measured: an ordering that front-loaded all
+      // eleven rails left the traversal 21 degrees off, its four steers never
+      // reached. So every cycle is scored by the worst perpendicular excursion
+      // of its prefixes, and the best is taken.
+      const un = Math.hypot(...dir) || 1, u = dir.map(z => z / un);
+      const perpOf = q => { const sp = q[0]*u[0] + q[1]*u[1] + q[2]*u[2];
+        return Math.hypot(q[0]-sp*u[0], q[1]-sp*u[1], q[2]-sp*u[2]); };
       const T = hopTable();
       const need0 = {};
       for (const st of steps) { const k = st.d.join(',');
@@ -1344,14 +1392,14 @@
       for (const s0 of hopStates('U').map(x => ({ cls: 'U', ...x }))
                      .concat(hopStates('D').map(x => ({ cls: 'D', ...x })))) {
         const start = sk(s0.cls, s0.at, s0.prev);
-        const seen = new Set([start + '#' + cnt0.join('.')]);
+        const seen = new Map([[start + '#' + cnt0.join('.'), 0]]);
         let front = [{ cls: s0.cls, at: s0.at, prev: s0.prev,
-                       cnt: cnt0.slice(), seq: [] }];
+                       cnt: cnt0.slice(), seq: [], pos: [0,0,0], dev: 0 }];
         let found = null;
-        for (let depth = 0; depth < steps.length && front.length && !found; depth++) {
+        for (let depth = 0; depth < steps.length && front.length; depth++) {
           const nxt = [];
           for (const st of front) {
-            for (let i = 0; i < dk.length && !found; i++) {
+            for (let i = 0; i < dk.length; i++) {
               if (!st.cnt[i]) continue;
               const d = dk[i], ents = entryOf(st.cls, d);
               if (!ents.length) continue;
@@ -1360,16 +1408,25 @@
                 if (!hit) continue;
                 const cnt = st.cnt.slice(); cnt[i]--;
                 const ncls = flip(st.cls);
-                const seq = st.seq.concat([{ d: d.split(',').map(Number),
+                const dv = d.split(',').map(Number);
+                const pos = [0,1,2].map(k => st.pos[k] + dv[k]);
+                const dev = Math.max(st.dev, perpOf(pos));
+                const seq = st.seq.concat([{ d: dv,
                   entryAt: r.at, entryPrev: r.prev, repHops: r.hops }]);
                 if (cnt.every(z => z === 0)) {
-                  if (sk(ncls, hit.exitAt, hit.exitFrom) === start)
-                    { found = { start: s0, seq }; }
+                  if (sk(ncls, hit.exitAt, hit.exitFrom) === start
+                      && (!found || dev < found.dev - 1e-9))
+                    found = { start: s0, seq, dev: +dev.toFixed(4) };
                   continue;
                 }
                 const key = sk(ncls, hit.exitAt, hit.exitFrom) + '#' + cnt.join('.');
-                if (seen.has(key)) continue; seen.add(key);
-                nxt.push({ cls: ncls, at: hit.exitAt, prev: hit.exitFrom, cnt, seq });
+                // Keep the LOWEST-excursion route to each (state, counts); a
+                // plain visited-set would lock in whichever arrived first.
+                const prev2 = seen.get(key);
+                if (prev2 !== undefined && prev2 <= dev + 1e-9) continue;
+                seen.set(key, dev);
+                nxt.push({ cls: ncls, at: hit.exitAt, prev: hit.exitFrom, cnt, seq,
+                           pos, dev });
               }
             }
           }
@@ -1387,9 +1444,9 @@
       // DOUBLED -- twice round the same displacements points the same way and
       // gives the ordering room to return to its own start state.
       if (LOOPFIT) {
-        LOOPSEQ = closeLoop(LOOPFIT.steps, chirality || 'A');
+        LOOPSEQ = closeLoop(LOOPFIT.steps, chirality || 'A', v);
         if (!LOOPSEQ && LOOPFIT.steps.length <= 12)
-          LOOPSEQ = closeLoop(LOOPFIT.steps.concat(LOOPFIT.steps), chirality || 'A');
+          LOOPSEQ = closeLoop(LOOPFIT.steps.concat(LOOPFIT.steps), chirality || 'A', v);
       }
     }
     const fitStats = { steps: 0, railDone: 0, steerDone: 0,
@@ -1504,8 +1561,8 @@
           const rel0 = n => [0, 1, 2].map(k => NODE[n][k] - NODE[o0][k]);
           const cls0 = rel0(Z[0])[1] > 0 ? 'U' : 'D';
           if (LOOPSEQ.start.cls !== cls0 && LOOPSEQ.seq.length > 1)
-            LOOPSEQ = { start: { cls: cls0 }, seq: LOOPSEQ.seq.slice(1)
-                          .concat([LOOPSEQ.seq[0]]) };
+            LOOPSEQ = { start: { cls: cls0 }, dev: LOOPSEQ.dev,
+                        seq: LOOPSEQ.seq.slice(1).concat([LOOPSEQ.seq[0]]) };
           const want = LOOPSEQ.seq[0];
           const at = KEY.get([0,1,2].map(k => NODE[o0][k]
                        + (+want.entryAt.split(',')[k])).join(','));
@@ -1782,28 +1839,6 @@
           }
           return null;
         };
-        // The one repositioning hop, also tabulated.
-        const analyticReposition = (disp) => {
-          const F = frameOf(); if (!F) return null;
-          const ch = chirality || 'A';
-          const key = F.cls + '|' + disp.join(',') + '|' + ch;
-          const ent = hopTable()[key]; if (!ent) return null;
-          const xr = F.rel(xon).join(','), pr = F.rel(prevNode).join(',');
-          for (const path of hopReposition(F.cls, ch, xr, pr)) {
-            // only worth taking if it LANDS in a state this move accepts
-            if (!ent.res.some(r => r.start === path.at && r.prev === path.from)) continue;
-            const hops = [];
-            let bad = false;
-            for (const h of path.hops) {
-              const to = nodeAt([0, 1, 2].map(k => NODE[F.o][k] + h.to[k]));
-              if (to === undefined) { bad = true; break; }
-              hops.push({ to, kind: h.kind,
-                          rod: h.kind === 'sc' ? [xon, to] : undefined });
-            }
-            if (!bad && hops.length) return hops;
-          }
-          return null;
-        };
         // ---- THE COMPUTED LOOP (e6) -------------------------------------
         // The loop was solved at birth and is simply REPEATED, and every hop of
         // it comes out of hopTable(). NOTHING here searches: the tet is
@@ -1850,25 +1885,12 @@
               done = true; stopped = 'traversed'; pending = null; return;
             }
           }
-        } else if (lockAxes && LOOPFIT && !LOOPSEQ && LOOPFIT.steps.length
-                   && !chainQ.length && live.length === 2) {
-          // NO CLOSED CYCLE for this multiset. Fall back to the open schedule
-          // and SAY SO in `stopped` rather than pretending the loop repeats.
-          let placed = false;
-          for (let tries = 0; tries < LOOPFIT.steps.length * 2 && !placed; tries++) {
-            const st2 = LOOPFIT.steps[loopIdx % LOOPFIT.steps.length];
-            const got = analyticMove(st2.d);
-            if (got && got.hops) { chainQ = got.hops;
-              biasActive = st2.kind === 'steer'; fitStats.steps++;
-              if (st2.kind === 'rail') fitStats.railDone++; else fitStats.steerDone++;
-              loopIdx++; placed = true; break; }
-            if (got && got.reposition) { const rep = analyticReposition(st2.d);
-              if (rep) { chainQ = rep; fitStats.repositions =
-                (fitStats.repositions || 0) + 1; placed = true; break; } }
-            if (st2.kind === 'rail') fitStats.railMissing++; else fitStats.steerMissing++;
-            loopIdx++;
-          }
-          if (!placed) { done = true; stopped = 'openloopblocked'; pending = null; return; }
+        } else if (lockAxes && LOOPFIT && !LOOPSEQ && !chainQ.length) {
+          // NO CLOSING CYCLE. There is no fallback and there should not be:
+          // a scheduler that re-derives its way forward hides exactly the
+          // question worth answering, which is why this multiset admits no
+          // cycle. Fail loudly and leave the loop on the result for inspection.
+          done = true; stopped = 'loopNotClosed'; pending = null; return;
         }
         // ---- DRAIN ------------------------------------------------------
         // One hop per tick. Adds land BEFORE severs so a tet is closed on every
@@ -2040,9 +2062,16 @@
         // that has not improved its best position in STALL ticks is cycling,
         // not travelling.
         const sNow = alongC(c);
+        track.push(c.slice());
+        // EDGE. Born touching the bound; the run ends the first time any
+        // vertex touches the bound again after having left it.
+        const atB = tetAtBound(tetNodes());
+        if (bornAtBound === null) bornAtBound = atB;
+        if (!atB) leftBound = true;
+        else if (leftBound) { done = true; stopped = 'edge'; }
         if (sNow > bestS + 1e-9) { bestS = sNow; sinceGain = 0; } else sinceGain++;
-        if (sNow >= hiTet - 1e-6) { done = true; stopped = 'traversed'; }
-        else if (sinceGain >= STALL) { done = true; stopped = 'stalled'; }
+        if (!done && sNow >= hiTet - 1e-6) { done = true; stopped = 'traversed'; }
+        else if (!done && sinceGain >= STALL) { done = true; stopped = 'stalled'; }
         // The generation as it stands AFTER the move -- recorded per tick so a
         // bias excursion is visible in the trace rather than inferred from it.
         const mNow = modeOf(tetNodes());
@@ -2074,7 +2103,12 @@
     const mt = (() => { let s = 0, n = 0;
       for (const [a, c] of Object.entries(turns)) { s += (+a) * c; n += c; } return n ? s / n : 0; })();
     const out = { chirality, chiralBlocked, mode: LOCK,
-      biasStats, loopClosed: !!LOOPSEQ,
+      biasStats, loopClosed: !!LOOPSEQ, loopDev: LOOPSEQ && LOOPSEQ.dev, bornAtBound,
+      traversal: (() => { const f = fitAxis(track); if (!f) return null;
+        const dot = Math.abs([0,1,2].reduce((sm, k) => sm + f.dir[k] * v[k], 0));
+        return { dir: f.dir.map(z => +z.toFixed(4)),
+                 angleDeg: +(180 / Math.PI * Math.acos(Math.min(1, dot))).toFixed(3),
+                 nPts: track.length }; })(),
       loopSeq: LOOPSEQ && LOOPSEQ.seq.map(x => x.d.join(',') + '@' + x.entryAt),
       loop: LOOPFIT && { steps: LOOPFIT.steps.map(x => x.kind + ' ' + x.d.join(',')),
         disp: LOOPFIT.disp, cos: LOOPFIT.cos,
