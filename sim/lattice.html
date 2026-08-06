@@ -1,0 +1,1748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>FD Lattice Explorer</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#080a0e;color:#c8d0dc;overscroll-behavior:none;
+            font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;
+            -webkit-user-select:none;user-select:none}
+  #gl{position:fixed;inset:0;touch-action:none;cursor:crosshair}
+  .card{background:rgba(13,16,22,.93);border:1px solid #1e2530;border-radius:12px;
+        backdrop-filter:blur(14px)}
+
+  #top{position:fixed;top:0;left:0;right:0;padding:10px 12px;
+       padding-top:calc(10px + env(safe-area-inset-top));display:flex;gap:10px;align-items:flex-start;
+       background:linear-gradient(#080a0eee,#080a0e00);pointer-events:none;z-index:5}
+  #top > *{pointer-events:auto}
+  #chip{display:flex;align-items:center;gap:9px;padding:0 14px;height:46px;border-radius:12px;
+        cursor:pointer;font-size:13px;font-weight:600;letter-spacing:.04em;white-space:nowrap}
+  #chip.ok{background:#12352a;border:1px solid #2f7d5f;color:#7fd4a8}
+  #chip.bad{background:#3a1414;border:1px solid #8a2a2a;color:#ff7a7a}
+  #chip.busy{background:#18202c;border:1px solid #2f4055;color:#8aa6c4}
+  #dot{width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
+  #stepper{display:flex;align-items:center;height:46px;border-radius:12px;overflow:hidden;margin-left:auto}
+  #stepper b{min-width:78px;text-align:center;font-size:12px;color:#8fa3ba;font-weight:600;letter-spacing:.05em}
+  .step{width:46px;height:46px;display:flex;align-items:center;justify-content:center;
+        font-size:20px;color:#8fa3ba;cursor:pointer}
+  .step:active{background:#1a2230}.step.off{opacity:.25}
+
+  #stats{position:fixed;top:calc(64px + env(safe-area-inset-top));left:12px;width:274px;
+         padding:12px 14px;display:none;z-index:4;font-size:12.5px}
+  #stats.open{display:block}
+  #stats table{width:100%;border-collapse:collapse}
+  #stats td{padding:2.5px 0}
+  #stats td:last-child{text-align:right;font-variant-numeric:tabular-nums;color:#aebbcc}
+  .ok{color:#7fd4a8;font-weight:600}.bad{color:#ff5c5c;font-weight:600}
+
+  #sheet{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));
+         padding:14px 14px 12px;z-index:6;
+         transform:translateY(130%);transition:transform .22s cubic-bezier(.32,.72,0,1)}
+  #sheet.up{transform:none}
+  #sheethead{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+  #sheettitle{font-size:14px;font-weight:600;color:#c8d0dc;letter-spacing:.03em}
+  #sheetsub{font-size:11.5px;color:#5d6e85}
+  #close{margin-left:auto;width:34px;height:34px;border-radius:9px;display:flex;
+         align-items:center;justify-content:center;color:#5d6e85;font-size:19px;cursor:pointer}
+  #close:active{background:#1a2230}
+  #board{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .sw{height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+      border:1.5px solid #2a3543;border-radius:11px;background:#111721;color:#93a6bb;cursor:pointer;
+      font-size:16px;font-weight:600;letter-spacing:.04em;transition:all .12s}
+  .sw small{font-size:9.5px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;opacity:.75}
+  .sw:active{transform:scale(.96)}
+  .sw.on{background:#12352a;border-color:#3f9e77;color:#7fd4a8}
+  .sw.blocked{background:#2a1313;border-color:#7a2b2b;color:#e08080;cursor:default}
+  .sw.absent{opacity:.22;cursor:default;border-color:#1c232c}
+  .sw.testing small{animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.3}50%{opacity:.9}}
+  #legend{margin-top:11px;display:flex;flex-wrap:wrap;gap:12px;font-size:10.5px;color:#5d6e85}
+  #legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
+
+  /* layers */
+  #layers{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));
+          width:222px;z-index:5;overflow:hidden}
+  #sheet.up ~ #layers{bottom:calc(258px + env(safe-area-inset-bottom))}
+  #lhead{height:44px;display:flex;align-items:center;padding:0 14px;gap:8px;
+         font-size:12px;color:#8fa3ba;cursor:pointer}
+  #lhead:active{background:#1a2230}
+  #lcaret{margin-left:auto;font-size:9px;transition:transform .18s}
+  #layers.open #lcaret{transform:rotate(180deg)}
+  #lbody{display:none;padding:2px 14px 12px}
+  #layers.open #lbody{display:block}
+  #clear{display:none}
+  #layers.open #clear{display:flex}
+  .lay{margin-bottom:9px}
+  .lay label{display:flex;justify-content:space-between;font-size:11px;color:#6f8199;margin-bottom:1px}
+  .lay label b{color:#93a6bb;font-weight:600;font-variant-numeric:tabular-nums}
+  .lay input{width:100%;height:22px;accent-color:#7fd4a8;margin:0}
+  /* loops: long-running animations, bottom left */
+  #loops{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));
+         width:238px;z-index:5;overflow:hidden}
+  #sheet.up ~ #loops,#solid.up ~ #loops{bottom:calc(258px + env(safe-area-inset-bottom))}
+  #lphead{height:44px;display:flex;align-items:center;padding:0 14px;
+          font-size:12px;color:#8fa3ba;cursor:pointer}
+  #lphead:active{background:#1a2230}
+  #lpnow{margin-left:auto;font-size:10.5px;color:#5d6e85;max-width:112px;
+         overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #lpcaret{margin-left:9px;font-size:9px;transition:transform .18s}
+  #loops.open #lpcaret{transform:rotate(180deg)}
+  #lpbody{display:none;padding:2px 10px 10px}
+  #loops.open #lpbody{display:block}
+  .lp{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;
+      border:1.5px solid #2a3543;background:#111721;color:#93a6bb;cursor:pointer;
+      margin-bottom:6px;font-size:12px;font-weight:600;letter-spacing:.03em}
+  .lp:active{transform:scale(.985)}
+  .lp.on{background:#12352a;border-color:#3f9e77;color:#7fd4a8}
+  .lp i{width:9px;height:9px;border-radius:50%;border:1.5px solid currentColor;flex:none}
+  .lp.on i{background:currentColor}
+  .lp em{font-style:normal;margin-left:auto;font-size:9.5px;font-weight:500;
+         opacity:.65;text-transform:uppercase;letter-spacing:.05em}
+  #lpsub{font-size:10px;color:#4d5b6d;line-height:1.5;padding:2px 2px 0}
+
+  /* sits above the collapsed loops card; hidden when that card opens */
+  #hint{position:fixed;left:12px;bottom:calc(66px + env(safe-area-inset-bottom));
+        font-size:11px;color:#3d4855;z-index:1}
+  #sheet.up ~ #hint,#loops.open ~ #hint{display:none}
+  #solid{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));
+         padding:14px 14px 12px;z-index:7;
+         transform:translateY(130%);transition:transform .22s cubic-bezier(.32,.72,0,1)}
+  #solid.up{transform:none}
+  #solidrows{font-size:11.5px;color:#8fa3ba;line-height:1.7;margin-bottom:11px}
+  #solidrows b{color:#c8d0dc;font-weight:600}
+  .btn{height:46px;display:flex;align-items:center;justify-content:center;border-radius:11px;
+       border:1.5px solid #2f7d5f;background:#12352a;color:#7fd4a8;font-size:13px;
+       font-weight:600;letter-spacing:.04em;cursor:pointer}
+  .btn:active{transform:scale(.98)}
+  /* violation toast: loud, but never blocks the view */
+  #freeze{position:fixed;top:calc(66px + env(safe-area-inset-top));left:12px;width:330px;
+          z-index:50;display:none;padding:14px 16px;border-radius:12px;
+          background:rgba(38,14,14,.96);border:1.5px solid #a83232;
+          backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.55)}
+  #freeze.on{display:block;animation:vpulse 1.1s ease-in-out infinite}
+  @keyframes vpulse{0%,100%{border-color:#a83232}50%{border-color:#ff6b6b}}
+  #fbox h3{margin:0 0 8px;color:#ff8080;font-size:13px;letter-spacing:.13em;font-weight:700}
+  #fbox p{margin:0 0 6px;color:#dcaeae;font-size:11.5px;line-height:1.55}
+  #fbox code{color:#ffc0c0}
+  #fundo{margin-top:11px;height:40px;display:flex;align-items:center;justify-content:center;
+         border-radius:9px;border:1.5px solid #2f7d5f;background:#12352a;color:#7fd4a8;
+         font-size:12px;font-weight:600;cursor:pointer;letter-spacing:.04em}
+  #exp{position:fixed;top:calc(66px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+        width:min(560px,calc(100vw - 24px));z-index:40;display:none;padding:13px 16px;
+        background:rgba(13,20,28,.96);border:1.5px solid #2f6f8f;border-radius:12px;
+        backdrop-filter:blur(10px);box-shadow:0 8px 28px rgba(0,0,0,.5)}
+  #exp.on{display:none}
+  #expname{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#5fb8d8;font-weight:700}
+  #expnow{margin-top:5px;font-size:14px;color:#e6edf5;font-weight:600;letter-spacing:.04em}
+  #expsub{margin-top:3px;font-size:11px;color:#7f93a8}
+  #expbar{margin-top:9px;height:5px;border-radius:3px;background:#1b2733;overflow:hidden}
+  #expfill{height:100%;background:#5fb8d8;width:0%;transition:width .15s linear}
+  #explog{margin-top:9px;max-height:118px;overflow:auto;font-size:11px;line-height:1.65;color:#9fb4c8}
+  #explog b{color:#7fd4a8}#explog i{color:#ff8080;font-style:normal}
+  #cross{position:fixed;left:50%;top:50%;width:13px;height:13px;margin:-7px 0 0 -7px;
+         pointer-events:none;z-index:3;opacity:.5}
+  #cross:before,#cross:after{content:'';position:absolute;background:#c8d0dc}
+  #cross:before{left:6px;top:0;width:1px;height:13px}
+  #cross:after{top:6px;left:0;height:1px;width:13px}
+</style>
+</head>
+<body>
+<div id="gl"></div>
+<div id="cross"></div>
+<div id="exp">
+  <div id="expname"></div><div id="expnow"></div><div id="expsub"></div>
+  <div id="expbar"><div id="expfill"></div></div>
+  <div id="explog"></div>
+</div>
+<div id="freeze"><div id="fbox">
+  <h3>&#9888; INVALID GEOMETRY</h3>
+  <p id="fdetail"></p>
+  <p>Edits are frozen; the camera still works. The lattice cannot hold this
+     configuration at unit edges without a sub-unit contact.</p>
+  <div id="fundo">undo &amp; continue</div>
+</div></div>
+
+<div id="top">
+  <div id="chip" class="card busy"><span id="dot"></span><span id="chiptext">…</span></div>
+  <div id="stepper" class="card">
+    <div class="step" id="minus">&minus;</div><b id="sizelab">13 cells</b><div class="step" id="plus">+</div>
+  </div>
+</div>
+
+<div id="stats" class="card"><table id="out"></table></div>
+
+<div id="sheet" class="card">
+  <div id="sheethead"><span id="sheettitle">node</span><span id="sheetsub"></span>
+    <div id="close">&times;</div></div>
+  <div id="board"></div>
+  <div class="btn" id="nodecentre" style="margin-top:10px">centre the lattice on this node</div>
+  <div id="legend">
+    <span><i style="background:#3f9e77"></i>active</span>
+    <span><i style="background:#2a3543"></i>available</span>
+    <span><i style="background:#7a2b2b"></i>blocked by packing</span>
+    <span><i style="background:#1c232c"></i>outside lattice</span>
+  </div>
+</div>
+
+<div id="solid" class="card">
+  <div id="sheethead"><span id="solidtitle">solid</span>
+    <div id="solidclose" style="margin-left:auto;width:34px;height:34px;border-radius:9px;
+      display:flex;align-items:center;justify-content:center;color:#5d6e85;font-size:19px;cursor:pointer">&times;</div></div>
+  <div id="solidrows"></div>
+  <div class="btn" id="centrebtn">centre the lattice on this solid</div>
+</div>
+
+<div id="layers" class="card">
+  <div id="lhead">layers<span id="lcaret">&#9650;</span></div>
+  <div id="lbody"></div>
+  <div class="btn" id="clear" style="margin:0 14px 12px">clear all shortcuts</div>
+</div>
+
+<div id="loops" class="card">
+  <div id="lphead">loops<span id="lpnow">no loop</span><span id="lpcaret">&#9650;</span></div>
+  <div id="lpbody">
+    <div id="lplist"></div>
+    <div class="lay" style="margin:2px 2px 8px">
+      <label>step <b id="v-pace">250 ms</b></label>
+      <input type="range" min="50" max="1000" step="25" value="250" id="s-pace">
+    </div>
+    <!-- Only shown for loops registered with {life:true}: the hadrons live a
+         fixed number of ticks and then respawn. The traversal loops end when
+         the particle leaves the lattice, so a lifespan would mean nothing. -->
+    <div class="lay" id="lplife" style="margin:2px 2px 8px;display:none">
+      <label>lifespan <b id="v-life">240 ticks</b></label>
+      <input type="range" min="40" max="2000" step="20" value="240" id="s-life">
+    </div>
+    <div class="btn" id="lppause" style="margin:2px 2px 10px;height:38px;display:none">pause</div>
+    <div id="lpsub"></div>
+  </div>
+</div>
+
+<div id="hint">WASD fly · drag look · scroll dolly · click a node</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+// ===========================================================================
+// LATTICE   integer coords x S = 1/sqrt(3)
+//   sphere  all even, sum=0 (mod 4) | oct  all even, sum=2 (mod 4) | tet  all odd
+//   base edge (+-1,+-1,+-1) -> 1     shortcut (+-2,0,0) -> 1.1547 contracted to 1
+// ===========================================================================
+// THE VOID LATTICE.  The one lattice this engine models: the substrate of
+// FD 1.1 -- minimal vectors along <111> at length 1 (base directions, always
+// present), second shell along <100> at 2/sqrt3 (shortcut candidates,
+// contractible to 1).  Shortcut candidates are listed in antipodal pairs so
+// that a^1 is the reverse of a.  Everything downstream reads these.
+//
+// The comparison families (simple cubic, and the kissing-10 stacked
+// triangular lattice) have been removed: their job was to establish that this
+// lattice is the forced choice, and that is settled in FD 1.1 section 1.8.
+const FAMILIES = {
+  void: { label:'void lattice',
+    keep:(x,y,z)=>((x&1)===(y&1))&&((y&1)===(z&1)),   // shared parity
+    scale:1/Math.sqrt(3),                              // |(1,1,1)| -> 1
+    radius:[1.45,2.75,4.05,5.30],
+    base:[[1,1,1],[1,1,-1],[1,-1,1],[1,-1,-1]],        // 8 vectors: these +-
+    hue:[0xff7a6b,0xffd166,0x6bd6a5,0x7aa8ff],         // coral amber mint periwinkle
+    sc:[[2,0,0],[-2,0,0],[0,2,0],[0,-2,0],[0,0,2],[0,0,-2]],
+    scn:['X+','X-','Y+','Y-','Z+','Z-'],
+    cls:c=>(c[0]&1)?'tet':(((c[0]+c[1]+c[2])%4===0)?'pack':'oct') }
+};
+let FAM='void', F=FAMILIES.void;
+let S=F.scale, AX=F.sc, AXN=F.scn, BASE_DIRS=F.base, BASE_HUE=F.hue, RADIUS=F.radius;
+const CLASS = c => F.cls(c);
+// canonical sign: first non-zero coordinate positive
+const dirOf=d=>{const s=(d.find(v=>v!==0)<0)?-1:1;
+  return BASE_DIRS.findIndex(b=>b[0]===d[0]*s&&b[1]===d[1]*s&&b[2]===d[2]*s);};
+const TOL = 1e-6;
+// Solver patience. A FALSE 'illegal' is invisible -- it looks exactly like a
+// real violation -- so the plateau test must be strict and the budget must
+// grow with the lattice. Legal configurations exit early on convergence and
+// pay none of this; only genuine violations run the full budget.
+let BAIL_REL = 1e-7, BAIL_N = 40;
+let SWEEPS = 26000;
+const budgetFor = () => Math.max(26000, Math.round(260 * (BASE.length + REP.length) ** 0.5));
+let NODE=[], KEY=new Map(), BASE=[], REP=[], SCOPT=new Map(), REST=[];
+let shells=1, nCells=13;
+
+// A BALL of lattice, centred on LCENTER, so the boundary is equidistant from
+// whatever solid we are studying.  Node set = all integer points whose three
+// coordinates share a parity: that is exactly a BCC lattice of cubic cell 2.
+let LCENTER=[0,0,0];
+// Integer coordinates -> a point in space. Families with an explicit BASIS
+// (a general lattice, not describable as a filtered cubic grid) map through
+// that basis; the others keep the ambient cubic frame scaled by S.
+function posOf(c){
+  const B=F.basis;
+  return B ? new THREE.Vector3(
+      c[0]*B[0][0]+c[1]*B[1][0]+c[2]*B[2][0],
+      c[0]*B[0][1]+c[1]*B[1][1]+c[2]*B[2][1],
+      c[0]*B[0][2]+c[1]*B[1][2]+c[2]*B[2][2])
+    : new THREE.Vector3(c[0]*S,c[1]*S,c[2]*S);
+}
+const dFromCentre=(c,c0)=>F.basis
+  ? posOf(c).distanceTo(posOf(c0))
+  : Math.hypot(c[0]-c0[0],c[1]-c0[1],c[2]-c0[2])*S;
+function buildLattice(sh){
+  const R=RADIUS[sh], c0=LCENTER, Ri=Math.ceil(R/S)+2;
+  NODE=[];KEY=new Map();
+  for(let x=Math.floor(c0[0])-Ri;x<=Math.ceil(c0[0])+Ri;x++)
+   for(let y=Math.floor(c0[1])-Ri;y<=Math.ceil(c0[1])+Ri;y++)
+    for(let z=Math.floor(c0[2])-Ri;z<=Math.ceil(c0[2])+Ri;z++){
+      if(!F.keep(x,y,z)) continue;
+      if(dFromCentre([x,y,z],c0)>R) continue;
+      KEY.set(x+','+y+','+z,NODE.length);NODE.push([x,y,z]);
+    }
+  BASE=[];REP=[];SCOPT=new Map();
+  // minimal vectors: each base direction and its negation
+  const offM=[]; for(const d of BASE_DIRS){offM.push(d);offM.push([-d[0],-d[1],-d[2]]);}
+  NODE.forEach((c,i)=>{
+    for(const d of offM){const j=KEY.get([c[0]+d[0],c[1]+d[1],c[2]+d[2]].join(','));
+      if(j!==undefined&&i<j)BASE.push([i,j,dirOf(d)]);}
+    AX.forEach((d,a)=>{const j=KEY.get([c[0]+d[0],c[1]+d[1],c[2]+d[2]].join(','));
+      if(j!==undefined)SCOPT.set(i+':'+a,j);});
+  });
+  // every non-base pair repels; no distance cutoff
+  const isBase=new Set(BASE.map(([i,j])=>i*1e6+j));
+  for(let i=0;i<NODE.length;i++)for(let j=i+1;j<NODE.length;j++)
+    if(!isBase.has(i*1e6+j))REP.push([i,j]);
+  REST=NODE.map(posOf);
+  nCells=NODE.length;
+}
+
+// ===========================================================================
+// SOLVER + CACHE
+// ===========================================================================
+const active=new Map();
+let P=[], resid={base:0,sc:0,minSep:1}, job=null, queue=[];
+// LRU_MAX is a MEMORY guard, not a cache-size policy: each record holds every
+// node position, ~4KB at 339 nodes. It was 600, which quietly threw away a
+// persisted cache on every reload -- the loader read all 11k rows from IDB and
+// then the first new solve trimmed straight back down to 600. Keeping ~5k is
+// about 20MB and preserves the warm cache that makes a crossing instant.
+const LRU=new Map(); const LRU_MAX=5000;
+let hits=0, idb=null, idbDirty=false, idbTimer=null;
+const LRU_DIRTY=new Set();          // only these need writing back
+const keyOf=pairs=>FAM+'/'+shells+'@'+LCENTER.join(',')+'|'+pairs.map(([i,j])=>[Math.min(i,j),Math.max(i,j)])
+  .sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(p=>p[0]+':'+p[1]).join(',');
+indexedDB.open('fd-lattice',3).onupgradeneeded=e=>{const db=e.target.result;
+  if(db.objectStoreNames.contains('solves'))db.deleteObjectStore('solves');
+  db.createObjectStore('solves');};
+(function(){const rq=indexedDB.open('fd-lattice',3);
+ rq.onsuccess=e=>{idb=e.target.result;
+   try{idb.transaction('solves','readonly').objectStore('solves').getAll()
+     .onsuccess=ev=>{const all=ev.target.result||[];
+       // Load at most LRU_MAX so the very first remember() has nothing to evict.
+       for(const r of all.slice(-LRU_MAX)) LRU.set(r.k,r);};}catch(_){}};})();
+function idbSave(){ if(!idb||!idbDirty)return;
+  try{const st=idb.transaction('solves','readwrite').objectStore('solves');
+    // Write only what changed. Re-putting all 5k records on every flush made
+    // the save cost grow with the cache and stall the frame that triggered it.
+    for(const k of LRU_DIRTY){const r=LRU.get(k); if(r) st.put({k,xyz:r.xyz,resid:r.resid},k);}
+    LRU_DIRTY.clear();}catch(_){}
+  idbDirty=false; }
+// beforeunload alone is unreliable for async IDB -- the transaction is often
+// killed before it commits. pagehide/hidden fire earlier and more dependably.
+addEventListener('beforeunload',idbSave);
+addEventListener('pagehide',idbSave);
+addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')idbSave();});
+// A rejected promise with no handler used to look exactly like a run that
+// finished quietly. It must not: surface it on the chip and in the console.
+window._LASTERR=null;
+addEventListener('unhandledrejection',e=>{
+  window._LASTERR=(e.reason&&(e.reason.stack||e.reason.message))||String(e.reason);
+  console.error('UNHANDLED REJECTION:',window._LASTERR);
+  const t=document.getElementById('chiptext'), c=document.getElementById('chip');
+  if(t){t.textContent='SCRIPT ERROR - see console';}
+  if(c){c.className='card bad';}
+});
+let idbLastSave=0;
+function remember(k,rec){LRU.delete(k);LRU.set(k,rec);LRU_DIRTY.add(k);
+  while(LRU.size>LRU_MAX){const ev=LRU.keys().next().value;LRU.delete(ev);LRU_DIRTY.delete(ev);}
+  idbDirty=true;
+  // Debounce WITH A CEILING. The old code reset the timer on every solve, so
+  // during a continuous run the flush never fired at all and a refresh lost
+  // everything since the last idle second.
+  const now=performance.now();
+  if(now-idbLastSave>8000){idbLastSave=now;clearTimeout(idbTimer);idbSave();return;}
+  clearTimeout(idbTimer);
+  idbTimer=setTimeout(()=>{idbLastSave=performance.now();idbSave();},2000);}
+const legal=r=>r.base<TOL&&r.sc<TOL&&r.minSep>1-TOL;
+// INTEGRITY: the key of the solve whose positions are currently loaded. If it
+// stops matching the live shortcut set, the drawn geometry and every number in
+// the readout belong to a DIFFERENT configuration and must not be reported as
+// a verdict on this one.
+let LOADEDKEY=null;
+const stale=()=>LOADEDKEY!==null&&LOADEDKEY!==keyOf([...active.values()]);
+
+// =========================================================================
+// EXPERIMENT RUNNER.  Every batch must go through this, so it is always
+// visible: the lattice re-renders each step and the HUD names what is being
+// tested. Driving restate() in a loop without it is refused below.
+// =========================================================================
+let EXP={on:false,name:'',i:0,n:0,label:'',rows:[]};
+let EXP_DWELL=0;
+function expUI(){
+  const e=document.getElementById('exp');
+  e.classList.toggle('on',EXP.on);
+  if(!EXP.on) return;
+  document.getElementById('expname').textContent=EXP.name;
+  document.getElementById('expnow').textContent=EXP.label;
+  document.getElementById('expsub').textContent=`step ${EXP.i} of ${EXP.n}`;
+  document.getElementById('expfill').style.width=(100*EXP.i/EXP.n)+'%';
+  document.getElementById('explog').innerHTML=
+    EXP.rows.slice(-40).reverse().map(r=>r.html||r).join('<br>');
+  document.getElementById('explog').scrollTop=0;
+}
+function settle(ms){ms=ms||180000;return new Promise(res=>{const t=performance.now();
+  (function chk(){ if((!job&&!queue.length)||performance.now()-t>ms) return res();
+    setTimeout(chk,40);})();});}
+async function runExperiment(name,items,apply,record,opts){
+  opts=opts||{};
+  EXP={on:true,name,i:0,n:items.length,label:'',rows:[]}; expUI();
+  for(const it of items){
+    const t0=performance.now();
+    EXP.i++; EXP.label=it.label!==undefined?String(it.label):String(it); expUI();
+    apply(it); lastChange=EXP.label;
+    select(null); restate();
+    await settle();
+    const r=record(it); EXP.rows.push(r); expUI();
+    if(FROZEN){ if(opts.onFreeze){opts.onFreeze();}
+      else {active.clear();freezeOff();restate();await settle();} }
+    // opts.pace = MINIMUM milliseconds per item, for animations that would
+    // otherwise run at cache speed. A function is re-read every item so a
+    // slider can change the pace mid-run. It never makes a step shorter, so it
+    // cannot hurry the solver or skip anything.
+    if(opts.pace){ const p=typeof opts.pace==='function'?opts.pace():opts.pace;
+      const w=p-(performance.now()-t0);
+      if(w>0) await new Promise(res=>setTimeout(res,w)); }
+    // Pause gate. Every loop passes through here once per item, so holding here
+    // holds all of them without the engine knowing what any loop is. settle()
+    // has already returned at this point, so a pause can never interrupt a
+    // constraint solve or leave the lattice half-relaxed.
+    while(LOOPPAUSE) await new Promise(res=>setTimeout(res,80));
+  }
+  EXP.on=false; expUI();
+  return EXP.rows;
+}
+
+// =========================================================================
+// BRIDGE SWEEP  (FD 1.1)
+//
+// A GLOBAL contraction: a second-shell direction is contracted at EVERY node
+// at once, not at one selected site.  This is the translation-equivariant
+// deformation -- the flux event happening everywhere, which is what a lattice
+// deformation actually is.
+//
+// Because the contact graph is undirected, activating direction u forces -u
+// as well, so the choice is over ANTIPODAL PAIRS of the second shell, not
+// over individual vectors.  With |M| minimal vectors, reaching a 12-shell
+// needs (12-|M|)/2 pairs chosen out of |N|/2.
+//   BCC : |M|=8, |N|=6  ->  choose 2 of 3  ->  C(3,2) = 3
+//   SC  : |M|=6, |N|=12 ->  choose 3 of 6  ->  C(6,3) = 20
+// =========================================================================
+const PAIRS=()=>{const p=[];for(let a=0;a<AXN.length;a+=2)p.push(a);return p;};
+function setGlobalSC(dirs){            // dirs = array of even axis indices
+  active.clear();
+  const seen=new Set();
+  for(const [k,j] of SCOPT){
+    const [i,a]=k.split(':').map(Number);
+    if(!dirs.includes(a&~1)) continue;            // this antipodal pair chosen?
+    const pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid)) continue;                   // u and -u are one edge
+    seen.add(pid); active.set(k,[i,j]);
+  }
+}
+function choose(arr,k){ if(k===0)return[[]]; if(arr.length<k)return[];
+  const [h,...t]=arr; return choose(t,k-1).map(c=>[h,...c]).concat(choose(t,k)); }
+
+// =========================================================================
+// SUBLATTICE (SHUFFLE) SWEEP  --  the HCP side of FD 1.1
+//
+// A contraction equivariant under ALL of L can only ever produce a lattice,
+// and HCP is NOT a lattice (it is a lattice with a 2-point basis).  So the
+// deformation must commute only with a finite-index SUBLATTICE: contract a
+// different subset on each coset.  That is exactly the "shuffle" half of the
+// Burgers path.
+//
+// Index 2 is the smallest such weakening, and there are exactly 7 index-2
+// sublattices of a rank-3 lattice -- one per nonzero element of Hom(L,Z/2).
+// Each is a linear functional on the coefficients of a lattice BASIS, so we
+// must express nodes in the basis first (NOT in raw integer coordinates: for
+// BCC those give only 2 distinct partitions instead of 7).
+// =========================================================================
+let BINV=null;
+function basisInverse(){                       // rows of B = first 3 base dirs
+  const b=BASE_DIRS.slice(0,3);
+  const det=b[0][0]*(b[1][1]*b[2][2]-b[1][2]*b[2][1])
+           -b[0][1]*(b[1][0]*b[2][2]-b[1][2]*b[2][0])
+           +b[0][2]*(b[1][0]*b[2][1]-b[1][1]*b[2][0]);
+  if(!det) throw new Error('first three base directions are not independent');
+  const co=(r,c)=>{const m=[0,1,2].filter(x=>x!==r),k=[0,1,2].filter(x=>x!==c);
+    return ((r+c)%2?-1:1)*(b[m[0]][k[0]]*b[m[1]][k[1]]-b[m[0]][k[1]]*b[m[1]][k[0]]);};
+  const inv=[[0,0,0],[0,0,0],[0,0,0]];         // inv = adj(B)/det, applied as n = inv * c
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++) inv[r][c]=co(c,r)/det;
+  return inv;
+}
+function coeffs(c){                            // node integer coords -> basis coefficients
+  const n=[0,1,2].map(r=>BINV[r][0]*c[0]+BINV[r][1]*c[1]+BINV[r][2]*c[2]);
+  const ri=n.map(Math.round);
+  if(ri.some((v,i)=>Math.abs(v-n[i])>1e-9))
+    throw new Error('node '+c+' is not an integer combination of the basis');
+  return ri;
+}
+const cosetOf=(c,fn)=>{const n=coeffs(c);return ((n[0]*fn[0]+n[1]*fn[1]+n[2]*fn[2])%2+2)%2;};
+
+// S = [set0, set1]: the second-shell vectors contracted on each coset.
+//
+// `pairs` MUST be false to look for HCP.  Restricting a coset to whole
+// antipodal pairs makes S closed under negation, which makes the constraint
+// set inversion-symmetric about every node, which forces a centrally
+// symmetric shell -- i.e. the cuboctahedron, every time.  An orthobicupola
+// requires an S that is NOT closed under negation (e.g. X+ X- Y+ Z+).
+function setCosetSC(fn,S,pairs){
+  active.clear(); const seen=new Set();
+  for(const [k,j] of SCOPT){
+    const [i,a]=k.split(':').map(Number);
+    if(!S[cosetOf(NODE[i],fn)].includes(pairs?(a&~1):a)) continue;
+    const pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid)) continue;
+    seen.add(pid); active.set(k,[i,j]);
+  }
+}
+const subsets=arr=>arr.reduce((acc,x)=>acc.concat(acc.map(s=>[...s,x])),[[]]);
+
+async function shuffleSweep(pairs){
+  BINV=basisInverse();
+  const FN=[[1,0,0],[0,1,0],[0,0,1],[1,1,0],[1,0,1],[0,1,1],[1,1,1]];  // all 7
+  // pairs=false: every subset of the INDIVIDUAL second-shell vectors, so a
+  // coset may break inversion symmetry.  This is the only setting that can
+  // produce an orthobicupola.
+  const SS=subsets(pairs?PAIRS():AXN.map((_,a)=>a));
+  const items=[];
+  for(const fn of FN) for(const A of SS) for(const B of SS)
+    items.push({fn,S:[A,B],label:`f${fn.join('')} | ${A.map(a=>AXN[a]).join(',')||'-'} / ${B.map(a=>AXN[a]).join(',')||'-'}`});
+  const rows=await runExperiment(
+    `${F.label}: index-2 shuffle, ${FN.length}x${SS.length}x${SS.length} = ${items.length}`,
+    items, it=>setCosetSC(it.fn,it.S,pairs),
+    it=>{ const ok=legal(resid), st=MEAS.stack||{};
+      const hcp=Object.keys(st).some(k=>k.indexOf('HCP')>=0);
+      const tags=Object.entries(st).map(([k,v])=>`${k}:${v}`).join(' ')||'none';
+      const html=`${ok?'<span style="color:#7fd4a8">LEGAL</span>':'<span style="color:#ff5c5c">ILLEGAL</span>'}`
+        +`${hcp?' <b style="color:#ffd166">HCP</b>':''} ${it.label} &nbsp; ${tags}`;
+      return {html,label:it.label,legal:ok,hcp,minSep:resid.minSep,n12:MEAS.sampled,stack:{...st}}; });
+  active.clear(); freezeOff(); restate();
+  const hit=rows.filter(r=>r.legal&&r.hcp);
+  console.log('SHUFFLE SWEEP',FAM,'legal:',rows.filter(r=>r.legal).length,'/',rows.length,
+              'with HCP:',hit.length, JSON.stringify(hit.map(r=>r.label),null,1));
+  return rows;
+}
+
+// =========================================================================
+// POSITION SWEEP
+//
+// How far do the true R^3 coordinates of a node actually move as the flux
+// configuration changes?  Captures the relaxed vacuum, then a series of
+// configurations, and reports the displacement field of each against it.
+//
+// Reported per configuration: mean / RMS / max displacement in units of the
+// base edge (= 1), the mean displacement VECTOR (should vanish if the response
+// is unbiased), and the eigenvalues of the displacement covariance (equal
+// eigenvalues = isotropic response, no preferred direction).
+// =========================================================================
+let _psSeed=12345;
+const _psRand=()=>{_psSeed=(_psSeed*1103515245+12345)&0x7fffffff; return _psSeed/0x7fffffff;};
+
+function _psStats(V){
+  const n=P.length, mean=new THREE.Vector3(); let s2=0, max=0; const D=[];
+  for(let i=0;i<n;i++){const d=P[i].clone().sub(V[i]); D.push(d); mean.add(d);
+    const L=d.length(); s2+=L*L; if(L>max)max=L;}
+  mean.divideScalar(n);
+  // covariance of the displacement field
+  const C=[[0,0,0],[0,0,0],[0,0,0]];
+  for(const d of D){const a=[d.x,d.y,d.z];
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++)C[r][c]+=a[r]*a[c];}
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++)C[r][c]/=n;
+  // symmetric 3x3 eigenvalues via characteristic polynomial (Cardano)
+  const p1=C[0][1]**2+C[0][2]**2+C[1][2]**2;
+  const q=(C[0][0]+C[1][1]+C[2][2])/3;
+  const p2=(C[0][0]-q)**2+(C[1][1]-q)**2+(C[2][2]-q)**2+2*p1;
+  const pp=Math.sqrt(Math.max(p2,0)/6)||1e-300;
+  const B=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let r=0;r<3;r++)for(let c=0;c<3;c++)B[r][c]=(C[r][c]-(r===c?q:0))/pp;
+  const detB=B[0][0]*(B[1][1]*B[2][2]-B[1][2]*B[2][1])
+            -B[0][1]*(B[1][0]*B[2][2]-B[1][2]*B[2][0])
+            +B[0][2]*(B[1][0]*B[2][1]-B[1][1]*B[2][0]);
+  const phi=Math.acos(Math.max(-1,Math.min(1,detB/2)))/3;
+  const e1=q+2*pp*Math.cos(phi), e3=q+2*pp*Math.cos(phi+2*Math.PI/3), e2=3*q-e1-e3;
+  return {rms:Math.sqrt(s2/n), mean:mean.length(), max,
+          meanVec:[mean.x,mean.y,mean.z].map(x=>+x.toFixed(6)),
+          eig:[e1,e2,e3].sort((a,b)=>b-a).map(x=>+Math.sqrt(Math.max(x,0)).toFixed(6))};
+}
+
+function _psRandomConfig(prob){
+  active.clear(); const seen=new Set();
+  for(const [k,j] of SCOPT){
+    if(_psRand()>prob) continue;
+    const i=+k.split(':')[0], pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid)) continue; seen.add(pid); active.set(k,[i,j]);
+  }
+}
+
+async function positionSweep(nRandom, prob){
+  nRandom=nRandom||8; prob=prob||0.12;
+  _psSeed=12345;
+  active.clear(); restate(); await settle();
+  const V=P.map(v=>v.clone());                      // relaxed vacuum reference
+  const items=[];
+  for(let t=0;t<nRandom;t++) items.push({kind:'rand',label:`random p=${prob} #${t+1}`});
+  items.push({kind:'mode', s:[0,2], label:'global flux mode XY'});
+  items.push({kind:'mode', s:[0,4], label:'global flux mode XZ'});
+  items.push({kind:'site', label:'single site, 4 shortcuts'});
+  const rows=await runExperiment('position sweep: how far do coordinates move?',
+    items,
+    it=>{ if(it.kind==='rand') _psRandomConfig(prob);
+          else if(it.kind==='mode') setGlobalSC(it.s);
+          else { active.clear(); const c=KEY.get(LCENTER.join(','));
+                 for(const a of [0,1,2,4]){const k=c+':'+a,j=SCOPT.get(k);
+                   if(j!==undefined)active.set(k,[c,j]);} } },
+    it=>{ const ok=legal(resid), st=ok?_psStats(V):null;
+      const html=`${ok?'<span style="color:#7fd4a8">LEGAL</span>':'<span style="color:#ff5c5c">ILLEGAL</span>'} `
+        +`${it.label} &nbsp; sc=${active.size}`
+        +(st?` &nbsp; rms=${st.rms.toFixed(4)} max=${st.max.toFixed(4)} oct=${solids.octs.length}`:'');
+      return {html,label:it.label,legal:ok,sc:active.size,
+              octs:solids.octs.length,tets:solids.tets.length,stats:st}; });
+  active.clear(); freezeOff(); restate();
+  console.log('POSITION SWEEP', JSON.stringify(rows.map(r=>({cfg:r.label,legal:r.legal,
+    sc:r.sc,oct:r.octs,rms:r.stats&&+r.stats.rms.toFixed(5),
+    max:r.stats&&+r.stats.max.toFixed(5),eig:r.stats&&r.stats.eig})),null,1));
+  return rows;
+}
+
+// =========================================================================
+// ACCRETION SWEEP
+//
+// Build a dense LEGAL configuration the way the dynamics actually would: add
+// one shortcut at a time, keep it only if the vacuum accepts it, revert if not.
+// Random whole-configurations are almost never legal; this finds the states the
+// substrate can really reach, and reports how far coordinates have moved at
+// each flux density.
+// =========================================================================
+async function accretionSweep(attempts,seed){
+  attempts=attempts||160; _psSeed=seed||987654321;
+  active.clear(); restate(); await settle();
+  const V=P.map(v=>v.clone());
+
+  // one entry per undirected shortcut edge
+  const edges=[]; const seen=new Set();
+  for(const [k,j] of SCOPT){ const i=+k.split(':')[0];
+    const pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid))continue; seen.add(pid); edges.push([k,i,j]); }
+  for(let n=edges.length-1;n>0;n--){const m=Math.floor(_psRand()*(n+1));
+    [edges[n],edges[m]]=[edges[m],edges[n]];}
+
+  let cursor=0, lastKey=null, acc=0, rej=0, rejRun=0, _wasUnit=false, _needResolve=false, _noop=0;
+  const trail=[];
+  const items=Array.from({length:Math.min(attempts,edges.length)},(_,k)=>({k}));
+
+  await runExperiment(`accretion: one shortcut at a time (${edges.length} edges available)`,
+    items,
+    () => { lastKey=null;
+      if(cursor>=edges.length) return;
+      const [k,i,j]=edges[cursor++];
+      // was this pair ALREADY at unit length?  then the constraint is a no-op
+      _wasUnit = Math.abs(P[i].distanceTo(P[j])-1) < 1e-6;
+      active.set(k,[i,j]); lastKey=k; },
+    () => { const ok=legal(resid);
+      if(lastKey===null) return {html:'exhausted',skip:true};
+      if(!ok){ active.delete(lastKey); rej++; rejRun++; freezeOff(); _needResolve=true;
+        return {html:`<span style="color:#ff5c5c">reject</span> `
+          +`&nbsp; kept=${active.size} &nbsp; rejected=${rej}`,
+          accepted:false, sc:active.size}; }
+      acc++; rejRun=0;
+      const st=_psStats(V);
+      if(_wasUnit) _noop++;
+      trail.push({sc:active.size, rms:+st.rms.toFixed(5), max:+st.max.toFixed(5),
+                  eig:st.eig, meanVec:st.meanVec, noop:_wasUnit,
+                  minSep:+resid.minSep.toFixed(9),
+                  oct:solids.octs.length, tet:solids.tets.length});
+      return {html:`<span style="color:#7fd4a8">accept</span> `
+        +`&nbsp; kept=${active.size} &nbsp; rms=${st.rms.toFixed(4)} `
+        +`max=${st.max.toFixed(4)} &nbsp; oct=${solids.octs.length}`,
+        accepted:true, sc:active.size, stats:st, noop:_wasUnit,
+        oct:solids.octs.length, tet:solids.tets.length}; },
+    {onFreeze:()=>{ freezeOff(); }});
+
+  restate(); await settle();
+  window._ACC={accepted:acc, rejected:rej, noop:_noop, finalSC:active.size,
+               edgesAvailable:edges.length, trail};
+  console.log('ACCRETION', JSON.stringify(window._ACC,null,1));
+  return window._ACC;
+}
+
+// =========================================================================
+// FLUX-MODE ORIENTATION CORRELATION
+//
+// Each node's local light cone is set by the second-moment tensor of its own
+// direction set (8 base + whichever shortcuts are active there).  In the
+// vacuum that tensor is (8/3)I -- isotropic, no axis.  A flux mode makes it
+// diag(8/3,14/3,14/3): one anomalous eigenvalue, whose eigenvector is the
+// distinguished axis of that node.
+//
+// The anisotropy of \S2.2 averages away only if those axes DECORRELATE.  This
+// measures the nematic correlation C(r) = 3<cos^2 theta> - 1 between node
+// axes at separation r: 1 = aligned, 0 = uncorrelated, -1/2 = perpendicular.
+// =========================================================================
+function _nodeAxis(i){
+  // local direction set: base neighbours + active shortcuts at this node
+  const dirs=[];
+  for(const d of BASE_DIRS){ dirs.push(d); dirs.push([-d[0],-d[1],-d[2]]); }
+  for(let a=0;a<AXN.length;a++){
+    const k=i+':'+a, j=SCOPT.get(k);
+    if(j===undefined) continue;
+    const back=j+':'+(a^1);
+    if(active.has(k)||active.has(back)) dirs.push(AX[a]);
+  }
+  // second-moment tensor of the unit directions
+  const M=[[0,0,0],[0,0,0],[0,0,0]];
+  for(const d of dirs){ const n=Math.hypot(d[0],d[1],d[2]);
+    const u=[d[0]/n,d[1]/n,d[2]/n];
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++) M[r][c]+=u[r]*u[c]; }
+  // symmetric eigen-decomposition by Jacobi
+  let V=[[1,0,0],[0,1,0],[0,0,1]], A=M.map(r=>r.slice());
+  for(let s=0;s<64;s++){
+    let p=0,q=1,mx=Math.abs(A[0][1]);
+    for(let r=0;r<3;r++)for(let c=r+1;c<3;c++)
+      if(Math.abs(A[r][c])>mx){mx=Math.abs(A[r][c]);p=r;q=c;}
+    if(mx<1e-12) break;
+    const th=0.5*Math.atan2(2*A[p][q],A[q][q]-A[p][p]),
+          cs=Math.cos(th), sn=Math.sin(th);
+    const R=[[1,0,0],[0,1,0],[0,0,1]];
+    R[p][p]=cs;R[q][q]=cs;R[p][q]=sn;R[q][p]=-sn;
+    const T=[[0,0,0],[0,0,0],[0,0,0]];
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++)
+      T[r][c]=R[0][r]*(A[0][0]*R[0][c]+A[0][1]*R[1][c]+A[0][2]*R[2][c])
+             +R[1][r]*(A[1][0]*R[0][c]+A[1][1]*R[1][c]+A[1][2]*R[2][c])
+             +R[2][r]*(A[2][0]*R[0][c]+A[2][1]*R[1][c]+A[2][2]*R[2][c]);
+    A=T;
+    const W=[[0,0,0],[0,0,0],[0,0,0]];
+    for(let r=0;r<3;r++)for(let c=0;c<3;c++)
+      W[r][c]=V[r][0]*R[0][c]+V[r][1]*R[1][c]+V[r][2]*R[2][c];
+    V=W;
+  }
+  const ev=[A[0][0],A[1][1],A[2][2]], mean=(ev[0]+ev[1]+ev[2])/3;
+  let bi=0; for(let r=1;r<3;r++) if(Math.abs(ev[r]-mean)>Math.abs(ev[bi]-mean)) bi=r;
+  const spread=Math.max(...ev)-Math.min(...ev);
+  return {axis:[V[0][bi],V[1][bi],V[2][bi]], spread, nsc:dirs.length-2*BASE_DIRS.length};
+}
+
+function modeCorrelation(maxR){
+  maxR=maxR||6;
+  const A=[], P0=[];
+  for(let i=0;i<NODE.length;i++){
+    const a=_nodeAxis(i);
+    if(a.spread<1e-6) continue;                  // isotropic node: no axis
+    A.push(a.axis); P0.push(NODE[i]);
+  }
+  const bins={}, dirBins={x:{},y:{},z:{}};
+  for(let a=0;a<A.length;a++)for(let b=a+1;b<A.length;b++){
+    const dx=(P0[b][0]-P0[a][0])*S, dy=(P0[b][1]-P0[a][1])*S, dz=(P0[b][2]-P0[a][2])*S;
+    const r=Math.hypot(dx,dy,dz); if(r>maxR) continue;
+    const c=A[a][0]*A[b][0]+A[a][1]*A[b][1]+A[a][2]*A[b][2];
+    const val=3*c*c-1;                           // nematic: 1 aligned, 0 random
+    const k=Math.round(r*2)/2;
+    (bins[k]=bins[k]||[]).push(val);
+    const ax=Math.abs(dx)>Math.abs(dy)&&Math.abs(dx)>Math.abs(dz)?'x'
+            :(Math.abs(dy)>Math.abs(dz)?'y':'z');
+    (dirBins[ax][k]=dirBins[ax][k]||[]).push(val);
+  }
+  const mean=a=>a.reduce((s,x)=>s+x,0)/a.length;
+  const curve=Object.keys(bins).map(Number).sort((a,b)=>a-b)
+    .filter(k=>bins[k].length>=8)
+    .map(k=>({r:k, C:+mean(bins[k]).toFixed(4), n:bins[k].length}));
+  const perDir={};
+  for(const ax of ['x','y','z'])
+    perDir[ax]=Object.keys(dirBins[ax]).map(Number).sort((a,b)=>a-b)
+      .filter(k=>dirBins[ax][k].length>=8)
+      .map(k=>({r:k,C:+mean(dirBins[ax][k]).toFixed(4)}));
+  return {axedNodes:A.length, totalNodes:NODE.length, curve, perDir};
+}
+
+// =========================================================================
+// CORRELATION STUDY: repeat accretion across seeds and aggregate.
+// Also records the GLOBAL axis histogram -- if one cube axis is preferred
+// across the whole lattice, that is a global distinguished direction and no
+// amount of short-range decorrelation removes it.
+// =========================================================================
+function _axisHistogram(){
+  const h={x:0,y:0,z:0}; let n=0;
+  for(let i=0;i<NODE.length;i++){
+    const a=_nodeAxis(i); if(a.spread<1e-6) continue;
+    const v=a.axis.map(Math.abs);
+    h[v[0]>=v[1]&&v[0]>=v[2]?'x':(v[1]>=v[2]?'y':'z')]++; n++;
+  }
+  return {n, frac:{x:+(h.x/n).toFixed(4), y:+(h.y/n).toFixed(4), z:+(h.z/n).toFixed(4)}};
+}
+
+async function correlationStudy(seeds, attempts, maxR){
+  const out=[];
+  for(const s of seeds){
+    await accretionSweep(attempts||200, s);
+    const m=modeCorrelation(maxR||6), h=_axisHistogram();
+    out.push({seed:s, sc:active.size, axed:m.axedNodes, curve:m.curve,
+              perDir:m.perDir, axisFrac:h.frac});
+    console.log(`seed ${s}: ${active.size} shortcuts, C(1)=${(m.curve[0]||{}).C}`);
+  }
+  // aggregate
+  const agg={};
+  for(const o of out) for(const p of o.curve) (agg[p.r]=agg[p.r]||[]).push(p.C);
+  const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  const sd=a=>{const m=mean(a);return Math.sqrt(a.reduce((s,x)=>s+(x-m)**2,0)/Math.max(1,a.length-1));};
+  const summary=Object.keys(agg).map(Number).sort((a,b)=>a-b)
+    .map(r=>({r, C:+mean(agg[r]).toFixed(4), sd:+sd(agg[r]).toFixed(4), seeds:agg[r].length}));
+  const ax=['x','y','z'].map(k=>+mean(out.map(o=>o.axisFrac[k])).toFixed(4));
+  window._CORR={nodes:NODE.length, perSeed:out, summary, meanAxisFrac:{x:ax[0],y:ax[1],z:ax[2]}};
+  console.log('CORRELATION STUDY', JSON.stringify(window._CORR.summary,null,1));
+  return window._CORR;
+}
+
+// =========================================================================
+// FLUX DYNAMICS  --  add AND sever.
+//
+// Accretion alone is monotone: it walks one path until nothing further fits
+// and freezes there, which samples a trajectory rather than an ensemble.  Real
+// flux both creates and destroys shortcuts.  Each step here proposes either an
+// addition (accepted only if the vacuum permits it) or a severance (always
+// permitted -- dropping an equality constraint cannot violate packing, since a
+// pair at exactly 1 still satisfies >= 1).  The density equilibrates at a value
+// set by pAdd; measurements are taken after burn-in.
+// =========================================================================
+async function fluxDynamics(steps, pAdd, seed, burn, every){
+  steps=steps||300; pAdd=pAdd||0.55; _psSeed=seed||1234567; burn=burn||120; every=every||30;
+  active.clear(); restate(); await settle();
+
+  const edges=[]; const seen=new Set();
+  for(const [k,j] of SCOPT){ const i=+k.split(':')[0];
+    const pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid))continue; seen.add(pid); edges.push([k,i,j]); }
+
+  let acc=0, rej=0, sev=0, lastKey=null, mode='';
+  const trace=[], samples=[];
+  const items=Array.from({length:steps},(_,k)=>({k}));
+
+  await runExperiment(`flux dynamics: add/sever, pAdd=${pAdd}, seed=${seed||1234567}`,
+    items,
+    () => { lastKey=null;
+      const doAdd = active.size===0 || _psRand()<pAdd;
+      if(doAdd){
+        const free=edges.filter(([k,i,j])=>!active.has(k)&&!active.has(j+':'+(+k.split(':')[1]^1)));
+        if(!free.length){mode='full';return;}
+        const [k,i,j]=free[Math.floor(_psRand()*free.length)];
+        active.set(k,[i,j]); lastKey=k; mode='add';
+      } else {
+        const ks=[...active.keys()];
+        const k=ks[Math.floor(_psRand()*ks.length)];
+        active.delete(k); mode='sever'; sev++;
+      } },
+    (it) => { const ok=legal(resid);
+      if(mode==='add'){
+        if(!ok){ active.delete(lastKey); rej++; freezeOff();
+          return {html:`<span style="color:#ff5c5c">add rejected</span> &nbsp; n=${active.size}`,
+                  step:it.k,n:active.size,kind:'rej'}; }
+        acc++;
+      }
+      trace.push(active.size);
+      if(it.k>=burn && (it.k-burn)%every===0){
+        samples.push(window._SAMPLER
+          ? Object.assign({step:it.k, n:active.size}, window._SAMPLER())
+          : {step:it.k, n:active.size,
+             corr:modeCorrelation(6), axis:_axisHistogram().frac});
+      }
+      return {html:`<span style="color:#7fd4a8">${mode}</span> &nbsp; n=${active.size}`
+              +(samples.length&&it.k>=burn&&(it.k-burn)%every===0?' &nbsp; <b>sampled</b>':''),
+              step:it.k,n:active.size,kind:mode}; },
+    {onFreeze:()=>{ freezeOff(); }});
+
+  restate(); await settle();
+  const tail=trace.slice(burn);
+  const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  window._FD={steps,pAdd,seed:seed||1234567,accepted:acc,rejected:rej,severed:sev,
+    equilibriumN:+mean(tail).toFixed(1),
+    nRange:[Math.min(...tail),Math.max(...tail)],
+    samples};
+  console.log('FLUX DYNAMICS',JSON.stringify({n:window._FD.equilibriumN,
+    range:window._FD.nRange,samples:samples.length},null,1));
+  return window._FD;
+}
+
+// =========================================================================
+// MODE CENSUS  --  a flux mode is carried by a SOLID, not by a node.
+//
+// A tetrahedron has two shortcuts, always on two distinct (hence orthogonal)
+// axes: it picks out exactly one coordinate plane, i.e. one flux mode, at a
+// cost of two shortcuts.  An octahedron completes the same plane with four
+// shortcuts in a closed 4-cycle, two at each of four vertices.  Both therefore
+// carry a mode label in {XY, XZ, YZ}, and it is those labels whose spatial
+// correlation determines whether the anisotropy averages away.
+// =========================================================================
+const _AXOF = d => (d[0]?'X':(d[1]?'Y':'Z'));
+function _scPairs(){                       // active shortcuts as [i,j,axis]
+  const out=[], seen=new Set();
+  for(const [k,v] of active){
+    const i=v[0], j=v[1], pid=Math.min(i,j)+'-'+Math.max(i,j);
+    if(seen.has(pid)) continue; seen.add(pid);
+    const a=+k.split(':')[1];
+    out.push([i,j,_AXOF(AX[a])]);
+  }
+  return out;
+}
+function _adjSet(){
+  const A=new Set();
+  for(const [i,j] of BASE) A.add(i*100000+j), A.add(j*100000+i);
+  for(const [i,j] of _scPairs()) A.add(i*100000+j), A.add(j*100000+i);
+  return A;
+}
+function modeCensus(){
+  const SC=_scPairs(), A=_adjSet(), adj=(a,b)=>A.has(a*100000+b);
+  const out=[];
+  // TETRAHEDRA: pairs of shortcuts whose four endpoints form a 4-clique
+  for(let a=0;a<SC.length;a++)for(let b=a+1;b<SC.length;b++){
+    if(SC[a][2]===SC[b][2]) continue;                     // must be distinct axes
+    const q=[SC[a][0],SC[a][1],SC[b][0],SC[b][1]];
+    if(new Set(q).size!==4) continue;
+    let ok=true;
+    for(let x=0;x<4&&ok;x++)for(let y=x+1;y<4&&ok;y++) if(!adj(q[x],q[y])) ok=false;
+    if(!ok) continue;
+    const c=[0,1,2].map(t=>q.reduce((s,n)=>s+NODE[n][t],0)/4*S);
+    out.push({type:'tet', mode:[SC[a][2],SC[b][2]].sort().join(''), c});
+  }
+  // OCTAHEDRA: closed 4-cycles of shortcuts (two shortcuts at each of 4 nodes)
+  const inc={};
+  for(const [i,j,ax] of SC){ (inc[i]=inc[i]||[]).push([j,ax]); (inc[j]=inc[j]||[]).push([i,ax]); }
+  const seenCyc=new Set();
+  for(const i of Object.keys(inc).map(Number)){
+    for(const [j,a1] of inc[i]) for(const [l,a2] of inc[i]){
+      if(j===l||a1===a2) continue;
+      for(const [m,a3] of (inc[j]||[])) for(const [m2,a4] of (inc[l]||[])){
+        if(m!==m2||m===i) continue;
+        const key=[i,j,l,m].sort((x,y)=>x-y).join(',');
+        if(seenCyc.has(key)) continue; seenCyc.add(key);
+        const c=[0,1,2].map(t=>[i,j,l,m].reduce((s,n)=>s+NODE[n][t],0)/4*S);
+        out.push({type:'oct', mode:[a1,a2].sort().join(''), c});
+      }
+    }
+  }
+  return out;
+}
+function modeCorrelationSolids(maxR){
+  maxR=maxR||6;
+  const M=modeCensus();
+  const bins={};
+  for(let a=0;a<M.length;a++)for(let b=a+1;b<M.length;b++){
+    const r=Math.hypot(M[a].c[0]-M[b].c[0],M[a].c[1]-M[b].c[1],M[a].c[2]-M[b].c[2]);
+    if(r>maxR) continue;
+    const k=Math.round(r*2)/2;
+    (bins[k]=bins[k]||[]).push(M[a].mode===M[b].mode?1:0);
+  }
+  const mean=x=>x.reduce((s,y)=>s+y,0)/x.length;
+  const curve=Object.keys(bins).map(Number).sort((a,b)=>a-b)
+    .filter(k=>bins[k].length>=10)
+    .map(k=>({r:k, C:+(3*mean(bins[k])-1).toFixed(3), pSame:+mean(bins[k]).toFixed(3), n:bins[k].length}));
+  const pop={XY:0,XZ:0,YZ:0}; for(const m of M) pop[m.mode]++;
+  const byType={tet:M.filter(m=>m.type==='tet').length, oct:M.filter(m=>m.type==='oct').length};
+  return {solids:M.length, byType, pop, curve};
+}
+async function modeStudy(pAdds, steps, seed){
+  steps=steps||140;
+  const burn=Math.floor(steps*0.5), every=Math.max(10,Math.floor(steps*0.1));
+  window._MS=[];                                   // exposed incrementally
+  window._SAMPLER=()=>modeCorrelationSolids(6);
+  try{
+    for(const pa of (pAdds||[0.55,0.75,0.92])){
+      await fluxDynamics(steps, pa, seed||777, burn, every);
+      const S=window._FD.samples;
+      const pop={XY:0,XZ:0,YZ:0}; let solids=0, tets=0, octs=0;
+      const bins={};
+      for(const s of S){
+        solids+=s.solids; tets+=s.byType.tet; octs+=s.byType.oct;
+        for(const k in s.pop) pop[k]+=s.pop[k];
+        for(const p of s.curve){ (bins[p.r]=bins[p.r]||{s:0,n:0});
+          bins[p.r].s+=p.pSame*p.n; bins[p.r].n+=p.n; }
+      }
+      const curve=Object.keys(bins).map(Number).sort((x,y)=>x-y)
+        .filter(r=>bins[r].n>=20)
+        .map(r=>({r, C:+(3*bins[r].s/bins[r].n-1).toFixed(3),
+                  pSame:+(bins[r].s/bins[r].n).toFixed(3), n:bins[r].n}));
+      const tot=pop.XY+pop.XZ+pop.YZ;
+      window._MS.push({pAdd:pa, samples:S.length,
+        meanN:+(S.reduce((x,s)=>x+s.n,0)/Math.max(1,S.length)).toFixed(1),
+        solidsPerSample:+(solids/Math.max(1,S.length)).toFixed(1),
+        tets, octs,
+        popFrac: tot? {XY:+(pop.XY/tot).toFixed(3), XZ:+(pop.XZ/tot).toFixed(3),
+                       YZ:+(pop.YZ/tot).toFixed(3)} : null,
+        curve});
+      console.log('pAdd',pa,JSON.stringify(window._MS[window._MS.length-1]));
+    }
+  } finally { window._SAMPLER=null; }
+  return window._MS;
+}
+
+async function bridgeSweep(){
+  const need=(12-2*BASE_DIRS.length)/2;           // antipodal pairs to contract
+  const sets=choose(PAIRS(),need);
+  const rows=await runExperiment(
+    `${F.label}: contract ${need} of ${PAIRS().length} second-shell pairs`,
+    sets.map(s=>({s,label:s.map(a=>AXN[a].replace(/[+-]+$/,'')).join(' ')})),
+    it=>setGlobalSC(it.s),
+    it=>{ const ok=legal(resid);
+      const tags=Object.entries(MEAS.stack).map(([k,v])=>`${k}:${v}`).join(' ')||'none';
+      const html=`${ok?'<span style="color:#7fd4a8">LEGAL</span>':'<span style="color:#ff5c5c">ILLEGAL</span>'} `
+        +`${it.label} &nbsp; sep ${resid.minSep.toFixed(6)} &nbsp; ${tags}`;
+      return {html,set:it.label,legal:ok,minSep:resid.minSep,base:resid.base,
+              sampled:MEAS.sampled,stack:{...MEAS.stack},deg:{...MEAS.deg}}; });
+  active.clear(); freezeOff(); restate();
+  console.log('BRIDGE SWEEP', FAM, JSON.stringify(rows.map(r=>
+    ({set:r.set,legal:r.legal,minSep:+r.minSep.toFixed(6),n12:r.sampled,stack:r.stack})),null,1));
+  return rows;
+}
+let FROZEN=false, lastGood=null, lastChange='';
+function freezeOn(){
+  FROZEN=true;
+  document.getElementById('fdetail').innerHTML =
+    `Attempted: <code>${lastChange||'(unknown)'}</code><br>`
+   +`base-edge error <code>${resid.base.toExponential(3)}</code> &middot; `
+   +`shortcut error <code>${resid.sc.toExponential(3)}</code> &middot; `
+   +`closest approach <code>${resid.minSep.toFixed(6)}</code>`;
+  document.getElementById('freeze').classList.add('on');
+}
+function freezeOff(){FROZEN=false;document.getElementById('freeze').classList.remove('on');}
+
+function enqueue(pairs,tag,done){
+  const k=keyOf(pairs); let hit=LRU.get(k);
+  if(hit&&hit.xyz.length!==NODE.length*3){LRU.delete(k);hit=null;}
+  if(hit){hits++;LRU.delete(k);LRU.set(k,hit);done(hit);return;}
+  const B=budgetFor();
+  queue.push({pairs,k,tag,done,budget:B,total:B,P:REST.map(v=>v.clone())});
+}
+const _d=new THREE.Vector3();
+// The solver is only allowed to step from inside the render loop. Anything
+// that tries to drive it from the console gets refused, so every number that
+// gets reported is a number that was on screen.
+let INLOOP=false;
+function worst(J){const p=J.P;let e=0;
+  for(const [i,j] of BASE)e=Math.max(e,Math.abs(p[i].distanceTo(p[j])-1));
+  for(const [i,j] of J.pairs)e=Math.max(e,Math.abs(p[i].distanceTo(p[j])-1));
+  for(const [i,j] of REP){const l=p[i].distanceTo(p[j]);if(l<1)e=Math.max(e,1-l);}
+  return e;}
+function advance(J,n){
+  if(!INLOOP) throw new Error('advance() is engine-only: step it from the render loop');
+  const eq=BASE.concat(J.pairs),p=J.P;
+  for(let it=0;it<n&&J.budget>0;it++,J.budget--){
+    for(const [i,j] of eq){_d.subVectors(p[j],p[i]);const l=_d.length();if(l<1e-12)continue;
+      _d.multiplyScalar((l-1)/l*0.5);p[i].add(_d);p[j].sub(_d);}
+    for(const [i,j] of REP){_d.subVectors(p[j],p[i]);const l=_d.length();if(l>=1||l<1e-12)continue;
+      _d.multiplyScalar((l-1)/l*0.5);p[i].add(_d);p[j].sub(_d);}
+    if((J.budget&127)===0){const e=worst(J);
+      if(e<1e-10){J.budget=0;break;}
+      if(J.last!==undefined&&J.last-e<J.last*BAIL_REL){if(++J.flat>=BAIL_N){J.budget=0;break;}}
+      else J.flat=0;
+      J.last=e;}
+  }
+}
+function finish(J){const p=J.P;let b=0,s=0,m=Infinity;
+  for(const [i,j] of BASE)b=Math.max(b,Math.abs(p[i].distanceTo(p[j])-1));
+  for(const [i,j] of J.pairs)s=Math.max(s,Math.abs(p[i].distanceTo(p[j])-1));
+  for(const [i,j] of REP)m=Math.min(m,p[i].distanceTo(p[j]));
+  const xyz=new Float64Array(p.length*3);
+  p.forEach((v,i)=>{xyz[i*3]=v.x;xyz[i*3+1]=v.y;xyz[i*3+2]=v.z;});
+  const rec={k:J.k,xyz,resid:{base:b,sc:s,minSep:m===Infinity?1:m}};
+  remember(J.k,rec);return rec;}
+const load=rec=>{P=[];for(let i=0;i<NODE.length;i++)
+  P.push(new THREE.Vector3(rec.xyz[i*3],rec.xyz[i*3+1],rec.xyz[i*3+2]));resid=rec.resid;};
+
+// ===========================================================================
+// PLATONIC SOLID DETECTION  (on the SOLVED positions, not the rest lattice)
+//   tet  = unit 4-clique
+//   oct  = antipodal pair at sqrt2 sharing exactly 4 unit neighbours that
+//          themselves form a unit square (4 edges 1, 2 diagonals sqrt2)
+// ===========================================================================
+let solids={octs:[],tets:[],faces:[]};
+function detect(){
+  const n=NODE.length, D=(i,j)=>P[i].distanceTo(P[j]);
+  const unit=Array.from({length:n},()=>[]), diag=[];
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++){
+    const d=D(i,j);
+    if(Math.abs(d-1)<1e-6){unit[i].push(j);unit[j].push(i);}
+    else if(Math.abs(d-Math.SQRT2)<1e-6) diag.push([i,j]);
+  }
+  // tetrahedra
+  const tets=[];
+  for(let a=0;a<n;a++) for(const b of unit[a]) if(b>a)
+    for(const c of unit[a]) if(c>b&&unit[b].includes(c))
+      for(const d of unit[a]) if(d>c&&unit[b].includes(d)&&unit[c].includes(d))
+        tets.push([a,b,c,d]);
+  // octahedra (deduped: each is found once per axis)
+  const octs=[], oseen=new Set();
+  for(const [a,b] of diag){
+    const sh=unit[a].filter(x=>unit[b].includes(x));
+    if(sh.length!==4) continue;
+    let e1=0,e2=0,ok=true;
+    for(let x=0;x<4;x++)for(let y=x+1;y<4;y++){const d=D(sh[x],sh[y]);
+      if(Math.abs(d-1)<1e-6)e1++; else if(Math.abs(d-Math.SQRT2)<1e-6)e2++; else ok=false;}
+    if(!ok||e1!==4||e2!==2) continue;
+    const key=[a,b,...sh].slice().sort((p,q)=>p-q).join(',');
+    if(oseen.has(key)) continue; oseen.add(key);
+    octs.push([a,b,sh]);
+  }
+  // triangular faces, deduped across all solids
+  const fseen=new Map(), faces=[], owner=[];
+  const push=(x,y,z,own)=>{const k=[x,y,z].slice().sort((p,q)=>p-q).join(',');
+    if(!fseen.has(k)){fseen.set(k,faces.length);faces.push([x,y,z]);owner.push([own]);}
+    else owner[fseen.get(k)].push(own);};
+  tets.forEach((t,ti)=>{const o={kind:'tet',i:ti};
+    push(t[0],t[1],t[2],o);push(t[0],t[1],t[3],o);
+    push(t[0],t[2],t[3],o);push(t[1],t[2],t[3],o);});
+  octs.forEach(([a,b,sq],oi)=>{                     // order the equatorial square
+    const o={kind:'oct',i:oi};
+    const ring=[sq[0]];
+    while(ring.length<4){const last=ring[ring.length-1];
+      ring.push(sq.find(x=>!ring.includes(x)&&Math.abs(D(last,x)-1)<1e-6));}
+    for(let i=0;i<4;i++){const u=ring[i],v=ring[(i+1)%4];push(a,u,v,o);push(b,u,v,o);}
+  });
+  solids={octs,tets,faces,owner};
+  drawFaces();
+}
+
+// ===========================================================================
+// MEASUREMENTS — run by the engine after every solve, displayed in the panel.
+// ===========================================================================
+let MEAS={ready:false}, MEAS_shellOf={}, MEAS_deg={};
+function measure(){
+  const n=NODE.length, D=(i,j)=>P[i].distanceTo(P[j]);
+  // --- exact turn-angle census over unit neighbours ---
+  const unit=Array.from({length:n},()=>[]);
+  for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)
+    if(Math.abs(D(i,j)-1)<1e-6){unit[i].push(j);unit[j].push(i);}
+  const T=[60,70.5288,90,109.4712,120,180], ang=T.map(()=>0);
+  for(let i=0;i<n;i++){const N=unit[i];
+    for(let x=0;x<N.length;x++)for(let y=x+1;y<N.length;y++){
+      const u=P[N[x]].clone().sub(P[i]).normalize(),v=P[N[y]].clone().sub(P[i]).normalize();
+      const a=Math.acos(Math.max(-1,Math.min(1,u.dot(v))))*180/Math.PI;
+      T.forEach((t,k)=>{if(Math.abs(a-t)<1e-4)ang[k]++;});}}
+  // --- base-edge splay from each family's ideal base directions ---
+  // one bucket PER BASE DIRECTION: 4 for BCC, 3 for simple cubic, 5 for p=5.
+  // Hardcoding 4 here threw on the 5-direction family, which silently left
+  // MEAS holding the PREVIOUS family's numbers while the new lattice was on
+  // screen -- the same stale-readout failure as the frozen-solve bug.
+  // ideal direction must go through the family's basis, not the raw integer
+  // triple (for a basis family (1,1,0) means a1+a2, not the ambient (1,1,0))
+  const ID=BASE_DIRS.map(d=>posOf(d).normalize());
+  const per=BASE_DIRS.map(()=>[]);
+  BASE.forEach(([i,j,d])=>{const v=P[j].clone().sub(P[i]).normalize();
+    per[d].push(Math.acos(Math.max(-1,Math.min(1,Math.abs(v.dot(ID[d])))))*180/Math.PI);});
+  const mean=a=>a.reduce((t,x)=>t+x,0)/a.length, pd=per.map(mean), allS=per.flat();
+  // --- coordination shells in the TRUE lattice (BCC base + shortcuts).
+  // A node with 12 unit neighbours has them arranged either as a
+  // CUBOCTAHEDRON (the FCC shell) or a TRIANGULAR ORTHOBICUPOLA (J27, the
+  // anticuboctahedron -- the HCP shell).  Common Neighbour Analysis separates
+  // them: FCC = 12 bonds of type (4,2,1); HCP = 6x(4,2,1) + 6x(4,2,2).
+  const stack={}; let sampled=0; const shellOf={};
+  for(let i=0;i<n;i++){
+    const A=unit[i]; if(A.length!==12) continue;
+    sampled++;
+    let n421=0,n422=0,other=0;
+    for(const j of A){
+      const C=A.filter(x=>unit[j].includes(x));
+      if(C.length!==4){other++;continue;}
+      const bd=[];
+      for(let a=0;a<4;a++)for(let b=a+1;b<4;b++)
+        if(Math.abs(D(C[a],C[b])-1)<1e-6) bd.push([C[a],C[b]]);
+      if(bd.length!==2){other++;continue;}
+      const chain=(bd[0][0]===bd[1][0]||bd[0][0]===bd[1][1]||
+                   bd[0][1]===bd[1][0]||bd[0][1]===bd[1][1])?2:1;
+      if(chain===1)n421++;else n422++;
+    }
+    const tag=other?('irregular'):(n421===12?'cuboctahedron (FCC)':
+      (n421===6&&n422===6?'orthobicupola (HCP)':n421+'x421 '+n422+'x422'));
+    stack[tag]=(stack[tag]||0)+1;
+    shellOf[i]=tag;
+  }
+  MEAS_shellOf=shellOf;
+  // degree census: how many unit neighbours does each node have?
+  const degc={}; for(let i=0;i<n;i++) degc[unit[i].length]=(degc[unit[i].length]||0)+1;
+  MEAS_deg=degc;
+  // --- do the packing spheres overlap? ---
+  let minPP=Infinity;
+  for(let a=0;a<PACKI.length;a++)for(let b=a+1;b<PACKI.length;b++)
+    minPP=Math.min(minPP,D(PACKI[a],PACKI[b]));
+  MEAS={ready:true,ang,T,pd,splayMean:mean(allS),splayMax:Math.max(...allS),
+        splaySpread:Math.max(...pd)-Math.min(...pd),
+        bent:allS.filter(x=>x>1e-12).length,edges:allS.length,
+        stack,sampled,minPP,overlap:2*R_SPHERE-minPP,deg:MEAS_deg};
+}
+
+// ===========================================================================
+// SCENE
+// ===========================================================================
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x080a0e);
+scene.fog=new THREE.FogExp2(0x080a0e,0.028);
+const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.02,400);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputEncoding=THREE.sRGBEncoding;
+document.getElementById('gl').appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0x8fa8c8,0x14181f,0.95));
+const kl=new THREE.DirectionalLight(0xffffff,0.8);kl.position.set(6,9,7);scene.add(kl);
+const rl=new THREE.DirectionalLight(0x66c4ff,0.4);rl.position.set(-7,-3,-6);scene.add(rl);
+
+const NODE_GREY=0x8d99a8;               // every node is the same kind of node
+const VOID_COL={oct:0x5fb8d8,over:0xff9e6b,under:0x7f8fd8};   // hole classes
+// over/under split of the tetrahedral holes: (x+y+z) mod 4 is 1 or 3
+const HOLE=c=>(c[0]&1)?(((c[0]+c[1]+c[2])%4+4)%4===1?'over':'under'):'oct';
+const C_BASE=0x35526e,C_SC=0x7fd4a8,C_BAD=0xff5c5c,C_PICK=0xffe066;
+function mkLines(c,o){const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(3),3));
+  const m=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:c,transparent:true,opacity:o}));
+  m.frustumCulled=false;scene.add(m);return m;}
+const baseLines=mkLines(0x54606e,0.55), scLines=mkLines(C_SC,1);
+function setSegs(obj,segs){const a=new Float32Array(Math.max(3,segs.length*6));
+  segs.forEach(([i,j],k)=>{a[k*6]=P[i].x;a[k*6+1]=P[i].y;a[k*6+2]=P[i].z;
+    a[k*6+3]=P[j].x;a[k*6+4]=P[j].y;a[k*6+5]=P[j].z;});
+  obj.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));}
+function setBaseSegs(){ setSegs(baseLines,BASE); }
+
+const faceMesh=new THREE.Mesh(new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.16,
+    side:THREE.DoubleSide,depthWrite:false}));
+faceMesh.frustumCulled=false;scene.add(faceMesh);
+function drawFaces(){
+  const f=solids.faces,a=new Float32Array(Math.max(3,f.length*9));
+  f.forEach((t,k)=>{for(let v=0;v<3;v++){a[k*9+v*3]=P[t[v]].x;a[k*9+v*3+1]=P[t[v]].y;a[k*9+v*3+2]=P[t[v]].z;}});
+  faceMesh.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));
+  faceMesh.geometry.attributes.position.needsUpdate=true;}
+
+let nodeMesh=null,bigMesh=null,voidMesh=null,selected=null;
+let PACKI=[],HOLEI=[],R_SPHERE=0.816497;      // packing radius = half the <110> spacing
+const dummy=new THREE.Object3D();
+function buildMeshes(){
+  for(const m of [nodeMesh,bigMesh,voidMesh]) if(m){scene.remove(m);m.dispose();}
+  PACKI=NODE.map((c,i)=>i).filter(i=>CLASS(NODE[i])==='pack');
+  HOLEI=NODE.map((c,i)=>i).filter(i=>CLASS(NODE[i])!=='pack');
+  nodeMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(0.085,14,10),
+    new THREE.MeshStandardMaterial({roughness:0.35,metalness:0.1,transparent:true,opacity:1}),NODE.length);
+  bigMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(R_SPHERE,22,16),
+    new THREE.MeshStandardMaterial({roughness:0.45,metalness:0.05,transparent:true,opacity:0}),
+    Math.max(1,PACKI.length));
+  voidMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(1,16,12),
+    new THREE.MeshStandardMaterial({roughness:0.3,metalness:0.15,transparent:true,opacity:0}),
+    Math.max(1,HOLEI.length));
+  bigMesh.visible=false;voidMesh.visible=false;
+  scene.add(nodeMesh);scene.add(bigMesh);scene.add(voidMesh);
+  applyLayers();
+}
+function paint(){
+  if(!nodeMesh||P.length!==NODE.length)return;
+  const c=new THREE.Color();
+  for(let i=0;i<NODE.length;i++){
+    dummy.position.copy(P[i]);dummy.scale.setScalar(i===selected?1.7:1);dummy.updateMatrix();
+    nodeMesh.setMatrixAt(i,dummy.matrix);
+    c.setHex(i===selected?C_PICK:NODE_GREY);
+    nodeMesh.setColorAt(i,c);
+  }
+  // packing spheres: only on the sites that actually carry one
+  PACKI.forEach((i,k)=>{dummy.position.copy(P[i]);dummy.scale.setScalar(1);dummy.updateMatrix();
+    bigMesh.setMatrixAt(k,dummy.matrix);c.setHex(0xd8dee6);bigMesh.setColorAt(k,c);});
+  // holes: radius = clearance to the nearest packing sphere, so they breathe
+  HOLEI.forEach((i,k)=>{
+    let d=Infinity; for(const j of PACKI){const t=P[i].distanceTo(P[j]); if(t<d)d=t;}
+    const r=Math.max(0.02,d-R_SPHERE);
+    dummy.position.copy(P[i]);dummy.scale.setScalar(r);dummy.updateMatrix();
+    voidMesh.setMatrixAt(k,dummy.matrix);
+    c.setHex(VOID_COL[HOLE(NODE[i])]);voidMesh.setColorAt(k,c);});
+  // a family may have no hole sites at all (simple cubic), in which case
+  // setColorAt never ran and instanceColor was never allocated
+  for(const m of [nodeMesh,bigMesh,voidMesh]){
+    if(m.instanceMatrix)m.instanceMatrix.needsUpdate=true;
+    if(m.instanceColor)m.instanceColor.needsUpdate=true;}
+  setBaseSegs();setSegs(scLines,[...active.values()]);
+  scLines.material.color.setHex(legal(resid)?C_SC:C_BAD);
+  drawFaces();
+}
+
+// ===========================================================================
+// UI
+// ===========================================================================
+const $=id=>document.getElementById(id);
+let selectedProbe={};
+
+function readout(){
+  const busy=job||queue.length, cls=v=>v?'ok':'bad';
+  $('out').innerHTML=`
+<tr><td>nodes</td><td>${NODE.length}</td></tr>
+<tr><td>lattice centre</td><td>${LCENTER.map(x=>+x.toFixed(2)).join(', ')}</td></tr>
+<tr><td>base edges</td><td>${BASE.length}</td></tr>
+<tr><td>repulsion pairs</td><td>${REP.length}</td></tr>
+<tr><td>active shortcuts</td><td>${active.size}</td></tr>
+<tr><td>max base-edge error</td><td class="${cls(resid.base<TOL)}">${resid.base.toExponential(2)}</td></tr>
+<tr><td>max shortcut error</td><td class="${cls(resid.sc<TOL)}">${active.size?resid.sc.toExponential(2):'&mdash;'}</td></tr>
+<tr><td>closest approach</td><td class="${cls(resid.minSep>1-TOL)}">${resid.minSep.toFixed(6)}</td></tr>
+<tr><td>platonic octahedra</td><td class="${solids.octs.length?'ok':''}">${solids.octs.length}</td></tr>
+<tr><td>platonic tetrahedra</td><td class="${solids.tets.length?'ok':''}">${solids.tets.length}</td></tr>
+<tr><td>cached solves</td><td>${LRU.size} (${hits})</td></tr>`
+  +(MEAS.ready?`
+<tr><td colspan="2" style="padding-top:9px;border-top:1px solid #1e2530;color:#5d6e85">
+  exact turn angles</td></tr>`
++MEAS.T.map((t,k)=>`<tr><td>&nbsp;&nbsp;${t}&deg;</td><td class="${
+   (t===60||t===90||t===120)?(MEAS.ang[k]?'ok':''):(MEAS.ang[k]?'':'bad')}">${MEAS.ang[k]}</td></tr>`).join('')
++`<tr><td colspan="2" style="padding-top:9px;border-top:1px solid #1e2530;color:#5d6e85">
+  strain &amp; stacking</td></tr>
+<tr><td>&nbsp;&nbsp;edges bent</td><td>${MEAS.bent}/${MEAS.edges}</td></tr>
+<tr><td>&nbsp;&nbsp;splay mean / max</td><td>${MEAS.splayMean.toFixed(3)}&deg; / ${MEAS.splayMax.toFixed(2)}&deg;</td></tr>
+<tr><td>&nbsp;&nbsp;direction spread</td><td>${MEAS.splaySpread.toFixed(4)}&deg;</td></tr>
+<tr><td>&nbsp;&nbsp;12-coordinate nodes</td><td>${MEAS.sampled}</td></tr>
+${Object.entries(MEAS.stack).map(([k,v])=>`<tr><td>&nbsp;&nbsp;&nbsp;${k}</td><td class="${k.indexOf('HCP')>=0?'ok':''}">${v}</td></tr>`).join('')||'<tr><td colspan=2>&nbsp;&nbsp;&nbsp;none</td></tr>'}
+`:'');
+  const chip=$('chip'),ok=legal(resid),sl=stale();
+  chip.className='card '+(busy?'busy':(sl?'bad':(ok?'ok':'bad')));
+  $('chiptext').textContent=busy
+    ? (job?`solving ${Math.round((1-job.budget/job.total)*100)}%`:'queued')
+    : (sl?'STALE — geometry is from another configuration'
+       : (ok?(active.size?`${active.size} shortcut${active.size===1?'':'s'} · ${solids.octs.length} oct · ${solids.tets.length} tet`
+                      :`relaxed ${F.label} vacuum`):'KEPLER VIOLATION'));
+}
+
+let _rsBurst=0,_rsLast=0;
+// restate(true) == this call came from a human gesture. A person clicking
+// three switches in four seconds is NOT a batch run, and throwing on them
+// desynced the engine: the click handler has already mutated `active`, so a
+// throw here left the set changed with no solve queued and the readout still
+// showing the previous solve. Only programmatic calls are rate-limited.
+function restate(user){
+  const now=performance.now();
+  if(!EXP.on && !user){ if(now-_rsLast<4000) _rsBurst++; else _rsBurst=0; _rsLast=now;
+    if(_rsBurst>=3) throw new Error(
+      'batch detected: use runExperiment(name, items, apply, record) so the run is visible on screen'); }
+  else _rsBurst=0;
+  queue=[];job=null;
+  const pairs=[...active.values()], mk=keyOf(pairs);
+  enqueue(pairs,'main',rec=>{LOADEDKEY=mk;load(rec);detect();measure();paint();readout();
+    if(!legal(resid)) freezeOn(); else { freezeOff(); lastGood=new Map(active); }});
+  probeSelected();
+}
+function probeSelected(){
+  selectedProbe={};
+  if(selected===null){drawBoard();return;}
+  for(let a=0;a<AXN.length;a++){
+    const k=selected+':'+a,j=SCOPT.get(k);
+    if(j===undefined){selectedProbe[a]='absent';continue;}
+    if(active.has(k)||active.has(j+':'+(a^1))){selectedProbe[a]='on';continue;}
+    selectedProbe[a]='testing';
+    enqueue([...active.values(),[selected,j]],'probe'+a,
+      rec=>{selectedProbe[a]=legal(rec.resid)?'free':'blocked';drawBoard();});
+  }
+  drawBoard();
+}
+const board=$('board');
+function buildBoard(){
+  board.innerHTML='';
+  AXN.forEach((lab,a)=>{const b=document.createElement('div');b.className='sw';
+    b.innerHTML=`${lab}<small></small>`;
+    b.onclick=()=>{if(FROZEN||selected===null)return;
+      const st=selectedProbe[a];if(st==='absent'||st==='blocked'||st==='testing')return;
+      const k=selected+':'+a,j=SCOPT.get(k),back=j+':'+(a^1);
+      if(active.has(k))active.delete(k); else if(active.has(back))active.delete(back);
+      else active.set(k,[selected,j]);
+      lastChange=AXN[a]+' at '+CLASS(NODE[selected])+'('+NODE[selected].join(',')+')';
+      restate(true);saveState();};
+    board.appendChild(b);});
+}
+buildBoard();
+const LABEL={on:'active',free:'available',blocked:'blocked',absent:'no node',testing:'testing'};
+function drawBoard(){[...board.children].forEach((el,a)=>{
+  const st=selectedProbe[a]||'absent';
+  el.className='sw'+(st==='on'?' on':st==='blocked'?' blocked':st==='absent'?' absent':
+                     st==='testing'?' testing':'');
+  el.querySelector('small').textContent=LABEL[st];});}
+function select(i){
+  selected=i;const sh=$('sheet');
+  if(i===null){sh.classList.remove('up');selectedProbe={};drawBoard();paint();return;}
+  $('sheettitle').textContent={pack:'packing site',oct:'octahedral hole',tet:'tetrahedral hole'}[CLASS(NODE[i])];
+  $('sheetsub').textContent='('+NODE[i].join(', ')+')';
+  sh.classList.add('up');probeSelected();paint();saveState();}
+$('fundo').onclick=()=>{
+  active.clear();
+  if(lastGood) for(const [k,v] of lastGood) active.set(k,v);
+  freezeOff(); select(null); restate(true); saveState();
+};
+$('close').onclick=()=>select(null);
+$('nodecentre').onclick=()=>{ if(selected===null)return;
+  LCENTER=NODE[selected].slice(); select(null); setSize(shells); saveState(); };
+$('chip').onclick=()=>{$('stats').classList.toggle('open');saveState();};
+
+// ---- layers ----
+// Orbit state lives here, above the LAYERS block, because applyLayers() reads it
+// and runs before the camera section — declared down there it would still be in
+// its temporal dead zone at the first call.
+let ORBIT=0;                    // 0..1, drift speed taken from the slider
+const ORBIT_MAX=0.5;            // rad/s at 100% — about 12.6 s per revolution
+const orb={r:9.5,th:0,ph:0};    // camera in spherical coords about the lattice centre
+const LAYERS=[
+  {id:'nodes',    name:'nodes',            val:11},
+  {id:'base',     name:'base edges',       val:33},
+  {id:'sc',       name:'shortcuts',        val:100},
+  {id:'faces',    name:'platonic faces',   val:40},
+  // Append only: saved states index LAYERS by position, so inserting above
+  // would remap every slider a returning user has already set.
+  {id:'xon',      name:'xon',              val:100},
+  {id:'orbit',    name:'orbit',            val:0},
+  {id:'attractor',name:'attractor',        val:100},
+];
+const lbody=$('lbody');
+LAYERS.forEach(L=>{
+  const d=document.createElement('div');d.className='lay';
+  d.innerHTML=`<label>${L.name}<b id="v-${L.id}">${L.val}%</b></label>
+    <input type="range" min="0" max="100" value="${L.val}" id="s-${L.id}">`;
+  lbody.appendChild(d);
+  d.querySelector('input').addEventListener('input',e=>{
+    L.val=+e.target.value;$('v-'+L.id).textContent=L.val+'%';applyLayers();saveState();});
+});
+function applyLayers(){
+  const g=id=>LAYERS.find(l=>l.id===id).val/100;
+  if(nodeMesh){nodeMesh.material.opacity=g('nodes');nodeMesh.visible=g('nodes')>0;}
+  if(bigMesh)bigMesh.visible=false;
+  if(voidMesh)voidMesh.visible=false;
+  baseLines.material.opacity=g('base');baseLines.visible=g('base')>0;
+  scLines.material.opacity=g('sc');scLines.visible=g('sc')>0;
+  faceMesh.material.opacity=g('faces');faceMesh.visible=g('faces')>0;
+  if(window._XONDIM)window._XONDIM(g('xon'));
+  if(window._ATTRDIM)window._ATTRDIM(g('attractor'));
+  const o=g('orbit');
+  if(o>0&&ORBIT===0)orbSync();     // entering orbit: adopt wherever the fly camera left off
+  ORBIT=o;
+  $('hint').textContent=o>0
+    ?'orbit · drag to swing · scroll dolly · click a node'
+    :'WASD fly · drag look · scroll dolly · click a node';
+}
+$('lhead').onclick=()=>{$('layers').classList.toggle('open');saveState();};
+$("clear").onclick=()=>{if(FROZEN)return;active.clear();select(null);restate(true);saveState();};
+
+// ---- loops --------------------------------------------------------------
+// A loop is a long-running animation. The PANEL lives here so the engine owns
+// its own UI; the loops themselves are registered by whichever harness defines
+// them, so nothing in the engine needs to know what a tet is.
+//
+// Exactly one loop runs at a time. Selecting another, or 'no loop', bumps
+// LOOPTOKEN; a running loop is expected to poll _loopAlive(tok) and stop when
+// it goes false. There is no kill switch -- a loop that ignores the token
+// keeps running, which is the loop's bug, not the panel's.
+//
+// Loops are NOT restored on page load. Hot reload fires on every file edit and
+// silently restarting a multi-minute animation each time would be worse than
+// one click.
+const LOOPS=[{id:'none',name:'no loop',sub:'',run:null}];
+let LOOPNOW='none', LOOPTOKEN=0, LOOPPACE=250, LOOPLIFE=240, LOOPPAUSE=false;
+// opts.life marks a loop whose particle has a lifespan in ticks rather than
+// ending when it leaves the lattice. The engine still knows nothing about what
+// the loop is -- it only knows whether to show the slider.
+window._registerLoop=function(id,name,sub,run,opts){
+  if(LOOPS.some(l=>l.id===id)) throw new Error('loop id already registered: '+id);
+  LOOPS.push({id,name,sub,run,life:!!(opts&&opts.life)}); drawLoops();
+};
+window._loopAlive=tok=>tok===LOOPTOKEN;
+window._loopNow=()=>LOOPNOW;
+// minimum ms per step, read live by runExperiment's pacer
+window._loopPace=()=>LOOPPACE;
+// ticks per particle, read live so the slider takes effect on the next spawn
+window._loopLife=()=>LOOPLIFE;
+window._loopPaused=()=>LOOPPAUSE;
+$('s-pace').addEventListener('input',e=>{
+  LOOPPACE=+e.target.value; $('v-pace').textContent=LOOPPACE+' ms'; saveState();});
+$('s-life').addEventListener('input',e=>{
+  LOOPLIFE=+e.target.value; $('v-life').textContent=LOOPLIFE+' ticks'; saveState();});
+function setPause(on){
+  LOOPPAUSE=on;
+  $('lppause').textContent=on?'resume':'pause';
+  $('lppause').style.background=on?'#3a2f12':'#12352a';
+  $('lppause').style.borderColor=on?'#8a6d2f':'#2f7d5f';
+  $('lppause').style.color=on?'#e0b860':'#7fd4a8';
+}
+$('lppause').onclick=()=>setPause(!LOOPPAUSE);
+function drawLoops(){
+  const L=LOOPS.find(l=>l.id===LOOPNOW)||LOOPS[0];
+  $('lpnow').textContent=L.name;
+  $('lpsub').textContent=L.sub||'';
+  $('lplife').style.display=L.life?'':'none';
+  $('lppause').style.display=L.run?'':'none';
+  $('lplist').innerHTML='';
+  for(const l of LOOPS){
+    const d=document.createElement('div');
+    d.className='lp'+(l.id===LOOPNOW?' on':'');
+    d.innerHTML=`<i></i>${l.name}`+(l.id===LOOPNOW&&l.run?'<em>running</em>':'');
+    d.onclick=()=>setLoop(l.id);
+    $('lplist').appendChild(d);
+  }
+}
+// EXP is a single global, so two runExperiment calls must never overlap: the
+// first to finish sets EXP.on=false and the second then trips the anti-batch
+// guard in restate(). Switching loops used to do exactly that -- the new loop
+// started while the old one was still draining its items. So wait for the old
+// run to finish before starting the new one, and re-check the token after,
+// since the selection can change again while we wait.
+let LOOPRUN=null;
+async function setLoop(id){
+  const L=LOOPS.find(l=>l.id===id); if(!L) return;
+  // Clearing the pause here means a pause can never outlive the loop that set
+  // it and strand some later runExperiment at the gate.
+  LOOPTOKEN++; LOOPNOW=id; setPause(false); drawLoops(); saveState();
+  const tok=LOOPTOKEN;
+  if(LOOPRUN){ const prev=LOOPRUN; try{ await prev; }catch(_){} }
+  if(LOOPTOKEN!==tok) return;                        // superseded while draining
+  if(!L.run){ if(window._loopCleanup) window._loopCleanup(); return; }
+  const p=(async()=>{ try{ await L.run(tok); }
+    catch(e){ console.error('loop "'+id+'" threw:',e);
+      window._LASTERR=(e&&(e.stack||e.message))||String(e); } })();
+  LOOPRUN=p; await p;
+  if(LOOPRUN===p) LOOPRUN=null;
+  if(LOOPTOKEN===tok){ LOOPNOW='none'; drawLoops(); }   // ended on its own
+}
+$('lphead').onclick=()=>{$('loops').classList.toggle('open');saveState();};
+drawLoops();
+
+// ---- session state ------------------------------------------------------
+// Shortcuts are stored as INTEGER COORDINATE pairs, not node indices, so a
+// saved setup survives a code edit, a lattice rebuild, or a size change.
+const SKEY='fd-lattice-state';
+function stateNow(){
+  return {fam:FAM,shells,centre:LCENTER.slice(),
+    sc:[...active.values()].map(([i,j])=>[NODE[i].join(','),NODE[j].join(',')]),
+    cam:[cam.pos.x,cam.pos.y,cam.pos.z,cam.yaw,cam.pitch],
+    layers:LAYERS.map(l=>l.val), pace:LOOPPACE, life:LOOPLIFE,
+    sel:selected!==null?NODE[selected].join(','):null,
+    open:[$('layers').classList.contains('open'),$('stats').classList.contains('open'),
+          $('loops').classList.contains('open')]};
+}
+function saveNow(){ try{localStorage.setItem(SKEY,JSON.stringify(stateNow()));}catch(_){} }
+let _saveT=null;
+function saveState(){ clearTimeout(_saveT); _saveT=setTimeout(saveNow,250); }
+function readState(){ try{return JSON.parse(localStorage.getItem(SKEY)||'null');}catch(_){return null;} }
+addEventListener('beforeunload',saveNow);
+
+// Switch lattice family. Wipes the shortcut set (indices and even the meaning
+// of an axis change), rebuilds the toggle board, recentres on the origin.
+function setFamily(f){
+  if(!FAMILIES[f]) throw new Error('no such lattice family: '+f);
+  FAM=f; F=FAMILIES[f];
+  S=F.scale; AX=F.sc; AXN=F.scn; BASE_DIRS=F.base; BASE_HUE=F.hue; RADIUS=F.radius;
+  active.clear(); lastGood=null; LCENTER=[0,0,0];
+  buildBoard(); freezeOff(); select(null);
+  setSize(shells); saveState();
+}
+function setSize(n,st){
+  // capture the active shortcuts as COORDINATES before NODE is replaced
+  const keep=st?st.sc:[...active.values()].map(([i,j])=>[NODE[i].join(','),NODE[j].join(',')]);
+  shells=Math.max(0,Math.min(3,n));
+  if(st&&st.centre)LCENTER=st.centre.slice();
+  $('sizelab').textContent=NODE.length+' nodes';
+  $('minus').classList.toggle('off',shells===0);
+  $('plus').classList.toggle('off',shells===3);
+  buildLattice(shells);$('sizelab').textContent=NODE.length+' nodes';
+  P=REST.map(v=>v.clone());buildMeshes();
+  SPEED=2.2+shells*1.6;
+
+  // re-key the active shortcuts onto the new lattice by coordinate
+  active.clear();
+  for(const [ka,kb] of (keep||[])){
+    const i=KEY.get(ka), j=KEY.get(kb);
+    if(i===undefined||j===undefined) continue;
+    for(let a=0;a<6;a++) if(SCOPT.get(i+':'+a)===j){active.set(i+':'+a,[i,j]);break;}
+  }
+  if(st){
+    cam.pos.set(st.cam[0],st.cam[1],st.cam[2]);cam.yaw=st.cam[3];cam.pitch=st.cam[4];
+    st.layers.forEach((v,k)=>{if(LAYERS[k]){LAYERS[k].val=v;
+      const s=$('s-'+LAYERS[k].id); if(s){s.value=v;$('v-'+LAYERS[k].id).textContent=v+'%';}}});
+    applyLayers();
+    $('layers').classList.toggle('open',!!st.open[0]);
+    $('stats').classList.toggle('open',!!st.open[1]);
+    $('loops').classList.toggle('open',!!st.open[2]);
+    if(st.pace){LOOPPACE=st.pace;$('s-pace').value=st.pace;$('v-pace').textContent=st.pace+' ms';}
+    if(st.life){LOOPLIFE=st.life;$('s-life').value=st.life;$('v-life').textContent=st.life+' ticks';}
+  } else {
+    cam.pos.set(0,0,[4.6,9.5,17,23][shells]);cam.yaw=-Math.PI/2;cam.pitch=0;
+  }
+  if(ORBIT>0)orbSync();   // a size change moves the camera; keep the orbit radius honest
+  selected=null;selectedProbe={};$('sheet').classList.remove('up');drawBoard();
+  solids={octs:[],tets:[],faces:[]};paint();readout();restate(true);
+  if(st&&st.sel){const s=KEY.get(st.sel); if(s!==undefined) select(s);}
+  saveState();
+}
+$('minus').onclick=()=>{if(!FROZEN)setSize(shells-1);};
+$('plus').onclick=()=>{if(!FROZEN)setSize(shells+1);};
+
+// ---- hot reload: pick up file edits without losing the setup -------------
+(function(){let tag=null;
+  setInterval(async()=>{
+    try{const r=await fetch(location.pathname+'?hr='+Date.now(),{method:'HEAD',cache:'no-store'});
+      const t=r.headers.get('last-modified')||r.headers.get('etag')||r.headers.get('content-length');
+      if(tag===null){tag=t;return;}
+      if(t&&t!==tag){saveNow();location.reload();}
+    }catch(_){}
+  },1200);})();
+
+// ===========================================================================
+// NO-CLIP FPS CAMERA.  Speed is in lattice units: one base edge = 1.
+// ===========================================================================
+const cam={pos:new THREE.Vector3(0,0,9.5),yaw:-Math.PI/2,pitch:0};
+let SPEED=3.8;
+const keys={};
+const UP=new THREE.Vector3(0,1,0);
+const fwd=()=>new THREE.Vector3(
+  Math.cos(cam.pitch)*Math.cos(cam.yaw),Math.sin(cam.pitch),Math.cos(cam.pitch)*Math.sin(cam.yaw));
+addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT')return;
+  keys[e.key.toLowerCase()]=true;
+  if([' ','w','a','s','d','q','e'].includes(e.key.toLowerCase()))e.preventDefault();});
+addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+addEventListener('blur',()=>{for(const k in keys)keys[k]=false;});
+// Camera on a sphere about the lattice centre. The pivot is LCENTER in world
+// units — NOT the world origin: re-centring on a node or solid moves LCENTER,
+// and orbiting about the origin then slides the lattice across the view instead
+// of turning it. yaw/pitch are kept in step so that turning orbit back off
+// resumes the fly camera facing the same way, and so the position still
+// round-trips through saveState.
+const orbC=new THREE.Vector3();
+const orbCentre=()=>orbC.set(LCENTER[0]*S,LCENTER[1]*S,LCENTER[2]*S);
+function orbSync(){
+  const p=cam.pos.clone().sub(orbCentre()),r=p.length();
+  orb.r=Math.max(1.2,r||9.5);
+  orb.th=Math.atan2(p.z,p.x);
+  orb.ph=r?Math.asin(Math.max(-1,Math.min(1,p.y/r))):0;
+}
+function orbApply(){
+  const c=orbCentre(),cp=Math.cos(orb.ph);
+  cam.pos.set(c.x+orb.r*cp*Math.cos(orb.th),
+              c.y+orb.r*Math.sin(orb.ph),
+              c.z+orb.r*cp*Math.sin(orb.th));
+  cam.yaw=orb.th+Math.PI;cam.pitch=-orb.ph;
+  camera.position.copy(cam.pos);
+  camera.lookAt(c);
+}
+function flyCam(dt){
+  if(ORBIT>0){orb.th+=ORBIT*ORBIT_MAX*dt;orbApply();return;}   // WASD inert by design
+  const f=fwd(),r=new THREE.Vector3().crossVectors(f,UP).normalize(),v=new THREE.Vector3();
+  if(keys['w'])v.add(f); if(keys['s'])v.sub(f);
+  if(keys['d'])v.add(r); if(keys['a'])v.sub(r);
+  if(keys['e']||keys[' '])v.add(UP); if(keys['q'])v.sub(UP);
+  if(v.lengthSq())cam.pos.add(v.normalize().multiplyScalar(SPEED*dt*(keys['shift']?3.5:1)));
+  camera.position.copy(cam.pos);
+  camera.lookAt(cam.pos.clone().add(f));
+}
+const el=renderer.domElement;
+let look=false,lx=0,ly=0,moved=false;
+el.addEventListener('pointerdown',e=>{look=true;moved=false;lx=e.clientX;ly=e.clientY;});
+addEventListener('pointerup',()=>{if(look)saveState();look=false;});
+addEventListener('pointermove',e=>{
+  if(!look)return;
+  if(Math.abs(e.clientX-lx)+Math.abs(e.clientY-ly)>3)moved=true;
+  if(ORBIT>0){            // grab-the-object feel, so the opposite sense to free-look
+    orb.th-=(e.clientX-lx)*0.0032;
+    orb.ph=Math.max(-1.5,Math.min(1.5,orb.ph+(e.clientY-ly)*0.0032));
+  }else{
+    cam.yaw+=(e.clientX-lx)*0.0032;
+    cam.pitch=Math.max(-1.53,Math.min(1.53,cam.pitch-(e.clientY-ly)*0.0032));
+  }
+  lx=e.clientX;ly=e.clientY;});
+el.addEventListener('wheel',e=>{e.preventDefault();
+  if(ORBIT>0)orb.r=Math.max(1.2,orb.r+Math.sign(e.deltaY)*SPEED*0.16);
+  else cam.pos.add(fwd().multiplyScalar(-Math.sign(e.deltaY)*SPEED*0.16));},{passive:false});
+// pinch = dolly
+let pinch=0;
+el.addEventListener('touchstart',e=>{if(e.touches.length===2){moved=true;
+  pinch=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                   e.touches[0].clientY-e.touches[1].clientY);}},{passive:false});
+el.addEventListener('touchmove',e=>{if(e.touches.length===2){e.preventDefault();
+  const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,
+                     e.touches[0].clientY-e.touches[1].clientY);
+  if(pinch){if(ORBIT>0)orb.r=Math.max(1.2,orb.r-(d-pinch)*0.012*SPEED);
+            else cam.pos.add(fwd().multiplyScalar((d-pinch)*0.012*SPEED));}
+  pinch=d;}},{passive:false});
+
+const ray=new THREE.Raycaster();
+let pickedSolid=null;
+function showSolid(o){
+  pickedSolid=o;const card=$('solid');
+  if(!o){card.classList.remove('up');return;}
+  const D=(i,j)=>P[i].distanceTo(P[j]);
+  const vs=o.kind==='oct'?[solids.octs[o.i][0],solids.octs[o.i][1],...solids.octs[o.i][2]]
+                         :solids.tets[o.i];
+  const eds=[];for(let x=0;x<vs.length;x++)for(let y=x+1;y<vs.length;y++)eds.push(D(vs[x],vs[y]));
+  const unit=eds.filter(d=>Math.abs(d-1)<1e-3);
+  const c=vs.reduce((t,i)=>[t[0]+NODE[i][0],t[1]+NODE[i][1],t[2]+NODE[i][2]],[0,0,0]).map(x=>x/vs.length);
+  o.centre=c;
+  $('solidtitle').textContent='platonic '+(o.kind==='oct'?'octahedron':'tetrahedron');
+  $('solidrows').innerHTML=
+    `vertices <b>${vs.length}</b> &nbsp; edges <b>${unit.length}</b> at `
+    +`<b>${Math.min(...unit).toFixed(9)} – ${Math.max(...unit).toFixed(9)}</b><br>`
+    +vs.map(i=>CLASS(NODE[i])+'('+NODE[i].join(',')+')').join(' · ')+'<br>'
+    +`centroid <b>${c.map(x=>+x.toFixed(2)).join(', ')}</b>`;
+  card.classList.add('up');
+}
+$('solidclose').onclick=()=>showSolid(null);
+$('centrebtn').onclick=()=>{
+  if(!pickedSolid)return;
+  LCENTER=pickedSolid.centre.slice();
+  showSolid(null);select(null);setSize(shells);saveState();
+};
+el.addEventListener('pointerup',e=>{
+  if(moved||!nodeMesh)return;
+  ray.setFromCamera(new THREE.Vector2((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1),camera);
+  const hn=ray.intersectObject(nodeMesh);
+  const hf=faceMesh.visible?ray.intersectObject(faceMesh):[];
+  // a node wins if it is nearer than the face we would have hit
+  if(hn.length&&(!hf.length||hn[0].distance<=hf[0].distance+0.05)){
+    showSolid(null);select(hn[0].instanceId);return;}
+  if(hf.length&&solids.owner){
+    const own=solids.owner[hf[0].faceIndex];
+    if(own&&own.length){select(null);showSolid({...own[0]});return;}
+  }
+  select(null);showSolid(null);});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+// ---- loop ----
+const _st=readState();
+if(_st&&_st.fam&&FAMILIES[_st.fam]){
+  FAM=_st.fam; F=FAMILIES[FAM];
+  S=F.scale; AX=F.sc; AXN=F.scn; BASE_DIRS=F.base; BASE_HUE=F.hue; RADIUS=F.radius;
+  buildBoard();
+}
+setSize(_st?_st.shells:2,_st);        // default: 55 cells, so 2nd-order geometry appears
+let tPrev=performance.now();
+(function loop(t){
+  requestAnimationFrame(loop);
+  INLOOP=true;
+  const dt=Math.min(0.05,(t-tPrev)/1000||0);tPrev=t;
+  flyCam(dt);
+  if(!job&&queue.length)job=queue.shift();
+  if(job){
+    advance(job,Math.max(1,Math.round(3000000/(BASE.length+REP.length+1))));
+    if(job.tag==='main'){P=job.P;paint();}
+    if(job.budget===0){const rec=finish(job),d=job.done;job=null;d(rec);}
+    readout();
+  }
+  // per-frame hook for overlays that must track solved node positions while the
+  // solver is still running -- e.g. a xon marker, which must never appear to
+  // lag the geometry it is supposed to be causing
+  if(window._onFrame) window._onFrame();
+  renderer.render(scene,camera);
+  INLOOP=false;
+})(performance.now());
+</script>
+<!-- scratch harnesses: measurement only, loaded after the engine is built -->
+<script src="_tetline-scratch.js?v=113"></script>
+</body>
+</html>
