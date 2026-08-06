@@ -1285,7 +1285,7 @@
       if (!LOCK) return null;
       const dorm = LOCK === 'XZ' ? 1 : (LOCK === 'XY' ? 2 : 0);
       const pl = [0, 1, 2].filter(k => k !== dorm);
-      let best = null;
+      const cands = [];
       // Scale scan: the loop should be the SHORTEST one that points where the
       // line points. Bounded because a longer loop cannot beat an exact fit and
       // the sublattice is periodic -- this enumerates candidate loops, it does
@@ -1302,12 +1302,23 @@
           const D = [0, 0, 0]; D[dorm] = Y; D[pl[0]] = X; D[pl[1]] = Z;
           const nd = Math.hypot(...D); if (nd < 1e-9) continue;
           const cos = [0, 1, 2].reduce((sm, k) => sm + D[k] * dir[k], 0) / nd;
-          if (!best || cos > best.cos + 1e-9
-              || (Math.abs(cos - best.cos) < 1e-9 && n < best.n))
-            best = { cos, n, Y, a, b, D };
+          cands.push({ cos, n, Y, a, b, D });
         }
       }
+      // RANKED, not reduced to one. Which multiset the loop is made of decides
+      // whether it can close at all, and the closest-in-angle candidate is not
+      // always closable -- so the caller walks this list and takes the first
+      // that does. Parity is the one obstruction that is exact and needs no
+      // test: every move flips the tet's orientation class, so a cycle must
+      // have an EVEN number of moves. Measured, 0 of 37 odd multisets close and
+      // 32 of 38 even ones do. The remaining even failures have no simple
+      // closed form -- |Z| <= |Y| holds when the two steer counts share a sign
+      // and breaks in 92 of 340 cases when they do not -- so closability is
+      // TESTED rather than predicted.
+      cands.sort((x, y) => y.cos - x.cos || x.n - y.n);
+      const best = cands[0];
       if (!best) return null;
+      const order = (b2) => {
       // ORDER THE LOOP. Same idea as Bresenham: hold the running position and
       // take, at each place in the sequence, whichever remaining move leaves
       // the path closest to the ideal ray. Deterministic, done once, and the
@@ -1316,12 +1327,12 @@
       const mk = (k0, k1, s0, s1) => { const w = [0, 0, 0];
         if (k0 !== null) w[k0] = s0; if (k1 !== null) w[k1] = s1; return w; };
       const rem = [
-        { kind: 'rail',  v: mk(dorm, null, Math.sign(best.Y) || 1, 0), n: Math.abs(best.Y) },
-        { kind: 'steer', v: mk(pl[0], pl[1], Math.sign(best.a) || 1, Math.sign(best.a) || 1),
-          n: Math.abs(best.a) },
-        { kind: 'steer', v: mk(pl[0], pl[1], Math.sign(best.b) || 1, -(Math.sign(best.b) || 1)),
-          n: Math.abs(best.b) }];
-      const nd = Math.hypot(...best.D), u = best.D.map(z => z / nd);
+        { kind: 'rail',  v: mk(dorm, null, Math.sign(b2.Y) || 1, 0), n: Math.abs(b2.Y) },
+        { kind: 'steer', v: mk(pl[0], pl[1], Math.sign(b2.a) || 1, Math.sign(b2.a) || 1),
+          n: Math.abs(b2.a) },
+        { kind: 'steer', v: mk(pl[0], pl[1], Math.sign(b2.b) || 1, -(Math.sign(b2.b) || 1)),
+          n: Math.abs(b2.b) }];
+      const nd = Math.hypot(...b2.D), u = b2.D.map(z => z / nd);
       const perp = c => { const sp = c[0] * u[0] + c[1] * u[1] + c[2] * u[2];
         return Math.hypot(c[0] - sp * u[0], c[1] - sp * u[1], c[2] - sp * u[2]); };
       const steps = []; let cur = [0, 0, 0];
@@ -1335,8 +1346,15 @@
         pick.n--; cur = [0, 1, 2].map(k => cur[k] + pick.v[k]);
         steps.push({ kind: pick.kind, d: pick.v.slice() });
       }
-      return { steps, disp: best.D, cos: +best.cos.toFixed(6),
-               nRail: best.Y, nP: best.a, nQ: best.b };
+        return { steps, disp: b2.D, cos: +b2.cos.toFixed(6),
+                 nRail: b2.Y, nP: b2.a, nQ: b2.b };
+      };
+      // The ranked candidates, each already ordered, best angle first.
+      // ALL candidates, best angle first, parity included. An odd multiset can
+      // never close on its own -- every move flips the orientation class -- but
+      // TWICE round it is even and points in exactly the same direction, so the
+      // best-fitting loop is salvageable rather than something to trade away.
+      return { best: order(best), all: cands.slice(0, 24).map(order) };
     };
     // ---- CLOSING THE LOOP -------------------------------------------------
     // solveLoop says WHICH moves the loop is made of. This says in what ORDER,
@@ -1437,20 +1455,41 @@
       return null;
     };
     let LOOPFIT = null, loopIdx = 0, LOOPSEQ = null;
+    const fitStats = { steps: 0, railDone: 0, steerDone: 0,
+                       railMissing: 0, steerMissing: 0, routeFail: 0 };
     if (opt.fit) {
       LOOPFIT = solveLoop(v);
       // A closed loop repeats verbatim; an unclosed one is re-derived every
       // iteration and drifts. If the exact multiset will not close, try it
       // DOUBLED -- twice round the same displacements points the same way and
       // gives the ordering room to return to its own start state.
+      // Walk the ranked candidates and take the FIRST that closes. Angle order
+      // means the closest-fitting closable loop wins; testing beats predicting,
+      // since the closure condition beyond parity has no simple closed form.
       if (LOOPFIT) {
-        LOOPSEQ = closeLoop(LOOPFIT.steps, chirality || 'A', v);
-        if (!LOOPSEQ && LOOPFIT.steps.length <= 12)
-          LOOPSEQ = closeLoop(LOOPFIT.steps.concat(LOOPFIT.steps), chirality || 'A', v);
+        const tried = [];
+        outer:
+        for (const cand of LOOPFIT.all) {
+          for (const mult of [1, 2]) {
+            // 1x is hopeless for an odd multiset: parity forbids it outright.
+            if (mult === 1 && cand.steps.length % 2) continue;
+            const steps = mult === 1 ? cand.steps : cand.steps.concat(cand.steps);
+            const seq = closeLoop(steps, chirality || 'A', v);
+            tried.push({ disp: cand.disp.join(','), n: steps.length,
+                         mult, cos: cand.cos, closed: !!seq });
+            if (seq) {
+              LOOPFIT = mult === 1 ? cand
+                : { steps, disp: cand.disp.map(z => z * 2), cos: cand.cos,
+                    nRail: cand.nRail * 2, nP: cand.nP * 2, nQ: cand.nQ * 2 };
+              LOOPSEQ = seq; break outer;
+            }
+          }
+        }
+        if (!LOOPSEQ) LOOPFIT = LOOPFIT.best || null;
+        fitStats.candidatesTried = tried.length;
+        fitStats.candidates = tried;
       }
     }
-    const fitStats = { steps: 0, railDone: 0, steerDone: 0,
-                       railMissing: 0, steerMissing: 0, routeFail: 0 };
 
     let biasActive = false;     // draining a table move right now
     const biasStats = { planned: 0, done: 0, noChain: 0, expandFail: 0,
@@ -2076,6 +2115,18 @@
         // bias excursion is visible in the trace rather than inferred from it.
         const mNow = modeOf(tetNodes());
         if (LOCK && mNow && mNow !== LOCK) biasStats.offModeTicks++;
+        // LIVE READOUT. Everything the four rules are about, on screen while it
+        // runs: what was drawn at birth and what is holding tick by tick.
+        if (opt.status) opt.status({
+          chirality, gen: modeOf(tetNodes()), lock: LOCK,
+          dir: v.map(z => +z.toFixed(2)),
+          loopLen: LOOPSEQ ? LOOPSEQ.seq.length : 0,
+          loopCos: LOOPFIT ? LOOPFIT.cos : null,
+          i: loopIdx, rail: fitStats.railDone, steer: fitStats.steerDone,
+          rods: live.length, events, tick: it.k,
+          angle: (() => { const f = fitAxis(track); if (!f) return null;
+            const dt = Math.abs([0,1,2].reduce((sm,k)=>sm+f.dir[k]*v[k],0));
+            return +(180/Math.PI*Math.acos(Math.min(1,dt))).toFixed(1); })() });
         trace.push({ tick: it.k, s: +alongC(c).toFixed(2), off: +offC(c).toFixed(2),
                      xs: +along(xon).toFixed(2), tets: solids.tets.length,
                      kind: pending.kind, made: !!(pending.kind === 'sc' && pending.killed),
@@ -3291,6 +3342,25 @@
     // and the displacement agree exactly. Turns 60 only, 0 vacuum refusals, 0
     // broken tets.
     //
+    // Live status into the loop panel's subtitle, so the rules are visible
+    // while it runs rather than only in a returned object.
+    const e6Status = (st) => {
+      const el = document.getElementById('lpsub'); if (!el) return;
+      const genOK = st.gen === st.lock;
+      el.innerHTML =
+        '<b style="color:#7fd4a8">chirality ' + st.chirality + '</b>'
+        + ' &nbsp;·&nbsp; <b style="color:' + (genOK ? '#7fd4a8' : '#ff5c5c') + '">gen '
+        + (st.gen || '—') + '</b>'
+        + ' &nbsp;·&nbsp; line ' + st.dir.join(',')
+        + '<br>loop ' + st.loopLen + ' moves (cos '
+        + (st.loopCos !== null ? st.loopCos.toFixed(4) : '—') + ')'
+        + ' &nbsp;·&nbsp; step ' + (st.loopLen ? (st.i % st.loopLen) + 1 : 0) + '/' + st.loopLen
+        + ' &nbsp;·&nbsp; rail ' + st.rail + ' steer ' + st.steer
+        + '<br>rods ' + st.rods + ' &nbsp;·&nbsp; flux ' + st.events
+        + ' &nbsp;·&nbsp; tick ' + st.tick
+        + ' &nbsp;·&nbsp; <b>angle to line ' + (st.angle === null ? '—' : st.angle + '°') + '</b>';
+    };
+
     // THE STEERING ELECTRON. Y shortcuts are banned, the generation is held at
     // EVERY tick, a tet is closed at EVERY tick, and it still steers.
     //
@@ -3332,7 +3402,7 @@
       async (tok) => {
         while (window._loopAlive(tok)) {
           await window._XONMOM({ lockAxes: true, dir: randDirE6(), fit: true,
-                                 banAxis: 'Y',
+                                 banAxis: 'Y', status: e6Status,
                                  alive: () => window._loopAlive(tok) });
           await breathe();
         }
