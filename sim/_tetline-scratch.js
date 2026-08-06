@@ -339,8 +339,50 @@
   // So the xon is never routed anywhere. Chirality then picks the sense and the
   // 60-degree rule picks the pivot, and what is left is a fixed hop list:
   // TWO hops for a rail, FOUR for a steer.
+  // TRAVERSAL SENSE MAPS. A map fixes one sense per base axis -- 16 in
+  // principle. The ones that COHERE are those expressible as sign(d.n) for some
+  // n: a POLARIZATION. Four central planes cut the sphere into 14 regions, so
+  // 14 of the 16 are polarizations and 2 are not, and the 2 exceptions are
+  // exactly the ZERO-SUM sets: if sum(d) = 0 then sum(d.n) = 0, so no n can
+  // make all four positive. Measured, and they are precisely A and B.
+  //
+  // That is the electron/nucleon split in one sentence. A and B are the only
+  // two maps with NO preferred direction -- momentum-free, which is what a
+  // handedness for a travelling particle has to be. Every other map has a
+  // direction to wind about, which is what circulating a square requires.
+  // Six of the fourteen polarize along a cardinal axis, one antipodal pair per
+  // axis; those are the six named here.
   const HOP_CH = { A: ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'] };
   HOP_CH.B = HOP_CH.A.map(t => t.split(',').map(n => -(+n)).join(','));
+  const _POL = { 'X+': [1,0,0], 'X-': [-1,0,0], 'Y+': [0,1,0],
+                 'Y-': [0,-1,0], 'Z+': [0,0,1], 'Z-': [0,0,-1] };
+  for (const k in _POL) { const n = _POL[k]; HOP_CH[k] = [];
+    for (const x of [-1,1]) for (const y of [-1,1]) for (const z of [-1,1])
+      if (x*n[0] + y*n[1] + z*n[2] > 0) HOP_CH[k].push([x,y,z].join(',')); }
+
+  // ---- THE TWO CHIRALITIES, L and R -------------------------------------
+  // Colour the four base axes and take "toward" to mean a positive component
+  // along cardinal up:
+  //     a red    (1,1,1)        b green  (1,1,-1)
+  //     c blue   (1,-1,1)       d yellow (1,-1,-1)
+  //
+  //   L :  red toward, blue away, green toward, yellow away
+  //   R :  red toward, blue away, green away,   yellow toward
+  //
+  // Flipping all four is not a third option -- it is the same object seen
+  // upside-down, the antipodal vertex.
+  //
+  // WHY THESE TWO. The apex squares are AC (red/blue) and BD (green/yellow).
+  // A square can only be circulated if one of its axes points toward and the
+  // other away -- rise on one, fall on the other. Do that for BOTH squares and
+  // the map's vector sum lands on a 4-VALENT <100> obtuse vertex of the
+  // rhombic dodecahedron: L sums to (4,0,0), R to (0,0,4), both |4|. Let a
+  // square's two axes agree instead and the sum lands on a 3-VALENT <111>
+  // acute vertex, (2,+-2,2), |2*sqrt3| -- and those cannot circulate.
+  // So chirality is the RELATIVE orientation of the two apex squares, same or
+  // opposite, and nothing to do with which generation the particle is in.
+  HOP_CH.L = ['1,1,1', '1,-1,1', '1,1,-1', '1,-1,-1'];    // == X+ polarization
+  HOP_CH.R = ['1,1,1', '1,-1,1', '-1,-1,1', '-1,1,1'];    // == Z+ polarization
   const HOP_CLS = { U: [[0,0,0],[2,0,0],[1,1,1],[1,1,-1]],
                     D: [[0,0,0],[2,0,0],[1,-1,1],[1,-1,-1]] };
   // Where the NEXT tet's canonical origin sits, in this tet's frame.
@@ -373,19 +415,55 @@
                    || (hvK(r[0]) === hvK(b) && hvK(r[1]) === hvK(a)));
   const HOP_BD = []; for (const x of [-1,1]) for (const y of [-1,1])
     for (const z of [-1,1]) HOP_BD.push([x,y,z]);
+  // Bounded base-hop walk in RELATIVE coordinates from `at` (arrived from
+  // `from`) to `target`, obeying chirality and the 60-degree rule at every
+  // step. Returns the hop list, or null. Depth 4 is ample: the census says a
+  // rod endpoint is 0 or 1 hops from the tet, and the extra depth only buys
+  // the detours a polarization needs to arrive from a legal quarter.
+  function walkTo(at, from, target, rods, ch) {
+    if (hvK(at) === hvK(target)) return [];
+    const seen = new Set([hvK(at) + '<' + hvK(from)]);
+    let front = [{ at, from, path: [] }];
+    for (let d = 0; d < 4 && front.length; d++) {
+      const nxt = [];
+      for (const st of front) for (const bd of HOP_CH[ch]) {
+        const v = bd.split(',').map(Number);
+        const to = [st.at[0] + v[0], st.at[1] + v[1], st.at[2] + v[2]];
+        if (hvK(to) === hvK(st.from)) continue;              // no a-b-a
+        if (!hUnit(rods, st.from, to)) continue;             // 60 degrees
+        const path = st.path.concat([{ to: to.slice(), kind: 'base' }]);
+        if (hvK(to) === hvK(target)) return path;
+        const k = hvK(to) + '<' + hvK(st.at);
+        if (seen.has(k)) continue; seen.add(k);
+        nxt.push({ at: to, from: st.at, path });
+      }
+      front = nxt;
+    }
+    return null;
+  }
+
   let _HOPT = null;
   function hopTable() {
     if (_HOPT) return _HOPT;
     const out = {};
-    for (const c of ['U','D']) for (const m of HOP_MOV[c]) for (const ch of ['A','B']) {
+    for (const c of ['U','D']) for (const m of HOP_MOV[c])
+      for (const ch of Object.keys(HOP_CH)) {
       const R0 = hRods(c);
       // The agreed severance order: for a steer, ADD BEFORE SEVER so a tet is
       // closed on every tick. Rods pair by axis, b[0] with the old X rod and
       // b[1] with the old Z, which is what keeps the leftover rod from closing
       // a second tet with an incoming one.
-      const plan = m.k === 'rail' ? [{ add:m.add, sev:m.sev }]
-        : [{ add:m.b[0], sev:null }, { add:m.b[1], sev:R0[0] },
-           { add:null, sev:R0[1] }];
+      // BOTH ADD ORDERS. m.b is listed [X rod, Z rod], and hardcoding that as
+      // the add order made the table non-equivariant under X<->Z: the swap
+      // sends U to D and L to R, so L|U|d ought to mirror R|D|swap(d), and it
+      // did not -- L lost all four of its +X steers while R lost none. Which
+      // rod goes first is a free choice of route, not a property of the move,
+      // so try it both ways and keep whichever yields an entry state.
+      const plans = m.k === 'rail' ? [[{ add:m.add, sev:m.sev }]]
+        : [[{ add:m.b[0], sev:null }, { add:m.b[1], sev:R0[0] },
+            { add:null, sev:R0[1] }],
+           [{ add:m.b[1], sev:null }, { add:m.b[0], sev:R0[1] },
+            { add:null, sev:R0[0] }]];
       const newTet = m.k === 'rail'
         ? [...new Set(R0.filter(r => !hSame(r, m.sev)).concat([m.add])
             .reduce((a, r) => a.concat(r), []).map(hvK))].map(t => t.split(',').map(Number))
@@ -394,20 +472,23 @@
       const res = [];
       for (const start of HOP_CLS[c]) for (const prev of HOP_CLS[c]) {
         if (hvK(start) === hvK(prev) || !hUnit(R0, prev, start)) continue;
+        let found = null;
+        for (const plan of plans) {
         let at = start, from = prev, rods = R0.map(r => [r[0].slice(), r[1].slice()]);
         const hops = []; let ok = true;
         for (const step of plan) {
           if (step.add) {
             let did = false;
             for (const [p2, q2] of [[step.add[0], step.add[1]], [step.add[1], step.add[0]]]) {
-              const pre = [];
-              if (hvK(at) !== hvK(p2)) {
-                const d = hvSub(p2, at);
-                if (!hvBase(d) || HOP_CH[ch].indexOf(hvK(d)) < 0) continue;
-                if (hvK(p2) === hvK(from) || !hUnit(rods, from, p2)) continue;
-                pre.push({ to: p2.slice(), kind: 'base' });
-              }
-              const f2 = pre.length ? at : from;
+              // APPROACH WALK, not a single hop. Reaching the endpoint of the
+              // rod about to be built can take more than one base hop once a
+              // chirality is in force: measured, A and B always manage it in
+              // one, but a POLARIZATION often cannot, and capping the walk at
+              // one hop is what emptied four of L's twelve moves. Same mistake
+              // as gating tetWalk on tet membership, one level down.
+              const pre = walkTo(at, from, p2, rods, ch);
+              if (!pre) continue;
+              const f2 = pre.length ? (pre.length > 1 ? pre[pre.length-2].to : at) : from;
               if (hvK(q2) === hvK(f2)) continue;
               if (!hUnit(rods.concat([[p2, q2]]), f2, q2)) continue;   // 60 degrees
               for (const h of pre) hops.push(h);
@@ -436,8 +517,11 @@
         }
         if (!ok) continue;
         const o2 = HOP_TO[c + '|' + hvK(m.disp)];
-        res.push({ start: hvK(start), prev: hvK(prev), hops,
-                   exitAt: hvK(hvSub(at, o2)), exitFrom: hvK(hvSub(from, o2)) });
+        found = { start: hvK(start), prev: hvK(prev), hops,
+                  exitAt: hvK(hvSub(at, o2)), exitFrom: hvK(hvSub(from, o2)) };
+        break;
+        }
+        if (found) res.push(found);
       }
       out[c + '|' + hvK(m.disp) + '|' + ch] = { kind: m.k, res };
     }
@@ -1045,13 +1129,17 @@
     // opt.chirality: 'A' | 'B' | null (unrestricted) | undefined (drawn from seed)
     const CHIRAL_A = ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'];
     const CHIRAL_B = CHIRAL_A.map(s => s.split(',').map(n => -(+n)).join(','));
+    // A polarization ('X+','Y-',...) is as valid a sense map as A or B; the
+    // hop table already knows them, so the runtime gate must too.
+    const CHIRAL_POL = HOP_CH;
     let chirality = opt.chirality;
     if (chirality === undefined) {
       const cs = opt.seed === undefined ? (Math.random() * 2147483647) | 0 : opt.seed;
       chirality = _mul(cs ^ 0x5bf03635)() < 0.5 ? 'A' : 'B';
     }
     const chiralSet = chirality === null ? null
-      : new Set(chirality === 'A' ? CHIRAL_A : CHIRAL_B);
+      : new Set(CHIRAL_POL[chirality]
+                || (chirality === 'A' ? CHIRAL_A : CHIRAL_B));
     const chiralOK = (a, b) => !chiralSet
       || chiralSet.has([0, 1, 2].map(k => NODE[b][k] - NODE[a][k]).join(','));
     let chiralBlocked = 0;      // base hops refused for wrong handedness
@@ -2956,32 +3044,47 @@
     // flux mode locks). 4 + 6 = the ten traversal directions of the lattice.
     const senseCount = new Map();
     const classLog = [];                        // 60/90 for each classified turn
-    const dirId = (d, isSC) => {
-      if (isSC) { const m = d[0] || d[1] || d[2]; return ax(d) + (m > 0 ? '+' : '-'); }
-      let s = 0; for (const v of d) { if (v) { s = v; break; } }
-      return 'b' + (s < 0 ? d.map(v => -v) : d).join(',');
-    };
-    const BASE_IDS = ['b1,1,1', 'b1,1,-1', 'b1,-1,1', 'b1,-1,-1'];
-    // The balance set is THIS GENERATION's directions: the 4 base axes plus the
-    // signed senses of the in-mode shortcut axes. An out-of-mode axis is not a
-    // direction the particle has, so it must not sit at zero forever and
-    // deadlock the minimum.
+    let identity = 'proton';                    // 'proton' | 'neutron'
+    let chirality = 'A';
+    // CHIRALITY, the same two zero-sum sign sets the electron uses. Of the 16
+    // sign patterns over the four base axes exactly two sum to zero, and they
+    // are exact negations: A = {+a,-b,-c,+d}, B = -A. A xon has one for life,
+    // so the opposite sense of any base axis is simply not a move it has.
+    const CH_A = ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'];
+    const CH_B = CH_A.map(t => t.split(',').map(n => -(+n)).join(','));
+    const chSet = () => new Set(chirality === 'A' ? CH_A : CH_B);
+    // RULE 2 identities. Base is a SIGNED direction, but chirality admits only
+    // one sense per axis, so there are exactly four. Shortcuts are POOLED by
+    // axis -- a travel on X+ and a travel on X- are both a travel on X.
+    const dirId = (d, isSC) => isSC ? ax(d) : d.join(',');
+    // The balance set is THIS GENERATION's directions: the four chirality-
+    // allowed base senses plus the two in-mode shortcut AXES. The dormant axis
+    // is excluded outright -- it is not a direction this particle has, so
+    // leaving it at zero would deadlock the minimum forever.
     const balanceSet = () => {
       const m = [...new Set(live.map(r => ax(dv(r[0], r[1]))))];
-      const axes = m.length >= 2 ? m : ['X', 'Y', 'Z'];
-      return BASE_IDS.concat(...axes.map(a => [a + '+', a + '-']));
+      const axes = m.length >= 2 ? m.slice(0, 2) : ['X', 'Y', 'Z'];
+      return [...chSet()].concat(axes);
     };
     const balanceTable = () => {
-      const rows = balanceSet().map(id => ({ id, n: senseCount.get(id) || 0 }));
+      const rows = balanceSet().map(id => ({ id, n: senseCount.get(id) || 0,
+        kind: id.indexOf(',') >= 0 ? 'base' : 'sc' }));
       const min = Math.min(...rows.map(x => x.n));
       rows.forEach(x => x.ok = (x.n === min));    // RULE 2 is hard: only the minimum
       return { rows, min };
     };
-    // RULE 3: 3-turn blocks of 2x90 + 1x60 for the proton. What is left to spend.
+    // RULE 3, the rolling block of three turns.
+    //   proton  = two 90 and one 60      neutron = two 60 and one 90
+    // The order inside a block is free; only the composition is fixed. The rule
+    // may be broken ONLY to keep rules 1 and 2, and ONLY for a neutron.
     const blockState = () => {
       const spent = classLog.slice(Math.floor(classLog.length / 3) * 3);
-      return { spent, left90: 2 - spent.filter(c => c === 90).length,
-                      left60: 1 - spent.filter(c => c === 60).length };
+      const want90 = identity === 'proton' ? 2 : 1;
+      const want60 = identity === 'proton' ? 1 : 2;
+      return { identity, spent,
+               left90: want90 - spent.filter(c => c === 90).length,
+               left60: want60 - spent.filter(c => c === 60).length,
+               mayBreak: identity === 'neutron' };
     };
     const sideOf = (k, off) => { const r = dirRef.get(k); if (!r) return '+';
       return (off[0] * r[0] + off[1] * r[1] + off[2] * r[2]) >= 0 ? '+' : '-'; };
@@ -3056,7 +3159,13 @@
                      (p0.z + q.z) / 2 - A.at[2]];
         side = sideOf(k, off); sideUsed = sideCount.get(k + '|' + side) || 0;
       }
+      const okCh = kind !== 'base' || chSet().has(k);
+      const bId = dirId(d, kind !== 'base');
+      const bTab = balanceTable();
+      const okBal = bTab.rows.some(r => r.id === bId && r.ok);
       return { to: j, kind, axis: kind === 'base' ? '-' : ax(d), dir: k,
+        balId: bId, balUsed: senseCount.get(bId) || 0,
+        okChirality: okCh, okBalance: okBal,
         dirUsed: dirCount.get(k) || 0, side, sideUsed,
         angleNow: angNow, turnNow,
         turn: turnNow,                                    // the RULE (metric band)
@@ -3074,6 +3183,8 @@
         rows.push(row(j, live.some(r => same(r, [xon, j])) ? 'sc-live' : 'sc-new', A));
       }
       return { tick, xon, prevNode, rods: live.length, closedRing: closedRing(live),
+        identity, chirality,
+        balance: balanceTable(),
         block: blockState(), classLog: classLog.slice(),
         fluxMode: [...new Set(live.map(r => ax(dv(r[0], r[1]))))].join('') || null,
         solids: { octs: solids.octs.length, tets: solids.tets.length },
@@ -3084,10 +3195,14 @@
         candidates: rows };
     }
 
-    async function start() {
+    async function start(opt) {
+      opt = opt || {};
+      identity = opt.identity === 'neutron' ? 'neutron' : 'proton';
+      chirality = opt.chirality === 'B' ? 'B' : 'A';
       _sync();
       active.clear(); live = []; prevNode = null; tick = 0; log.length = 0;
       dirCount.clear(); sideCount.clear(); dirRef.clear();
+      senseCount.clear();
       classLog.length = 0;      // must reset, or the identity block carries over
       lastWasSC = false;
       xon = KEY.get(LCENTER.join(','));
@@ -3130,6 +3245,10 @@
       }
       lastWasSC = !isBase;
       dirCount.set(k, (dirCount.get(k) || 0) + 1);
+      // RULE 2's ledger. Base counts the signed sense (chirality admits one per
+      // axis); shortcuts count the AXIS, pooled over both senses.
+      const bId = dirId(d, !isBase);
+      senseCount.set(bId, (senseCount.get(bId) || 0) + 1);
       if (A) {
         const a = P[from], b = P[xon];
         const off = [(a.x + b.x) / 2 - A.at[0], (a.y + b.y) / 2 - A.at[1],
@@ -3380,6 +3499,7 @@
         while (window._loopAlive(tok)) {
           await window._XONMOM({ lockAxes: true, dir: randDir(), fit: true,
                                  banAxis: 'Y', status: e6Status,
+                                 chirality: Math.random() < 0.5 ? 'L' : 'R',
                                  alive: () => window._loopAlive(tok) });
           await breathe();
         }

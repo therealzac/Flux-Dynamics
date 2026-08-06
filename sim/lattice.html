@@ -1205,16 +1205,29 @@ const VOID_COL={oct:0x5fb8d8,over:0xff9e6b,under:0x7f8fd8};   // hole classes
 // over/under split of the tetrahedral holes: (x+y+z) mod 4 is 1 or 3
 const HOLE=c=>(c[0]&1)?(((c[0]+c[1]+c[2])%4+4)%4===1?'over':'under'):'oct';
 const C_BASE=0x35526e,C_SC=0x7fd4a8,C_BAD=0xff5c5c,C_PICK=0xffe066;
-function mkLines(c,o){const g=new THREE.BufferGeometry();
+function mkLines(c,o,vc){const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(3),3));
-  const m=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:c,transparent:true,opacity:o}));
+  const m=new THREE.LineSegments(g,new THREE.LineBasicMaterial({color:c,transparent:true,
+    opacity:o,vertexColors:!!vc}));
   m.frustumCulled=false;scene.add(m);return m;}
-const baseLines=mkLines(0x54606e,0.55), scLines=mkLines(C_SC,1);
+const baseLines=mkLines(0xffffff,0.75,true), scLines=mkLines(C_SC,1);
+// ONE COLOUR PER BASE AXIS. BASE entries already carry their direction index
+// from dirOf(), so a, b, c, d are r, g, b, y with no extra bookkeeping.
+//   a = (1,1,1)  red      b = (1,1,-1)  green
+//   c = (1,-1,1) blue     d = (1,-1,-1) yellow
+const BASE_RGBY=[0xff4d4d,0x4dff70,0x4d9cff,0xffd24d];
+window._BASE_RGBY=BASE_RGBY;
 function setSegs(obj,segs){const a=new Float32Array(Math.max(3,segs.length*6));
   segs.forEach(([i,j],k)=>{a[k*6]=P[i].x;a[k*6+1]=P[i].y;a[k*6+2]=P[i].z;
     a[k*6+3]=P[j].x;a[k*6+4]=P[j].y;a[k*6+5]=P[j].z;});
   obj.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));}
-function setBaseSegs(){ setSegs(baseLines,BASE); }
+function setBaseSegs(){ setSegs(baseLines,BASE);
+  const a=new Float32Array(Math.max(3,BASE.length*6));
+  const c=new THREE.Color();
+  BASE.forEach((e,k)=>{ c.setHex(BASE_RGBY[(e[2]|0)%4]);
+    a[k*6]=c.r;a[k*6+1]=c.g;a[k*6+2]=c.b;
+    a[k*6+3]=c.r;a[k*6+4]=c.g;a[k*6+5]=c.b; });
+  baseLines.geometry.setAttribute('color',new THREE.BufferAttribute(a,3)); }
 
 const faceMesh=new THREE.Mesh(new THREE.BufferGeometry(),
   new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.16,
@@ -1743,6 +1756,6 @@ let tPrev=performance.now();
 })(performance.now());
 </script>
 <!-- scratch harnesses: measurement only, loaded after the engine is built -->
-<script src="_tetline-scratch.js?v=130"></script>
+<script src="_tetline-scratch.js?v=137"></script>
 </body>
 </html>
