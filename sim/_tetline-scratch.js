@@ -835,6 +835,34 @@
   };
   window._loopCleanup = cleanup;
 
+  // BETWEEN RUNS: take the particle away, then let the lattice actually relax
+  // before the next one spawns.
+  //
+  // Clearing the shortcuts is itself a flux event -- the release propagates
+  // outward at c exactly like the events that laid them -- so the next run must
+  // not begin until those cones have drained. Otherwise the new particle's
+  // geometry superposes on the old one's still-arriving relaxation, and what is
+  // on screen belongs to two particles at once.
+  const settleBetweenRuns = async (tok) => {
+    // THE TRAVERSAL LINE STAYS UP through the settle. The particle is gone but
+    // its news is not: the relaxation is still travelling out along that line,
+    // so the line is the one thing on screen that still means something. It is
+    // replaced when the next run draws its own, and cleared by cleanup() when
+    // the loop is stopped.
+    if (window._XONOFF) window._XONOFF();
+    if (window._TRAILOFF) window._TRAILOFF();
+    if (active.size) {
+      active.clear(); lastChange = 'run ended';
+      restate(true); await settle();
+    }
+    for (let i = 0; i < 4000; i++) {
+      if (!window._loopAlive(tok)) return;
+      if (!window._FLUX || !window._FLUX().running) break;
+      await new Promise(r => requestAnimationFrame(r));
+    }
+    await breathe();
+  };
+
   // THE SIMPLE NEUTRINO LOOP IS RETIRED. A tet tumbling the full width of the
   // lattice on a random line, one flux event per step, with no mode rule, no
   // chirality and no 60-degree constraint on the xon -- it predated all of
@@ -972,6 +1000,7 @@
   // the deformation. So: draw the xon the instant it hops, before restate(),
   // and track its node every frame via _onFrame while the lattice relaxes.
   let _spark = null, _wake = null, _xonNode = null;
+  window._XONNODE = () => _xonNode;
 
   // Layer dimmer, driven by the 'xon' slider. Held outside the meshes because
   // they are created lazily on the first hop — a level set while no loop is
@@ -993,10 +1022,23 @@
   { const s = document.getElementById('s-xon'); if (s) _xonDim = +s.value / 100; }
 
   window._onFrame = () => {
-    if (_spark && _spark.visible && _xonNode !== null && P[_xonNode])
-      _spark.position.copy(P[_xonNode]);
+    // The spark rides the DRAWN geometry, not the solved geometry -- otherwise
+    // it floats off the node it is standing on while that node's own news is
+    // still arriving.
+    if (_spark && _spark.visible && _xonNode !== null) {
+      const D = window._PDRAW ? window._PDRAW() : P;
+      if (D[_xonNode]) _spark.position.copy(D[_xonNode]);
+    }
   };
   function drawXon(node, trail) {
+    // THE SIMULATION TICK. Every CA moves its xon through here, so this is the
+    // one place that knows a tick happened -- and the flux wave is clamped to
+    // that count, so a stalled solver stalls the propagation with it. Arming
+    // the clamp here also means it is armed exactly when a particle exists.
+    if (node !== _xonNode && node !== null && node !== undefined) {
+      if (window._SIMTICK) window._SIMTICK();
+      if (window._FLUXCLAMP) window._FLUXCLAMP(true);
+    }
     _xonNode = node;
     if (!_spark) {
       _spark = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12),
@@ -1014,7 +1056,11 @@
     _wake.geometry.setDrawRange(0, trail.length);
     _wake.visible = trail.length > 1 && _xonDim > 0;
   }
-  window._XONOFF = () => { if (_spark) { _spark.visible = false; _wake.visible = false; } };
+  // No xon means no tick to sync to, so the clamp comes off -- otherwise the
+  // waves left over from the last run could never drain and settleBetweenRuns
+  // would wait for ever.
+  window._XONOFF = () => { if (_spark) { _spark.visible = false; _wake.visible = false; }
+    _xonNode = null; if (window._FLUXCLAMP) window._FLUXCLAMP(false); };
 
   // ---- the attractor, drawn ------------------------------------------------
   // A small white ball at the deepest hole -- the point the xon is pulled
@@ -1041,6 +1087,106 @@
     _attr.visible = _attrDim > 0;
   }
   window._ATTROFF = () => { if (_attr) _attr.visible = false; };
+
+  // ==========================================================================
+  // A YZ OCTAHEDRON AT THE CENTRE, and the cardinal-up arrow.
+  //
+  // The equator of an oct is four shortcuts closing a square, and the PAIR OF
+  // AXES that square uses IS the flux mode. So a YZ oct is the ring
+  //     i --Y+--> a --Z+--> b <--Y+-- d <--Z+-- i
+  // with X left dormant. Its two apexes are then forced, not chosen: they are
+  // the nodes base-joined to all four ring vertices, and they sit at +-X, so
+  // the two apex squares are the ones chirality actually bites on.
+  //
+  // The ring's centre lands on a HALF-INTEGER point -- centroid (0,1,1) for a
+  // ring anchored at the origin -- because ring vertices share a parity and
+  // their mean cannot. So there is no YZ ring centred exactly on the lattice
+  // centre; the search below takes the nearest one and reports how far off it
+  // is rather than pretending otherwise.
+  // ==========================================================================
+  window._YZOCT = async function (opt) {
+    opt = opt || {};
+    _sync();
+    const AY = 2, AZ = 4;                       // AX indices for Y+ and Z+
+    let best = null;
+    for (let i = 0; i < NODE.length; i++) {
+      const a = SCOPT.get(i + ':' + AY); if (a === undefined) continue;
+      const d = SCOPT.get(i + ':' + AZ); if (d === undefined) continue;
+      const b = SCOPT.get(a + ':' + AZ); if (b === undefined) continue;
+      if (SCOPT.get(d + ':' + AY) !== b) continue;      // must close the square
+      const ctr = [0, 1, 2].map(k =>
+        (NODE[i][k] + NODE[a][k] + NODE[b][k] + NODE[d][k]) / 4);
+      const off = Math.hypot(...[0, 1, 2].map(k => ctr[k] - LCENTER[k]));
+      if (!best || off < best.off) best = { i, a, b, d, ctr, off };
+    }
+    if (!best) return { ok: false, why: 'no YZ ring in this lattice' };
+    if (!opt.keep) active.clear();
+    const keys = [[best.i, AY, best.a], [best.i, AZ, best.d],
+                  [best.a, AZ, best.b], [best.d, AY, best.b]];
+    for (const [n, ax2, j] of keys) active.set(n + ':' + ax2, [n, j]);
+    restate(true); await settle(); detect();
+    const ring = [best.i, best.a, best.b, best.d];
+    const apex = [];
+    for (let v = 0; v < NODE.length; v++)
+      if (!ring.includes(v) && ring.every(r => _baseSet.has(K(v, r)))) apex.push(v);
+    return { ok: true, ring, ringXYZ: ring.map(v => NODE[v].join(',')),
+      apex, apexXYZ: apex.map(v => NODE[v].join(',')),
+      centre: best.ctr, offCentre: +best.off.toFixed(4),
+      rods: keys.map(([n, , j]) => n + '-' + j),
+      vacuum: legal(resid), octs: solids.octs.length, tets: solids.tets.length };
+  };
+
+
+  // THE FLUX PROPAGATION LOOP IS RETIRED. It placed one shortcut on a blank
+  // lattice, held it, severed it, and let the wave run -- which was the right
+  // demonstration while propagation was a special mode. It is not one any more:
+  // restate() emits a wave from whatever rods changed, so every flux event in
+  // the simulator does this, whether it comes from a click, a CA, or anything
+  // else. A dedicated loop for it only invited the reading that propagation is
+  // something you switch on.
+  //
+  // `_CAUSAL`, the harness behind it, went too. Its measurement modes ('front', the
+  // shell-by-shell wave, and 'cone') produced the numbers that settled how
+  // propagation should work -- that a clamped cone accumulates strain and
+  // releases it all at once, that a front-only wave propagates but leaves a
+  // permanent 5% wake, and that validate-then-reveal does neither. Those are
+  // recorded in the session notes; the code is gone because its reveal path
+  // wrote to P, and rendering has read PD since the engine took the job over,
+  // so it could no longer draw anything.
+
+  // CARDINAL UP. Not a lattice object -- a reference direction, so the two
+  // chiralities can be read off the screen: "toward" means a positive
+  // component along this arrow.
+  let _upArrow = null, _upLen = null;
+  window._UPARROW = function (on, len) {
+    if (on === false) { if (_upArrow) _upArrow.visible = false; return; }
+    // Rebuild on a length change: the geometry is baked, so resizing means
+    // replacing it rather than scaling a cached group.
+    if (_upArrow && len && len !== _upLen) {
+      scene.remove(_upArrow);
+      _upArrow.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+      _upArrow = null;
+    }
+    if (!_upArrow) {
+      const L = _upLen = (len || 1.9), headL = L * 0.28,
+            headR = L * 0.10, shaftR = L * 0.026;
+      const mat = new THREE.MeshBasicMaterial({ color: 0x22ff66,
+        transparent: true, opacity: 0.9, depthTest: false });
+      _upArrow = new THREE.Group();
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(shaftR, shaftR, L - headL, 16), mat);
+      shaft.position.y = (L - headL) / 2;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(headR, headL, 20), mat);
+      head.position.y = L - headL / 2;
+      _upArrow.add(shaft); _upArrow.add(head);
+      _upArrow.renderOrder = 999;
+      _upArrow.frustumCulled = false;
+      scene.add(_upArrow);
+    }
+    _upArrow.position.set(LCENTER[0] * S, LCENTER[1] * S, LCENTER[2] * S);
+    _upArrow.visible = true;
+    return 'up arrow on, +Y';
+  };
 
   // Realise a tet-flip sequence with a single walking xon. The tet-level rule
   // still chooses WHERE to go; what changes is that the shortcuts are now made
@@ -2580,6 +2726,925 @@
     return out;
   };
 
+  // ==========================================================================
+  // THE NUCLEON  --  the rule set worked out by hand on 6 Aug, coded straight.
+  //
+  // Rules, in priority order. Each is a HARD filter except 5, which ranks.
+  //   1  no shuttling -- a-b-a is forbidden outright
+  //   2  directional balance -- move only in a least-traversed BASE direction.
+  //      Shortcuts do NOT count: they were tried in the balance set three ways
+  //      (signed, pooled, pooled-at-2x) and every one of them strangles the
+  //      nucleon. Pooled is worst: one X+ makes the whole X axis read as spent,
+  //      so the X- that closes the equator is barred and no oct can ever form.
+  //      Out of the set entirely, a shortcut axis is re-usable and the equator
+  //      closes -- measured by hand, 2 octs by tick 7.
+  //   3  nucleon identity -- rolling blocks of three turns.
+  //      proton  = two 90 and one 60      neutron = two 60 and one 90
+  //      Order inside a block is free. A PROTON may never break it; a neutron
+  //      may, and only to keep rules 1 and 2.
+  //   4  attractor -- rank by distance to the deepest hole
+  //   5  identity preference -- proton prefers 90, neutron prefers 60
+  //
+  // THE CASCADE WAS REORDERED ON 6 AUG and PREFER-SHORTCUTS WAS RETIRED.
+  //
+  // It used to run: block, then the identity preference, then prefer-shortcuts,
+  // then the attractor. Both of the middle two were HARD FILTERS ahead of the
+  // attractor, so the attractor never chose anything -- it only ranked what
+  // they left. Measured on a YZ proton: at t2 the two nearest moves at dA 0.645
+  // were 60s, the preference binned them, and the nearest surviving 90 was
+  // 0.947. Prefer-shortcuts was retired outright rather than demoted; the
+  // identity preference survives as the LAST tie-break, among moves already
+  // tied for nearest, where it cannot cost distance.
+  //
+  // Note what R3 still discards regardless: `need` only ever holds 60 and/or
+  // 90, so every 75 and off-class move dies at R3 and can only be taken by a
+  // neutron breaking its block.
+  //
+  // Anything written before 6 Aug calls the attractor "r5".
+  //
+  // Plus GENERATION (once two shortcut axes carry rods the third is barred,
+  // fixing XY / XZ / YZ) and CHIRALITY -- which is NOT fixed at birth: it is
+  // discovered, needing the mode first and then base traversals to single out
+  // one of the mode's two polarizations. See the determination note below.
+  //
+  // SEVERANCE, as in the scaffolded build: two tets may not share an edge
+  // while attached to the oct, since the pair raises a second octahedron. When
+  // a new tet shares an edge with an older one THE OLD TET DIES -- its enabling
+  // rod, the one the new tet does not carry, is severed. `octs` above 1 is the
+  // symptom this exists to prevent, and it is the number to watch.
+  // THE NUCLEON STEPPER. One source of truth for the rules: the loop below is
+  // a thin driver over this, so anything played by hand and anything played at
+  // speed run identical code. `look()` reports the board, `step()` applies one
+  // decision. Nothing here scores in a way the rules do not name.
+  window._NSTEP = (() => {
+    // CHIRALITY IS DISCOVERED, NOT DRAWN AT BIRTH.
+    //
+    // There are exactly THREE maps in the whole scheme -- the three cardinal
+    // polarizations X, Y, Z -- and each flux mode uses the two lying along its
+    // own ACTIVE axes. Computed over all three modes, every one of the six
+    // resulting maps lands on a 4-valent <100> zonotope vertex of magnitude 4,
+    // which is §6's circulation criterion; the dormant axis's polarization is
+    // never a chirality of that mode.
+    //
+    //     XY -> {X+, Y+}      XZ -> {X+, Z+}      YZ -> {Y+, Z+}
+    //
+    // The old code hardcoded L = X+ and R = Z+, i.e. the XZ pair, and applied
+    // it to every mode. Correct for the electron, which is XZ by construction;
+    // simply the wrong map for a YZ or XY nucleon, and that is why a
+    // geometrically valid 90 kept coming back barred.
+    //
+    // ORDER OF DETERMINATION. Nothing about chirality exists until the mode
+    // does, because "toward" is measured along the DORMANT axis and there is
+    // no dormant axis until two shortcut axes carry rods. After that, base
+    // traversals decide -- but ONE IS NEVER ENOUGH. Measured over all three
+    // modes: each of the 8 base directions lies in exactly 2 of the mode's 4
+    // sign-sets, one per family, so a single hop fixes the orientation and
+    // never the family. Two hops settle it in 32 of 64 ordered pairs.
+    //
+    // So the candidates are carried and filtered, and chirality LATCHES when
+    // one survives. While more than one survives a base move is legal if any
+    // surviving candidate admits it, which is also what stops the xon walking
+    // into a direction consistent with none of them.
+    const POLK = { X: 0, Y: 1, Z: 2 };
+    const MODE_FAM = { XY: ['X', 'Y'], XZ: ['X', 'Z'], YZ: ['Y', 'Z'] };
+    const POL_SET = (() => {
+      const dirs = [];
+      for (const x of [1, -1]) for (const y of [1, -1]) for (const z of [1, -1])
+        dirs.push([x, y, z]);
+      const out = {};
+      for (const a of ['X', 'Y', 'Z']) for (const s of [1, -1])
+        out[a + (s > 0 ? '+' : '-')] =
+          new Set(dirs.filter(d => d[POLK[a]] * s > 0).map(d => d.join(',')));
+      return out;
+    })();
+
+    let identity = 'proton', chSet = null, chName = null, chCand = null;
+    let xon = null, prevNode = null, live = [], wake = [];
+    let tick = 0, events = 0, baseHops = 0, refused = 0, severed = 0, stalled = null;
+    const baseCount = new Map(), scCount = new Map(), classLog = [], log = [];
+    // UNDO. Every scrap of state the automaton reads, captured before a move
+    // and restored whole -- including `active`, since the engine's own rod set
+    // is what the solver rebuilds from. Stepping back and forward again may
+    // land on a DIFFERENT move now that r5 is sampled, which is the point.
+    const history = [], chJournal = [];
+
+    // CHIRALITY DETERMINATION, run after every applied move.
+    //   1. no mode yet            -> nothing to determine
+    //   2. mode just clicked in   -> open the four sign-sets of that mode
+    //   3. a base traversal       -> discard candidates that do not admit it
+    //   4. one candidate left     -> LATCH, for life
+    // Step 3 is why the candidates are carried rather than resolved on the
+    // spot: measured over all three modes, every base direction lies in two of
+    // the four sets, so no single traversal can ever pick one out.
+    function chUpdate(dirKey, wasBase) {
+      if (chSet) return;
+      const mode = modeName();
+      if (!mode) return;
+      if (!chCand) {
+        chCand = [];
+        for (const a of MODE_FAM[mode]) chCand.push(a + '+', a + '-');
+        chJournal.push('t' + tick + ' mode ' + mode + ' -> candidates '
+          + chCand.join(' '));
+      }
+      if (!wasBase) return;
+      const kept = chCand.filter(n => POL_SET[n].has(dirKey));
+      if (!kept.length) {                 // admitted by none: should be barred
+        chJournal.push('t' + tick + ' ' + dirKey + ' admitted by NO candidate');
+        return;
+      }
+      if (kept.length !== chCand.length)
+        chJournal.push('t' + tick + ' base ' + dirKey + ' -> ' + kept.join(' '));
+      chCand = kept;
+      if (chCand.length === 1) {
+        chName = chCand[0]; chSet = POL_SET[chName];
+        chJournal.push('t' + tick + ' LATCHED ' + chName);
+      }
+    }
+    // ALL EIGHT base directions and ALL SIX shortcut senses, so the readout can
+    // show what chirality and generation are excluding, not only what was used.
+    const ALL_BASE = [1, -1].flatMap(x => [1, -1].flatMap(y => [1, -1]
+      .map(z => [x, y, z].join(','))));
+    const ALL_SC = ['2,0,0', '-2,0,0', '0,2,0', '0,-2,0', '0,0,2', '0,0,-2'];
+    const dv = (a2, b2) => [0, 1, 2].map(k => NODE[b2][k] - NODE[a2][k]);
+    const ax = d => (d[0] ? 'X' : (d[1] ? 'Y' : 'Z'));
+    const same = (x, y) => (x[0] === y[0] && x[1] === y[1])
+                        || (x[0] === y[1] && x[1] === y[0]);
+    const K2 = (i, j) => Math.min(i, j) * 100000 + Math.max(i, j);
+
+    // TETS AND OCTS COME FROM THE ENGINE'S DETECTOR, not a parallel
+    // combinatorial one. Writing my own was the bug: `solids` reported 7 octs
+    // and 11 tets while my rod-pair scan reported ZERO of each, so both the
+    // no-tets-before-the-oct gate and the severance rule were silent no-ops for
+    // every tick of every run. Never re-derive what the engine already detects.
+    //
+    // AN OCT IS `[apexA, apexB, [ring x4]]` -- a NESTED triple, not a flat
+    // vertex list. Treating it as flat made `rodsIn` match nothing, so
+    // `ringOf()` returned [] on a board with two octs on it and severance's
+    // "never cut a ring rod" guard was vacuous: at t8 it cut 200-131, a rod
+    // holding the very oct it was meant to protect.
+    const engineTets = () => solids.tets.map(t => t.slice());
+    const engineOcts = () => solids.octs.map(o => o.slice());
+    const octVerts = o => [o[0], o[1], ...o[2]];
+    // Which live rods lie inside a given solid's vertex set.
+    const rodsIn = vs => live.filter(r => vs.includes(r[0]) && vs.includes(r[1]));
+    // THE HOME OCT is latched the first time one appears and never re-picked;
+    // `solids.octs[0]` is not stable once a second oct exists, and the whole
+    // point of severance is to protect the FIRST one.
+    let homeOct = null;
+    // WHAT SEVERANCE MUST NOT CUT: every rod of the home oct, found over ALL
+    // SIX of its vertices.
+    //
+    // Asking for `homeOct[2]` was wrong and cost the oct at t12. An octahedron
+    // has THREE great squares and `detect()` names one of them arbitrarily --
+    // it scans `diag` for a sqrt(2) pair and takes the first, so `[a,b]` is
+    // whichever diagonal came up, not the equator's apexes. Measured at t11:
+    // the oct was {168,238,169,200,206,237} with equator 168-169-238-237, and
+    // detect reported apexes (168,238) and sh=[169,200,206,237] -- a square
+    // holding NOT ONE of the four equator rods. `rodsIn(sh)` returned [], so
+    // nothing was protected and severance cut 238-237, an equator rod, and the
+    // octahedron died for no geometric reason.
+    //
+    // Over all six vertices there is no ambiguity: a rod is a unit edge, an
+    // oct's diagonals are sqrt(2), so every rod between two oct vertices is an
+    // edge of that oct and cutting any one of them destroys it.
+    const ringOf = () => homeOct ? rodsIn(octVerts(homeOct)) : [];
+
+    // NOT EVERY EDGE OF A DETECTED SOLID IS A ROD WE OWN. `detect()` is
+    // geometric on the SOLVED positions, so the solver squeezing a shortcut
+    // slot to 1.0 raises a solid nobody built -- an implied shortcut. Measured
+    // at t8 of the first proton: tet {131,168,169,200} has edges 131-200 and
+    // 168-169 at d=1.000000 with neither in `active`. That tet, and the second
+    // oct it completes, cannot be severed: there is no rod to cut. Only the
+    // gate can prevent it, which is why the gate has to solve.
+    const impliedEdgesOf = vs => {
+      const out = [];
+      for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length; j++) {
+        const a2 = vs[i], b2 = vs[j];
+        if (Math.abs(P[a2].distanceTo(P[b2]) - 1) > 1e-6) continue;
+        if (_baseSet.has(K(a2, b2))) continue;
+        if (live.some(r => same(r, [a2, b2]))) continue;
+        out.push(a2 + '-' + b2);
+      }
+      return out;
+    };
+    const sharingPairs = () => {
+      const t = engineTets(), out = [];
+      for (let i = 0; i < t.length; i++) for (let j = i + 1; j < t.length; j++) {
+        const sh = t[i].filter(v => t[j].includes(v));
+        if (sh.length >= 2) out.push([i, j, sh]);
+      }
+      return out;
+    };
+
+    const modeAxes = () => {
+      const m = [...new Set(live.map(r => ax(dv(r[0], r[1]))))];
+      return m.length >= 2 ? m.slice(0, 2) : ['X', 'Y', 'Z'];
+    };
+    // The flux mode as a NAME, or null while fewer than two shortcut axes
+    // carry rods. Null is the honest answer: with no dormant axis there is no
+    // "toward", so chirality is not merely unknown, it does not yet exist.
+    const modeName = () => {
+      const m = [...new Set(live.map(r => ax(dv(r[0], r[1]))))].sort();
+      if (m.length !== 2) return null;
+      const n = m.join('');
+      return MODE_FAM[n] ? n : null;
+    };
+    // Which base directions chirality currently permits: the latched map once
+    // one exists, otherwise the union of the surviving candidates, otherwise
+    // -- no mode yet -- all eight.
+    const allowedDirs = () => {
+      if (chSet) return chSet;
+      if (chCand && chCand.length) {
+        const u = new Set();
+        for (const n of chCand) POL_SET[n].forEach(d => u.add(d));
+        return u;
+      }
+      return new Set(ALL_BASE);
+    };
+    // Balance is measured over whatever chirality currently permits, so it
+    // widens and narrows with the candidate set rather than assuming four.
+    const balanceRows = () => {
+      const rows = [...allowedDirs()].map(id => ({ id, n: baseCount.get(id) || 0 }));
+      const min = Math.min(...rows.map(r => r.n));
+      rows.forEach(r => r.ok = (r.n === min));
+      return rows;
+    };
+    // THE READOUT'S OWN VIEW. Counts every direction ever offered, with the
+    // reason it is or is not spendable -- balance binds base directions only,
+    // generation binds shortcut axes only, and chirality bars four of the
+    // eight base senses outright. Purely descriptive: nothing here is read by
+    // a rule.
+    const dirStats = () => {
+      const rows = balanceRows(), axes = modeAxes(), ok = allowedDirs();
+      return {
+        base: ALL_BASE.map(id => ({ id, n: baseCount.get(id) || 0,
+          allowed: ok.has(id),
+          atMin: !!(rows.find(r => r.id === id) || {}).ok })),
+        sc: ALL_SC.map(id => ({ id, n: scCount.get(id) || 0,
+          allowed: axes.indexOf(ax(id.split(',').map(Number))) >= 0 })),
+        axes,
+        turns: { n60: classLog.filter(c => c === 60).length,
+                 n90: classLog.filter(c => c === 90).length,
+                 total: classLog.length },
+      };
+    };
+    // NUCLEON IDENTITY: A BALANCED BLOCK OF THREE, PLUS A PREFERENCE.
+    //
+    // 90 is an up quark, 60 is a down. A proton is uud, a neutron is udd, and
+    // EVERY GROUP OF THREE MUST BALANCE -- but the order inside a group is
+    // free. A proton may run uud, udu or duu; a neutron dud, ddu or udd. So the
+    // first turn of a block is a free choice of either class, the second is
+    // free only if the first left both still owing, and the third is whatever
+    // the block still owes.
+    //
+    // THE PREFERENCE ONLY BREAKS TIES INSIDE THAT FREEDOM: the proton takes a
+    // 90 when the block permits either, the neutron a 60. It never overrides
+    // the composition.
+    //
+    // Both halves are load-bearing and neither works alone:
+    //   - quota with no preference -- the greedy shortcut rule spent both 90s
+    //     on the first two ticks, so when the move that CLOSED the octahedron
+    //     appeared at t4 (legal, vacuum-approved, tet-free, nearest the
+    //     attractor, +1 OCT) the block owed a 60 and forbade it.
+    //   - preference with no quota -- the proton simply took three consecutive
+    //     90s and closed the equatorial square outright. The oct formed, but
+    //     for no reason: a square of four right angles is not uud.
+    //   - a strict 90-90-60 order changed nothing, since that greedy prefix is
+    //     exactly what the strict pattern demands.
+    const PREF = { proton: 90, neutron: 60 };
+    const blockState = () => {
+      const spent = classLog.slice(Math.floor(classLog.length / 3) * 3);
+      const want90 = identity === 'proton' ? 2 : 1;
+      const want60 = identity === 'proton' ? 1 : 2;
+      const left90 = want90 - spent.filter(c => c === 90).length;
+      const left60 = want60 - spent.filter(c => c === 60).length;
+      const n90 = classLog.filter(c => c === 90).length;
+      return { identity, spent, left90, left60, pref: PREF[identity],
+               // what the block still PERMITS this tick -- both while it owes
+               // both, one class once the other is spent
+               need: [].concat(left90 > 0 ? [90] : [], left60 > 0 ? [60] : []),
+               n90, n60: classLog.filter(c => c === 60).length,
+               total: classLog.length,
+               ratio: classLog.length ? n90 / classLog.length : null };
+    };
+    const angleAt = (a2, b2, c2) => (a2 && b2 && c2)
+      ? +(Math.acos(Math.max(-1, Math.min(1, (a2 * a2 + b2 * b2 - c2 * c2) / (2 * a2 * b2))))
+          * 180 / Math.PI).toFixed(1) : null;
+    const cls = t => t === null ? 'first'
+      : (t >= 45 && t <= 60 ? 60 : (t > 60 && t < 75 ? 75
+      : (t >= 75 && t <= 105 ? 90 : 'off')));
+
+    // THE ATTRACTOR IS TRACKED, NOT RE-ELECTED EVERY TICK.
+    //
+    // `tieNear` used to be the XON'S OWN POSITION, and _DEEPHOLE quantises
+    // depth to 0.01 before breaking ties by proximity. Measured on a live
+    // board: four holes tied at q=66 and the winner was the SHALLOWER one, at
+    // depth 0.6591 and 0.659 from the xon, beating a genuinely deeper hole at
+    // 0.6624 that was 1.565 away. So the target was re-elected each tick by
+    // where the walker happened to be -- move the xon and a different hole
+    // wins. That is the "it moved away and created a new attractor" failure,
+    // and it makes r5 partly circular: you cannot steer toward a goal that
+    // follows you.
+    //
+    // Fixing the TIE-BREAK alone was not enough, and the measurement says why.
+    // After one move the tracked hole was still there, shifted 0.039 -- but the
+    // xon's own new rod had dug a DEEPER hole beside it, q=67 against q=64, and
+    // depth beats a tie. So the target still jumped 0.651 to a void the xon had
+    // just created by moving. Re-election by depth is the same circularity as
+    // re-election by proximity: the walker's own rods deepen the ground under
+    // its feet, so "the deepest hole" tracks the walker no matter how the tie
+    // is broken.
+    //
+    // THE ATTRACTOR IS THEREFORE LATCHED BY IDENTITY, NOT BY DEPTH. It is
+    // acquired once -- deepest hole, xon-nearest tie-break -- and thereafter
+    // the target is the SAME VOID, found each tick as the hole nearest to
+    // where it was last seen. It moves only as far as that void deforms.
+    // Re-acquisition happens only if the census comes back empty, i.e. the
+    // void is genuinely gone.
+    //
+    // The deliberate cost: a genuinely deeper hole elsewhere is now ignored.
+    // That is the point. A goal that can be superseded by the consequences of
+    // moving is not a goal.
+    let homeAttr = null, attrJump = null;
+    const attract = () => {
+      const d = window._DEEPHOLE({ aroundRods: true, quiet: true,
+        tieNear: homeAttr
+          || (xon !== null ? [P[xon].x, P[xon].y, P[xon].z] : null) });
+      const tops = (d.top && d.top.length) ? d.top : null;
+      if (!tops) { homeAttr = null; attrJump = null; drawAttractor(null); return null; }
+      let top = tops[0];
+      if (homeAttr) {                      // follow the void we already chose
+        const near = (h) => Math.hypot(h.at[0] - homeAttr[0],
+          h.at[1] - homeAttr[1], h.at[2] - homeAttr[2]);
+        top = tops.reduce((best, h) => near(h) < near(best) ? h : best, tops[0]);
+      }
+      attrJump = homeAttr ? +Math.hypot(top.at[0] - homeAttr[0],
+        top.at[1] - homeAttr[1], top.at[2] - homeAttr[2]).toFixed(3) : 0;
+      homeAttr = top.at.slice();
+      drawAttractor(top.at);
+      return top;
+    };
+
+    function look() {
+      const A = attract(), rows = balanceRows(), axes = modeAxes();
+      const okDirs = allowedDirs();
+      const haveOct = engineOcts().length > 0;
+      const cand = [];
+      const add = (j, kind, rod) => {
+        const d = dv(xon, j), key = d.join(',');
+        const c = { to: j, xyz: NODE[j].join(','), kind, rod, dir: key,
+          shuttle: j === prevNode, okChirality: true, okBalance: true,
+          okGen: true, okTetGate: null };      // null == NOT YET GATED
+        if (kind === 'base') {
+          // Unconstrained before the mode exists; the union of the survivors
+          // while chirality is still being determined; the latched map after.
+          c.okChirality = okDirs.has(key);
+          const r = rows.find(x => x.id === key);
+          c.okBalance = !!(r && r.ok);
+        } else {
+          c.okGen = axes.indexOf(ax(d)) >= 0;
+        }
+        const dist = prevNode === null ? null : P[prevNode].distanceTo(P[j]);
+        c.angle = prevNode === null ? null
+          : angleAt(P[prevNode].distanceTo(P[xon]), P[xon].distanceTo(P[j]), dist);
+        c.turn = prevNode === null ? 'first' : cls(c.angle);
+        c.dA = A ? +Math.hypot(P[j].x - A.at[0], P[j].y - A.at[1], P[j].z - A.at[2]).toFixed(3) : null;
+        c.legal = !c.shuttle && c.okChirality && c.okBalance && c.okGen
+                  && c.okTetGate !== false;
+        cand.push(c);
+      };
+      for (const j of _baseNbr[xon]) add(j, 'base', null);
+      for (let a2 = 0; a2 < AXN.length; a2++) {
+        const j = SCOPT.get(xon + ':' + a2); if (j === undefined) continue;
+        add(j, live.some(r => same(r, [xon, j])) ? 'sc-live' : 'sc-new', [xon, j]);
+      }
+      const sharing = sharingPairs();
+      return { tick, xon, xyz: xon !== null ? NODE[xon].join(',') : null, prevNode,
+        haveOct,
+        identity, rods: live.length, rodList: live.map(r => r.join('-')),
+        // CHIRALITY, as it actually stands: the mode (null until two shortcut
+        // axes carry rods), the surviving candidate maps, and the latched one.
+        mode: modeName(), chirality: chName,
+        chCandidates: chCand ? chCand.slice() : null,
+        chLatched: !!chSet,
+        dormant: modeName() ? ['X', 'Y', 'Z'].find(a =>
+          MODE_FAM[modeName()].indexOf(a) < 0) : null,
+        octs: solids.octs.length, tets: solids.tets.length,
+        tetsSharingAnEdge: sharing.length, sharingDetail: sharing,
+        ring: ringOf().map(r => r.join('-')),
+        balance: rows.map(r => r.id + '=' + r.n + (r.ok ? '*' : '')),
+        block: blockState(), classLog: classLog.slice(),
+        attractor: A ? { at: A.at.map(v => +v.toFixed(3)), kind: A.kind } : null,
+        attrJump,                     // 0 = same hole held; large = target moved
+        distA: A ? +Math.hypot(P[xon].x - A.at[0], P[xon].y - A.at[1], P[xon].z - A.at[2]).toFixed(3) : null,
+        stats: dirStats(), lastMove: log.length ? log[log.length - 1] : null,
+        implied: engineTets().concat(engineOcts().map(octVerts))
+                   .flatMap(impliedEdgesOf).filter((v, i, a) => a.indexOf(v) === i),
+        stalled, events, severed, refused, candidates: cand };
+    }
+
+    // ---- THE TET GATE ------------------------------------------------------
+    // NO TET MAY ACTUALISE BEFORE THE OCT. The previous version materialised
+    // the candidate rod and called detect() WITHOUT SOLVING; detect() measures
+    // P[], so the probe rod's endpoints were still sqrt(2) apart and it found
+    // nothing -- the gate passed everything, every tick of every run.
+    //
+    // The probe therefore has to go all the way round: add -> restate ->
+    // settle -> detect. That is the only way to see the IMPLIED tets, which is
+    // exactly the case that broke t7, and it is not optional: an implied tet
+    // has no rod and so cannot be severed after the fact.
+    //
+    // Cost is one solve per untried candidate. `enqueue` is LRU-cached on the
+    // pair set, so the undo is always a hit and repeated probes are free.
+    async function gate(s) {
+      // EVERY tick, oct or no oct. An earlier version skipped the probe once
+      // the oct existed, on the grounds that "no tet before the oct" no longer
+      // decides anything -- but the same probe carries the VACUUM answer, and
+      // skipping it puts rods in without asking the solver first. The tet rule
+      // has a scope; the vacuum does not.
+      // PROBES MUST NOT PROPAGATE. Each one materialises a rod, solves, and
+      // undoes it, so with the flux wave armed a single tick would emit a
+      // dozen waves from rods that were never really laid. Silence them for
+      // the probe run; the move that is actually taken emits its wave as
+      // normal. `startWave` with no changed rods snaps rather than animating,
+      // so the restore below leaves the drawing exactly where it was.
+      // `quiet`, not `on:false` -- the master switch SNAPS, which would kill
+      // any wave still in flight from the previous move.
+      const fluxWas = window._FLUX ? window._FLUX().quiet : false;
+      if (window._FLUX) window._FLUX({ quiet: true });
+      const probes = s.candidates.filter(c => c.kind === 'sc-new' && c.legal);
+      for (const c of probes) {
+        const nk = scKeyOf(c.rod[0], c.rod[1]);
+        if (!nk) { c.okTetGate = false; c.legal = false; continue; }
+        active.set(nk[0], nk[1]);
+        restate(true); await settle(); detect();
+        c.wouldTets = solids.tets.length;
+        c.wouldOcts = solids.octs.length;
+        c.wouldShare = sharingPairs().length;
+        c.wouldVacuum = legal(resid);
+        active.delete(nk[0]);
+        c.okTetGate = !(!s.haveOct && c.wouldTets > 0);
+        // THE VACUUM ANSWER IS BINDING. The probe already asked it; choosing a
+        // move it refuses adds a rod only to roll it back, spending the tick
+        // and displacing the xon with nothing built. Measured at t7: 63 came
+        // back vac=false, was chosen over 133 (vac=true) on distance alone,
+        // and the xon walked out to (-2,0,8) with 5 rods and no oct.
+        c.legal = c.legal && c.okTetGate && c.wouldVacuum;
+      }
+      // put the board back exactly as it was, then re-read it
+      restate(true); await settle(); detect();
+      if (window._FLUX) window._FLUX({ quiet: fluxWas });
+      s.gated = true;
+      // Tag every candidate with the odds r5 would draw it at, so the panel can
+      // show them before the click. `narrow` is defined below -- hoisted, and
+      // only ever called after the gate has settled legality.
+      const n = narrow(s);
+      s.poolSize = n.use ? n.use.length : 0;
+      s.narrowWhy = n.why || n.stop;
+      return s;
+    }
+
+    async function lookGated() { return gate(look()); }
+
+    // The rule cascade, stated ONCE. `narrow` runs rules 3-5 down to the pool
+    // r5 samples from and tags each survivor with its probability; `choose`
+    // draws from it. The panel calls `narrow` too, so the odds it shows you
+    // before you click are the odds actually used -- not a UI re-derivation
+    // that could drift from the rule.
+    function narrow(s) {
+      const legal = s.candidates.filter(c => c.legal);
+      if (!legal.length) return { stop: 'no legal move (rules 1/2/gen/tet-gate)' };
+      // r3, in two stages: the BLOCK says which classes may still be spent in
+      // this group of three, then the PREFERENCE picks among them. The
+      // preference is a tie-break inside the block's freedom -- it can never
+      // widen it.
+      // R3, NUCLEON IDENTITY BLOCK -- composition only. Rolling group of three
+      // turns: proton 2x90 + 1x60, neutron 2x60 + 1x90, order free. The
+      // PREFERENCE that used to live here has moved to R5.
+      const b = s.block;
+      let pool = legal.filter(c => b.need.includes(c.turn) || c.turn === 'first');
+      let why = 'r3 block permits ' + b.need.join('/');
+      if (!pool.length) {
+        if (identity !== 'neutron') return { stop: 'identity block unsatisfiable',
+                                             need: b.need, legal };
+        pool = legal; why = 'r3 BROKEN (neutron may, to keep r1+r2)';
+      }
+      // R4, THE ATTRACTOR: NEAREST WINS. Runs BEFORE prefer-shortcuts as of
+      // 6 Aug. As a filter behind prefer-shortcuts it was toothless -- measured
+      // at t12 of a YZ proton, the block forced a 90, prefer-shortcuts had
+      // already discarded every base move, and the attractor was left ranking
+      // two shortcuts that both led 0.567 further out.
+      //
+      // Chance decides ONLY exact ties. An earlier build sampled the whole pool
+      // with weights 1/(rank+1); that was far too broad -- the nearest option
+      // held only 48% and one draw took dA 1.36 over 0.947, walking the xon
+      // from 0.645 to 1.249. Weighting the pool does not break ties in R4, it
+      // overrides R4. Unseeded on purpose: the ask is variation across runs.
+      pool.sort((x, y) => (x.dA ?? 9e9) - (y.dA ?? 9e9));
+      const best = pool[0].dA;
+      const near = pool.filter(c => c.dA === best
+        || (c.dA !== null && best !== null && Math.abs(c.dA - best) < 1e-9));
+      why += '; r4 nearest ' + (best === null ? 'n/a' : best)
+           + (near.length > 1 ? ' (' + near.length + ' tied)' : '');
+
+      // R5, IDENTITY PREFERENCE -- proton prefers 90, neutron prefers 60. The
+      // LAST word, among moves already tied for nearest, so it can never cost
+      // distance. Naturally vacuous when R3 has already forced a single class,
+      // since every survivor is then that class anyway.
+      const want = near.filter(c => c.turn === b.pref);
+      const use = want.length ? want : near;
+      if (want.length && want.length !== near.length)
+        why += '; r5 prefers ' + b.pref;
+      use.forEach(c => { c.pPick = 1 / use.length; });
+      return { use, w: use.map(() => 1), tot: use.length, why };
+    }
+
+    function choose(s) {
+      const n = narrow(s);
+      if (n.stop) return n;
+      let r = Math.random() * n.tot, k = 0;
+      while (k < n.use.length - 1 && (r -= n.w[k]) > 0) k++;
+      const pick = n.use[k];
+      return { pick, why: n.why + (n.use.length > 1
+        ? '; drew 1 of ' + n.use.length + ' tied' : '') };
+    }
+
+    async function start(opt) {
+      opt = opt || {};
+      identity = opt.identity === 'neutron' ? 'neutron' : 'proton';
+      // Nothing is drawn at birth. A nucleon spawns with no mode, therefore no
+      // dormant axis, therefore no chirality -- all eight base senses are open
+      // until the lattice says otherwise.
+      chSet = null; chName = null; chCand = null;
+      _sync(); active.clear();
+      live = []; prevNode = null; tick = 0; events = 0; baseHops = 0;
+      refused = 0; severed = 0; stalled = null; homeOct = null;
+      homeAttr = null; attrJump = null; chJournal.length = 0;
+      baseCount.clear(); scCount.clear(); classLog.length = 0; log.length = 0;
+      history.length = 0;
+      xon = KEY.get(LCENTER.join(','));
+      if (xon === undefined) { let bd = Infinity;
+        for (let i = 0; i < NODE.length; i++) {
+          const d = Math.hypot(...[0, 1, 2].map(k => NODE[i][k] - LCENTER[k]));
+          if (d < bd) { bd = d; xon = i; } } }
+      wake = [xon];
+      restate(true); await settle(); detect(); drawXon(xon, wake);
+      return look();
+    }
+
+    const snap = () => ({ xon, prevNode, tick, events, baseHops, refused, severed,
+      stalled, live: live.map(r => r.slice()), wake: wake.slice(),
+      homeOct: homeOct ? homeOct.slice() : null,
+      homeAttr: homeAttr ? homeAttr.slice() : null, attrJump,
+      chSet, chName, chCand: chCand ? chCand.slice() : null,
+      chJournalLen: chJournal.length,
+      baseCount: new Map(baseCount), scCount: new Map(scCount),
+      classLog: classLog.slice(), logLen: log.length, active: new Map(active) });
+
+    async function back() {
+      const h = history.pop();
+      if (!h) return { none: true, state: look() };
+      xon = h.xon; prevNode = h.prevNode; tick = h.tick; events = h.events;
+      baseHops = h.baseHops; refused = h.refused; severed = h.severed;
+      stalled = h.stalled; live = h.live; wake = h.wake; homeOct = h.homeOct;
+      homeAttr = h.homeAttr; attrJump = h.attrJump;
+      chSet = h.chSet; chName = h.chName; chCand = h.chCand;
+      chJournal.length = h.chJournalLen;
+      baseCount.clear(); h.baseCount.forEach((v, k2) => baseCount.set(k2, v));
+      scCount.clear(); h.scCount.forEach((v, k2) => scCount.set(k2, v));
+      classLog.length = 0; h.classLog.forEach(c => classLog.push(c));
+      log.length = h.logLen;
+      active.clear(); h.active.forEach((v, k2) => active.set(k2, v));
+      freezeOff(); restate(true); await settle(); detect(); drawXon(xon, wake);
+      return { state: look() };
+    }
+
+    // `pre` is a gated state already computed for THIS tick -- the panel shows
+    // the candidate table before you click, and passing it back guarantees the
+    // automaton acts on the very table you were shown, not a re-derived one
+    // (and saves a second round of probe solves).
+    async function step(forceTo, pre) {
+      if (stalled) return { stalled, state: look() };
+      const s = (pre && pre.gated && pre.tick === tick) ? pre : await lookGated();
+      const ch = forceTo !== undefined
+        ? { pick: s.candidates.find(c => c.to === forceTo), why: 'manual' }
+        : choose(s);
+      if (!ch.pick) { stalled = ch.stop || 'no such move'; return { stalled, detail: ch, state: look() }; }
+      history.push(snap());          // only once a move is certain to be applied
+      const pick = ch.pick, from = xon;
+      if (pick.turn === 60 || pick.turn === 90) classLog.push(pick.turn);
+      const d = dv(xon, pick.to);
+      if (pick.kind === 'base') { baseHops++;
+        baseCount.set(d.join(','), (baseCount.get(d.join(',')) || 0) + 1); }
+      else scCount.set(d.join(','), (scCount.get(d.join(',')) || 0) + 1);
+      let made = false;
+      if (pick.kind === 'sc-new') { const nk = scKeyOf(xon, pick.to);
+        if (nk) { active.set(nk[0], nk[1]); live = live.concat([pick.rod]);
+                  made = true; events++; } }
+      prevNode = xon; xon = pick.to; tick++;
+      wake.push(xon); if (wake.length > 40) wake.shift();
+      restate(true); await settle(); detect(); drawXon(xon, wake);
+      const ok = legal(resid);
+      // Chirality is settled AFTER the rod is in and the vacuum has spoken --
+      // a refused rod never fixed a mode, so it must not fix a chirality.
+      if (ok) chUpdate(d.join(','), pick.kind === 'base');
+      if (!ok && made) { const nk = scKeyOf(from, pick.to);
+        if (nk) active.delete(nk[0]);
+        live = live.filter(r => !same(r, pick.rod));
+        refused++; freezeOff(); restate(true); await settle(); detect(); }
+
+      // LATCH THE HOME OCT the moment one appears. `solids.octs[0]` stops
+      // meaning "ours" as soon as a second one exists, and severance protects
+      // the first.
+      if (!homeOct && solids.octs.length) homeOct = solids.octs[0].slice();
+
+      // SEVERANCE, against the ENGINE's tets. Two tets may not share an edge:
+      // the pair raises a second oct. The old tet dies -- and the rod that goes
+      // is the one NOT on the home equator, since cutting a ring rod would
+      // break the oct itself.
+      //
+      // THIS CANNOT ALWAYS SUCCEED, and the failure is not a bug in the rule.
+      // A tet whose edges are IMPLIED owns no rod, so there is nothing to cut;
+      // `unsevered` records exactly that case rather than reporting a clean
+      // pass. Prevention is the gate's job, not severance's.
+      const cut = [], unsevered = [];
+      if (made && ok) {
+        const tets = engineTets();
+        const ring = ringOf();
+        const onRing = r => ring.some(q => same(q, r));
+        const isNew = vs => vs.includes(from) && vs.includes(pick.to);
+        for (const nt of tets.filter(isNew)) for (const ot of tets) {
+          if (ot === nt) continue;
+          if (ot.filter(v => nt.includes(v)).length < 2) continue;
+          const cands = rodsIn(ot).filter(r => !onRing(r) && !same(r, [from, pick.to]));
+          const kill = cands[0];
+          if (!kill) { unsevered.push({ tet: ot.join(','),
+            rodsOwned: rodsIn(ot).map(r => r.join('-')),
+            implied: impliedEdgesOf(ot) }); continue; }
+          const k = scKeyOf(kill[0], kill[1]);
+          if (k) active.delete(k[0]);
+          live = live.filter(r => !same(r, kill));
+          cut.push(kill.join('-')); severed++;
+        }
+        if (cut.length) { restate(true); await settle(); detect(); }
+      }
+      const st = look();
+      log.push({ tick, mv: from + '>' + pick.to, from, to: pick.to, dir: pick.dir,
+        kind: pick.kind, turn: pick.turn,
+        made, vacuumOK: ok, cut, unsevered, why: ch.why, octs: st.octs, tets: st.tets,
+        sharing: st.tetsSharingAnEdge, rods: st.rods, distA: st.distA });
+      st.lastMove = log[log.length - 1];    // look() ran before the push
+      return { applied: st.lastMove, state: st };
+    }
+    return { start, step, back, look, lookGated, sheet: () => log.slice(),
+             chirality: () => chJournal.slice(), depth: () => history.length };
+  })();
+
+  // ==========================================================================
+  // THE STEPPER PANEL -- one tick per click, with the whole decision on screen.
+  //
+  // Built here rather than in the engine because it knows what a quark turn is.
+  // It drives `_NSTEP` and nothing else, so what it shows is what the automaton
+  // used: the candidate table is the very object `choose()` ranked, not a
+  // re-derivation of it.
+  // ==========================================================================
+  (function stepperPanel() {
+    if (!document.body || document.getElementById('nstep')) return;
+    const css = document.createElement('style');
+    css.textContent = `
+      /* RIGHT side, below the size stepper. It used to sit at left:12px/top:12px,
+         directly over #chip and the #stats dropdown that opens under it. */
+      #nstep{position:fixed;right:12px;top:calc(66px + env(safe-area-inset-top));
+             width:330px;z-index:6;
+             background:#0d1219;border:1px solid #1f2937;border-radius:13px;
+             font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+             color:#8fa3ba;overflow:hidden;
+             max-height:calc(100vh - 150px - env(safe-area-inset-top));
+             display:flex;flex-direction:column}
+      #nshead{height:40px;display:flex;align-items:center;gap:8px;padding:0 12px;
+              font-size:12px;color:#8fa3ba;cursor:pointer;flex:none}
+      #nshead b{color:#c8d0dc;font-weight:600}
+      #nscaret{margin-left:auto;font-size:9px;transition:transform .18s}
+      #nstep.open #nscaret{transform:rotate(180deg)}
+      #nsbody{display:none;padding:0 12px 12px;overflow:auto}
+      #nstep.open #nsbody{display:block}
+      .nsrow{display:flex;gap:6px;margin-bottom:7px}
+      .nsbtn{flex:1;height:34px;display:flex;align-items:center;justify-content:center;
+             border-radius:9px;border:1.5px solid #2a3543;background:#111721;
+             color:#93a6bb;cursor:pointer;font-size:11.5px;font-weight:600;
+             letter-spacing:.03em;user-select:none}
+      .nsbtn:active{transform:scale(.985)}
+      .nsbtn.on{background:#12352a;border-color:#3f9e77;color:#7fd4a8}
+      .nsbtn.go{background:#12352a;border-color:#3f9e77;color:#7fd4a8}
+      .nsbtn.busy{opacity:.45;pointer-events:none}
+      .nsbtn.dead{background:#301a1a;border-color:#8a3f3f;color:#ff8f8f;
+                  pointer-events:none}
+      .nssec{margin:9px 0 3px;color:#4d5b6d;font-size:9.5px;letter-spacing:.09em;
+             text-transform:uppercase}
+      .nsk{color:#5d6e85}  .nsv{color:#c8d0dc}
+      .nsg{color:#7fd4a8}  .nsr{color:#ff6b6b}  .nsy{color:#e0b860}
+      .nsdim{color:#3d4855}
+      table.nst{width:100%;border-collapse:collapse;font-size:10px}
+      table.nst td{padding:1px 3px 1px 0;white-space:nowrap}
+      table.nst td.n{text-align:right;font-variant-numeric:tabular-nums}
+      .nsbar{display:inline-block;height:7px;background:#2f7d5f;border-radius:2px;
+             vertical-align:middle}`;
+    document.head.appendChild(css);
+
+    const box = document.createElement('div');
+    box.id = 'nstep';          // collapsed by default; click the header to open
+    box.innerHTML = '<div id="nshead"><b>nucleon stepper</b>'
+      + '<span id="nstick" class="nsdim">idle</span>'
+      + '<span id="nscaret">&#9650;</span></div><div id="nsbody"></div>';
+    document.body.appendChild(box);
+    document.getElementById('nshead').onclick = () => box.classList.toggle('open');
+
+    let ident = 'proton', busy = false, gated = null, depth = 0;
+    const $n = id => document.getElementById(id);
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+    // Why a candidate is out, in the order the cascade would reject it. One
+    // reason, the first that applies -- listing all four would hide which rule
+    // is actually doing the work.
+    const veto = c => c.shuttle ? 'shuttle'
+      : !c.okChirality ? 'chirality'
+      : !c.okGen ? 'generation'
+      : !c.okBalance ? 'balance'
+      : c.okTetGate === false ? 'TET GATE (' + c.wouldTets + 't/' + c.wouldOcts + 'o)'
+      : c.wouldVacuum === false ? 'vacuum'
+      : null;
+
+    const bar = (n, max) => '<span class="nsbar" style="width:'
+      + Math.round(46 * (max ? n / max : 0)) + 'px"></span>';
+
+    function render() {
+      const s = gated, body = $n('nsbody');
+      if (!s) { body.innerHTML = '<div class="nsdim" style="padding:6px 0 2px">'
+        + 'press <b>start</b> to spawn a nucleon at the lattice centre.</div>'
+        + controls(); wire(); return; }
+      const st = s.stats, m = s.lastMove;
+      const mx = Math.max(1, ...st.base.map(r => r.n), ...st.sc.map(r => r.n));
+      const legal = s.candidates.filter(c => c.legal);
+
+      $n('nstick').textContent = 't' + s.tick + (s.stalled ? ' · STALLED' : '');
+      $n('nstick').className = s.stalled ? 'nsr' : 'nsdim';
+
+      body.innerHTML = controls()
+        + '<div class="nssec">board</div>'
+        + '<span class="nsk">at</span> <span class="nsv">' + s.xon + '</span>'
+        + ' <span class="nsdim">(' + s.xyz + ')</span>'
+        + ' &nbsp;<span class="nsk">dA</span> <span class="nsv">' + s.distA + '</span>'
+        // attractor drift: 0 means the same hole is still the target. Anything
+        // large means the goal moved, which is the failure this tracks.
+        + ' &nbsp;<span class="nsk">target moved</span> <span class="'
+          + (s.attrJump > 0.35 ? 'nsr' : s.attrJump ? 'nsy' : 'nsg') + '">'
+          + (s.attrJump === null ? '—' : s.attrJump) + '</span><br>'
+        + '<span class="nsk">rods</span> <span class="nsv">' + s.rods + '</span>'
+        + ' &nbsp;<span class="nsk">octs</span> <span class="'
+          + (s.octs > 1 ? 'nsr' : s.octs === 1 ? 'nsg' : 'nsv') + '">' + s.octs + '</span>'
+        + ' &nbsp;<span class="nsk">tets</span> <span class="nsv">' + s.tets + '</span>'
+        + ' &nbsp;<span class="nsk">sharing</span> <span class="'
+          + (s.tetsSharingAnEdge ? 'nsr' : 'nsv') + '">' + s.tetsSharingAnEdge + '</span>'
+        + ' &nbsp;<span class="nsk">implied</span> <span class="'
+          + (s.implied.length ? 'nsy' : 'nsv') + '">' + s.implied.length + '</span>'
+        + (s.implied.length ? ' <span class="nsdim">' + esc(s.implied.join(' ')) + '</span>' : '')
+        // MODE FIRST, THEN CHIRALITY. Until two shortcut axes carry rods there
+        // is no dormant axis, so there is no "toward" and no chirality to name.
+        + '<br><span class="nsk">mode</span> <span class="'
+          + (s.mode ? 'nsg' : 'nsdim') + '">' + (s.mode || 'not yet fixed') + '</span>'
+        + (s.dormant ? ' <span class="nsdim">(dormant ' + s.dormant
+            + ', arrow along it)</span>' : '')
+        + '<br><span class="nsk">chirality</span> '
+        + (s.chLatched
+            ? '<span class="nsg">' + s.chirality + ' latched</span>'
+            : s.chCandidates
+              ? '<span class="nsy">undecided</span> <span class="nsv">'
+                + s.chCandidates.join(' ') + '</span>'
+              : '<span class="nsdim">not yet declared (needs the mode)</span>')
+
+        + '<div class="nssec">turns &nbsp;·&nbsp; ' + s.identity + ' = '
+          + (s.identity === 'proton' ? '2x90 + 1x60 (uud)' : '2x60 + 1x90 (udd)')
+          + ' per 3, order free</div>'
+        + '<span class="nsk">60</span> <span class="nsv">' + st.turns.n60 + '</span>'
+        + ' &nbsp;<span class="nsk">90</span> <span class="nsv">' + st.turns.n90 + '</span>'
+        + ' &nbsp;<span class="nsk">ratio 90</span> <span class="nsv">'
+          + (s.block.ratio === null ? '—' : s.block.ratio.toFixed(3)) + '</span>'
+        + ' <span class="nsdim">(target ' + (s.identity === 'proton' ? '.667' : '.333')
+          + ')</span><br>'
+        + '<span class="nsk">block</span> '
+          + [0, 1, 2].map(i => { const c = s.block.spent[i];
+              return '<span class="' + (c ? 'nsv' : 'nsdim') + '">'
+                + (c ? (c === 90 ? 'u' : 'd') + c : '&middot;') + '</span>'; }).join(' ')
+        + ' &nbsp;<span class="nsk">permits</span> <span class="nsy">'
+          + (s.block.need.join('/') || '—') + '</span>'
+        + (s.block.need.length > 1
+            ? ' <span class="nsdim">&rarr; prefers ' + s.block.pref + '</span>'
+            : ' <span class="nsdim">forced</span>')
+
+        + '<div class="nssec">base directions &nbsp;·&nbsp; balance binds these</div>'
+        + '<table class="nst">' + st.base.map(r => '<tr>'
+            + '<td class="' + (r.allowed ? 'nsv' : 'nsdim') + '">' + r.id + '</td>'
+            + '<td class="n ' + (r.allowed ? 'nsv' : 'nsdim') + '">' + r.n + '</td>'
+            + '<td>' + (r.allowed ? bar(r.n, mx) : '') + '</td>'
+            + '<td class="' + (r.allowed ? (r.atMin ? 'nsg' : 'nsdim') : 'nsdim') + '">'
+              + (r.allowed ? (r.atMin ? 'spendable' : 'ahead') : 'chirality') + '</td>'
+          + '</tr>').join('') + '</table>'
+
+        + '<div class="nssec">shortcut senses &nbsp;·&nbsp; balance does NOT bind these</div>'
+        + '<table class="nst">' + st.sc.map(r => '<tr>'
+            + '<td class="' + (r.allowed ? 'nsv' : 'nsdim') + '">' + r.id + '</td>'
+            + '<td class="n ' + (r.allowed ? 'nsv' : 'nsdim') + '">' + r.n + '</td>'
+            + '<td>' + (r.allowed ? bar(r.n, mx) : '') + '</td>'
+            + '<td class="nsdim">' + (r.allowed ? '' : 'dormant axis') + '</td>'
+          + '</tr>').join('') + '</table>'
+
+        + (m ? '<div class="nssec">last move</div>'
+            + '<span class="nsv">' + m.mv + '</span> <span class="nsdim">' + m.dir + '</span>'
+            + ' <span class="nsk">' + m.kind + '</span> '
+            + '<span class="nsv">' + m.turn + (m.turn === 60 || m.turn === 90 ? '&deg;' : '') + '</span>'
+            + (m.made ? ' <span class="nsg">rod laid</span>' : '')
+            + (m.vacuumOK ? '' : ' <span class="nsr">VACUUM REFUSED</span>')
+            + (m.cut.length ? ' <span class="nsy">cut ' + m.cut.join(' ') + '</span>' : '')
+            + (m.unsevered && m.unsevered.length
+                ? ' <span class="nsr">UNSEVERABLE (implied tet)</span>' : '')
+            + '<br><span class="nsdim">' + esc(m.why || '') + '</span>' : '')
+
+        + '<div class="nssec">candidates &nbsp;·&nbsp; ' + legal.length + ' legal of '
+          + s.candidates.length + ' &nbsp;·&nbsp; ' + (s.poolSize || 0)
+          + ' in the draw</div>'
+        + '<div class="nsdim" style="margin-bottom:2px">' + esc(s.narrowWhy || '') + '</div>'
+        + '<table class="nst">' + s.candidates.slice()
+            .sort((a, b) => (a.legal === b.legal) ? (a.dA ?? 9e9) - (b.dA ?? 9e9)
+                                                  : (a.legal ? -1 : 1))
+            .map(c => { const v = veto(c); return '<tr>'
+              + '<td class="' + (c.legal ? 'nsg' : 'nsdim') + '">' + (c.legal ? '&#10003;' : '&#215;') + '</td>'
+              + '<td class="' + (c.legal ? 'nsv' : 'nsdim') + '">' + c.to + '</td>'
+              + '<td class="' + (c.legal ? 'nsv' : 'nsdim') + '">' + c.dir + '</td>'
+              + '<td class="nsk">' + c.kind.replace('sc-', '') + '</td>'
+              + '<td class="' + (c.legal ? 'nsv' : 'nsdim') + '">' + c.turn + '</td>'
+              + '<td class="n nsdim">' + (c.dA ?? '—') + '</td>'
+              + '<td class="n ' + (c.pPick ? 'nsy' : 'nsdim') + '">'
+                + (c.pPick ? (100 * c.pPick).toFixed(0) + '%' : '') + '</td>'
+              + '<td class="' + (v && v.indexOf('TET') === 0 ? 'nsr' : 'nsdim') + '">'
+                + (v || (c.wouldOcts ? '<span class="nsg">+' + c.wouldOcts + ' OCT</span>' : ''))
+              + '</td></tr>'; }).join('') + '</table>'
+        + (s.stalled ? '<div class="nssec nsr">stalled</div><span class="nsr">'
+            + esc(s.stalled) + '</span>' : '');
+      wire();
+    }
+
+    // No L/R buttons: chirality is DISCOVERED from the mode plus the base
+    // traversals, so there is nothing here to choose. The readout below shows
+    // the determination as it happens.
+    const controls = () => '<div class="nsrow">'
+        + '<div class="nsbtn' + (ident === 'proton' ? ' on' : '') + '" id="ns-p">proton</div>'
+        + '<div class="nsbtn' + (ident === 'neutron' ? ' on' : '') + '" id="ns-n">neutron</div>'
+      + '</div><div class="nsrow">'
+        + '<div class="nsbtn" id="ns-start">start</div>'
+        + '<div class="nsbtn' + (busy || !depth ? ' busy' : '') + '" id="ns-back">'
+          + '&#9664; back</div>'
+        + '<div class="nsbtn ' + (busy ? 'busy' : (gated && gated.stalled ? 'dead' : 'go'))
+          + '" id="ns-next" style="flex:1.4">'
+          + (busy ? 'solving...' : (gated && gated.stalled ? 'stalled' : 'next &#9654;')) + '</div>'
+      + '</div>';
+
+    function wire() {
+      const on = (id, fn) => { const e = $n(id); if (e) e.onclick = fn; };
+      on('ns-p', () => { ident = 'proton'; render(); });
+      on('ns-n', () => { ident = 'neutron'; render(); });
+      on('ns-start', async () => {
+        if (busy) return; busy = true; render();
+        // A registered loop drives _NSTEP too, and two drivers on one piece of
+        // shared state is what made hand-stepping look like it took twenty
+        // turns at once. Stand the loop down first.
+        if (window._loopNow && window._loopNow() !== 'none' && window._setLoopNone)
+          window._setLoopNone();
+        try { await window._NSTEP.start({ identity: ident });
+              gated = await window._NSTEP.lookGated(); }
+        finally { depth = window._NSTEP.depth(); busy = false; render(); }
+      });
+      on('ns-next', async () => {
+        if (busy || !gated || gated.stalled) return; busy = true; render();
+        try { const r = await window._NSTEP.step(undefined, gated);
+              gated = await window._NSTEP.lookGated();
+              gated.lastMove = r.applied || gated.lastMove;
+              if (r.stalled) gated.stalled = r.stalled; }
+        finally { depth = window._NSTEP.depth(); busy = false; render(); }
+      });
+      // BACK re-gates the restored board rather than replaying a stored table,
+      // so the candidate list you get is measured against the board as it now
+      // stands. Stepping forward again re-samples r5 and may take a different
+      // move -- that is the point of having it.
+      on('ns-back', async () => {
+        if (busy || !depth) return; busy = true; render();
+        try { await window._NSTEP.back(); gated = await window._NSTEP.lookGated(); }
+        finally { depth = window._NSTEP.depth(); busy = false; render(); }
+      });
+    }
+    render();
+    window._NPANEL = { render, state: () => gated };
+  })();
+
   window._XONPROTON = async function (opt) {
     opt = opt || {};
     _sync();
@@ -3046,31 +4111,75 @@
     const classLog = [];                        // 60/90 for each classified turn
     let identity = 'proton';                    // 'proton' | 'neutron'
     let chirality = 'A';
+    let pooled = true;                          // shortcut senses pooled by axis
+    let pooledFlat = false;                     // ...at floor(n/2), not n
+    let scBalance = true;                       // do shortcuts count for rule 2?
     // CHIRALITY, the same two zero-sum sign sets the electron uses. Of the 16
     // sign patterns over the four base axes exactly two sum to zero, and they
     // are exact negations: A = {+a,-b,-c,+d}, B = -A. A xon has one for life,
     // so the opposite sense of any base axis is simply not a move it has.
-    const CH_A = ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'];
-    const CH_B = CH_A.map(t => t.split(',').map(n => -(+n)).join(','));
-    const chSet = () => new Set(chirality === 'A' ? CH_A : CH_B);
+    // The sense maps. A and B are the apolar zero-sum pair; L and R are the two
+    // polarizations that can circulate an oct's apex squares -- red toward,
+    // blue away, then green/yellow either way round.
+    const CH_SETS = {
+      A: ['1,1,1', '-1,-1,1', '-1,1,-1', '1,-1,-1'],
+      B: ['-1,-1,-1', '1,1,-1', '1,-1,1', '-1,1,1'],
+      L: ['1,1,1', '1,-1,1', '1,1,-1', '1,-1,-1'],
+      R: ['1,1,1', '1,-1,1', '-1,-1,1', '-1,1,1'] };
+    const chSet = () => new Set(CH_SETS[chirality] || CH_SETS.A);
     // RULE 2 identities. Base is a SIGNED direction, but chirality admits only
-    // one sense per axis, so there are exactly four. Shortcuts are POOLED by
-    // axis -- a travel on X+ and a travel on X- are both a travel on X.
-    const dirId = (d, isSC) => isSC ? ax(d) : d.join(',');
+    // one sense per axis, so there are exactly four.
+    //
+    // Shortcuts are SIGNED TOO: X+ and X- are different directions, not one
+    // axis traversed twice. That makes the balance set 4 base + 4 in-mode
+    // shortcut senses = EIGHT, so a balanced run spends shortcuts and base
+    // edges in equal measure -- e.g. Z a b X c d X Z. Pooling them by axis was
+    // tried and it strangles the ring: after one X+ the whole X axis reads as
+    // spent, so the X- that CLOSES the equator is barred and the nucleon can
+    // never finish its oct. Set opt.pooled to compare.
+    const dirId = (d, isSC) => !isSC ? d.join(',')
+      : (pooled ? ax(d) : ax(d) + ((d[0] || d[1] || d[2]) > 0 ? '+' : '-'));
     // The balance set is THIS GENERATION's directions: the four chirality-
     // allowed base senses plus the two in-mode shortcut AXES. The dormant axis
     // is excluded outright -- it is not a direction this particle has, so
     // leaving it at zero would deadlock the minimum forever.
-    const balanceSet = () => {
+    // The locked generation's two shortcut axes -- once two distinct axes carry
+    // rods the third is barred outright, which IS the generation lock.
+    const modeAxes = () => {
       const m = [...new Set(live.map(r => ax(dv(r[0], r[1]))))];
-      const axes = m.length >= 2 ? m.slice(0, 2) : ['X', 'Y', 'Z'];
-      return [...chSet()].concat(axes);
+      return m.length >= 2 ? m.slice(0, 2) : ['X', 'Y', 'Z'];
     };
+    // opt.scBalance:false takes shortcuts out of rule 2 entirely -- only the
+    // four base directions are balanced, so a shortcut axis may be re-used
+    // freely. The generation lock is then enforced by modeAxes() directly,
+    // because balance had been doing it as a side effect: the dormant axis
+    // simply had no counter, so the lookup failed.
+    const balanceSet = () => {
+      const axes = modeAxes();
+      if (!scBalance) return [...chSet()];
+      return [...chSet()].concat(pooled ? axes
+        : [].concat(...axes.map(a => [a + '+', a + '-'])));
+    };
+    // Shortcut axes are POOLED but carry TWICE the allowance: X+ and X- charge
+    // one X counter, and that counter may reach 2 for every 1 on a base
+    // direction. So a balanced run spends four base directions against two
+    // shortcut axes used twice each -- e.g. Z a b X c d X Z, equal measure of
+    // shortcut and base. The comparison level is therefore floor(n/2) for a
+    // shortcut and n for a base direction.
+    //
+    // Plain pooling (level = n) strangles the nucleon: one X+ makes the whole
+    // X axis read as spent, so the X- that closes the equator is barred. Fully
+    // signed senses free that but let one axis run away. Pooled-with-2x is the
+    // middle, and it is what puts a 60-degree SHORTCUT within reach of an apex.
     const balanceTable = () => {
-      const rows = balanceSet().map(id => ({ id, n: senseCount.get(id) || 0,
-        kind: id.indexOf(',') >= 0 ? 'base' : 'sc' }));
-      const min = Math.min(...rows.map(x => x.n));
-      rows.forEach(x => x.ok = (x.n === min));    // RULE 2 is hard: only the minimum
+      const rows = balanceSet().map(id => {
+        const kind = id.indexOf(',') >= 0 ? 'base' : 'sc';
+        const n = senseCount.get(id) || 0;
+        return { id, n, kind, lvl: kind === 'sc' && !pooledFlat
+                                   ? Math.floor(n / 2) : n };
+      });
+      const min = Math.min(...rows.map(x => x.lvl));
+      rows.forEach(x => x.ok = (x.lvl === min));   // RULE 2 is hard: only the minimum
       return { rows, min };
     };
     // RULE 3, the rolling block of three turns.
@@ -3160,12 +4269,18 @@
         side = sideOf(k, off); sideUsed = sideCount.get(k + '|' + side) || 0;
       }
       const okCh = kind !== 'base' || chSet().has(k);
-      const bId = dirId(d, kind !== 'base');
+      const isSC = kind !== 'base';
+      const bId = dirId(d, isSC);
       const bTab = balanceTable();
-      const okBal = bTab.rows.some(r => r.id === bId && r.ok);
+      // Generation lock, stated explicitly. Balance used to enforce it as a
+      // side effect -- the dormant axis had no counter, so the lookup failed --
+      // and that stops being true once shortcuts leave the balance set.
+      const okGen = !isSC || modeAxes().indexOf(ax(d)) >= 0;
+      const okBal = (isSC && !scBalance) ? true
+                  : bTab.rows.some(r => r.id === bId && r.ok);
       return { to: j, kind, axis: kind === 'base' ? '-' : ax(d), dir: k,
         balId: bId, balUsed: senseCount.get(bId) || 0,
-        okChirality: okCh, okBalance: okBal,
+        okChirality: okCh, okBalance: okBal && okGen, okGen,
         dirUsed: dirCount.get(k) || 0, side, sideUsed,
         angleNow: angNow, turnNow,
         turn: turnNow,                                    // the RULE (metric band)
@@ -3198,7 +4313,10 @@
     async function start(opt) {
       opt = opt || {};
       identity = opt.identity === 'neutron' ? 'neutron' : 'proton';
-      chirality = opt.chirality === 'B' ? 'B' : 'A';
+      chirality = CH_SETS[opt.chirality] ? opt.chirality : 'A';
+      pooled = opt.signed ? false : true;
+      pooledFlat = !!opt.pooledFlat;
+      scBalance = opt.scBalance !== false;
       _sync();
       active.clear(); live = []; prevNode = null; tick = 0; log.length = 0;
       dirCount.clear(); sideCount.clear(); dirRef.clear();
@@ -3456,6 +4574,35 @@
         + ' &nbsp;·&nbsp; <b>angle to line ' + (st.angle === null ? '—' : st.angle + '°') + '</b>';
     };
 
+    // THE NUCLEONS, on the 6 Aug rule set: no shuttling, base-only directional
+    // balance, a TURN PREFERENCE (not a quota), shortcuts preferred, attractor
+    // last -- with chirality (L or R) and generation both fixed at birth, the
+    // no-tet-before-the-oct gate, and severance so a second oct cannot form.
+    for (const [id, label, ident, blurb] of [
+      ['nucleon-p', 'proton (uud) — 6 Aug rules', 'proton',
+       'Prefers 90° whenever a 90° is legal, and takes whatever else is legal '
+       + 'when none is — the uud ratio is an outcome, not a quota. Directional '
+       + 'balance over the four base directions only; shortcuts are re-usable, '
+       + 'which is what lets the equator close. Chirality L/R and generation '
+       + 'fixed at spawn.'],
+      ['nucleon-n', 'neutron (udd) — 6 Aug rules', 'neutron',
+       'The same automaton with the preference inverted: 60° whenever one is '
+       + 'legal. udd. Nothing else differs.']]) {
+      window._registerLoop(id, label, blurb, async (tok) => {
+        while (window._loopAlive(tok)) {
+          await window._NSTEP.start({ identity: ident });
+          for (let n = 0; n < 200 && window._loopAlive(tok); n++) {
+            const r = await window._NSTEP.step();
+            if (r.stalled) break;
+            const p2 = (window._loopPace && window._loopPace()) || 0;
+            if (p2) await new Promise(res => setTimeout(res, p2));
+          }
+          await breathe();
+        }
+        cleanup();
+      });
+    }
+
     // THE STEERING ELECTRON. Y shortcuts are banned, the generation is held at
     // EVERY tick, a tet is closed at EVERY tick, and it still steers.
     //
@@ -3501,7 +4648,7 @@
                                  banAxis: 'Y', status: e6Status,
                                  chirality: Math.random() < 0.5 ? 'L' : 'R',
                                  alive: () => window._loopAlive(tok) });
-          await breathe();
+          await settleBetweenRuns(tok);
         }
         cleanup();
       });

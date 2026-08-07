@@ -91,6 +91,9 @@
   #loops.open #lpcaret{transform:rotate(180deg)}
   #lpbody{display:none;padding:2px 10px 10px}
   #loops.open #lpbody{display:block}
+  /* The list outgrew the screen once the CA loops landed -- tall enough that
+     the card could not be collapsed because its header was off-screen. */
+  #lplist{max-height:min(46vh,340px);overflow-y:auto;overscroll-behavior:contain}
   .lp{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:9px;
       border:1.5px solid #2a3543;background:#111721;color:#93a6bb;cursor:pointer;
       margin-bottom:6px;font-size:12px;font-weight:600;letter-spacing:.03em}
@@ -305,6 +308,8 @@ function buildLattice(sh){
     AX.forEach((d,a)=>{const j=KEY.get([c[0]+d[0],c[1]+d[1],c[2]+d[2]].join(','));
       if(j!==undefined)SCOPT.set(i+':'+a,j);});
   });
+  BADJ=NODE.map(()=>[]);
+  for(const [i,j] of BASE){BADJ[i].push(j);BADJ[j].push(i);}
   // every non-base pair repels; no distance cutoff
   const isBase=new Set(BASE.map(([i,j])=>i*1e6+j));
   for(let i=0;i<NODE.length;i++)for(let j=i+1;j<NODE.length;j++)
@@ -317,33 +322,124 @@ function buildLattice(sh){
 // SOLVER + CACHE
 // ===========================================================================
 const active=new Map();
-let P=[], resid={base:0,sc:0,minSep:1}, job=null, queue=[];
-// LRU_MAX is a MEMORY guard, not a cache-size policy: each record holds every
-// node position, ~4KB at 339 nodes. It was 600, which quietly threw away a
-// persisted cache on every reload -- the loader read all 11k rows from IDB and
-// then the first new solve trimmed straight back down to 600. Keeping ~5k is
-// about 20MB and preserves the warm cache that makes a crossing instant.
-const LRU=new Map(); const LRU_MAX=5000;
-let hits=0, idb=null, idbDirty=false, idbTimer=null;
-const LRU_DIRTY=new Set();          // only these need writing back
+// P IS THE SOLVED TRUTH. PD IS WHAT IS DRAWN.
+//
+// Every measurement, detection and legality test reads P, which is always the
+// solver's answer for the current shortcut set. Rendering reads PD, which
+// travels toward P at c after a flux event instead of snapping to it. Keeping
+// them separate is what lets the geometry propagate without any measurement
+// ever seeing a half-arrived lattice.
+let P=[], PD=[], resid={base:0,sc:0,minSep:1}, job=null, queue=[];
+let BADJ=[];                        // base-edge adjacency, for hop distance
+// ONE BASE EDGE PER TICK is c. FLUX_NODE_MS is how long a single node's own
+// slide takes, held constant so the easing is visible at any propagation speed.
+// ONE TICKER. c is one base edge per TICK, and a tick is the same thing the
+// xon hops on -- the step slider. They used to be separate clocks (the wave on
+// its own 140ms constant, the xon on _loopPace), so the front could lag or
+// outrun the particle that caused it purely by how the two numbers happened to
+// be set. Sharing the tick makes the statement exact: the xon advances one
+// base edge per tick and so does its news, so a particle rides precisely on
+// its own light cone.
+let FLUX_MS=null, FLUX_ON=true; const FLUX_NODE_MS=120;
+const fluxTick=()=>{
+  if(FLUX_MS!==null) return FLUX_MS;                    // explicit override
+  const p=window._loopPace?window._loopPace():0;
+  return p>0?p:140;                                     // nothing running: a sane default
+};
+// EVENTS SUPERPOSE. One wave object was wrong: a second flux event before the
+// first had finished replaced it outright, so nodes that had not yet heard the
+// first received both at once on the SECOND event's cone -- arriving sooner
+// than c from the first origin. Each event now carries its own displacement
+// field and its own cone, and the drawn position is PBASE plus the sum of the
+// arrived fractions. Simultaneous events in one restate were always fine (the
+// BFS is multi-source); this is for the near-simultaneous case, which is what
+// a fast CA produces constantly.
+let EVENTS=[], PBASE=[], FLUX_QUIET=false;
+// THE TICK IS A COUNT, NOT AN INTERVAL. Matching the wave's rate to the step
+// slider was not enough: the front advanced on wall clock, so anything that
+// stalled the xon -- a slow solve, a paused loop -- let the news march on
+// without it. Measured: xon frozen 1500ms, front 3.17 -> 8.17, five shells of
+// propagation the simulation never ticked for.
+//
+// Each event now remembers the tick it was born on, and its front may never
+// exceed the number of ticks since. Wall clock still drives the motion BETWEEN
+// ticks, so the easing stays smooth; it just cannot run ahead of the count.
+// The clamp is armed only while a xon exists -- with no particle there is no
+// tick to sync to, and a manual shortcut should propagate on its own.
+let SIMTICK=0, FLUX_CLAMP=false;
+window._SIMTICK=()=>{SIMTICK++;return SIMTICK;};
+window._FLUXCLAMP=(on)=>{FLUX_CLAMP=!!on;return FLUX_CLAMP;};
+// `quiet` suppresses the CREATION of new events without touching those already
+// in flight -- what a probe needs. `on:false` is the master switch and does
+// snap, because turning the animation off should show the solved geometry.
+// ms:null (or 'sync') puts the wave back on the step slider, which is the
+// default and the whole point; a number pins it independently.
+window._FLUX=(o)=>{ if(o&&o.ms!==undefined)
+    FLUX_MS=(o.ms===null||o.ms==='sync')?null:Math.max(1,o.ms);
+  if(o&&o.on!==undefined)FLUX_ON=!!o.on;
+  if(o&&o.quiet!==undefined)FLUX_QUIET=!!o.quiet;
+  return {ms:fluxTick(),synced:FLUX_MS===null,on:FLUX_ON,quiet:FLUX_QUIET,
+          clamped:FLUX_CLAMP,tick:SIMTICK,
+          running:EVENTS.length>0,pending:EVENTS.length}; };
+// ---------------------------------------------------------------------------
+// THE SOLUTION STORE.  IndexedDB IS THE CACHE; memory is only a hot window.
+//
+// This used to be an in-memory LRU of 5000 with IDB as a write-behind, and it
+// threw away exactly what a long run is for:
+//   * startup did getAll() -- the WHOLE store into memory -- then kept the last
+//     5000 and discarded the rest, so a store grown over hours was read in full
+//     and then binned.
+//   * a lookup only ever consulted memory, so a solve sitting on disk outside
+//     that window was a MISS and got recomputed.
+//   * eviction did LRU_DIRTY.delete(k), so any solve evicted before the
+//     debounced flush was LOST -- computed, never written, gone.
+//
+// Now: every solve is written and kept forever; the store is never trimmed; a
+// miss in the hot window costs one async IDB read, which is far cheaper than
+// re-solving; and eviction can never lose data because pending writes live in
+// their own map until they are committed.
+const HOT=new Map(); const HOT_MAX=800;      // ~3MB at 339 nodes; a window, not the cache
+const WRITE=new Map();                        // computed but not yet committed
+let hits=0, idbHits=0, misses=0, idb=null, idbTimer=null, stored=null;
 const keyOf=pairs=>FAM+'/'+shells+'@'+LCENTER.join(',')+'|'+pairs.map(([i,j])=>[Math.min(i,j),Math.max(i,j)])
   .sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(p=>p[0]+':'+p[1]).join(',');
-indexedDB.open('fd-lattice',3).onupgradeneeded=e=>{const db=e.target.result;
-  if(db.objectStoreNames.contains('solves'))db.deleteObjectStore('solves');
-  db.createObjectStore('solves');};
-(function(){const rq=indexedDB.open('fd-lattice',3);
- rq.onsuccess=e=>{idb=e.target.result;
-   try{idb.transaction('solves','readonly').objectStore('solves').getAll()
-     .onsuccess=ev=>{const all=ev.target.result||[];
-       // Load at most LRU_MAX so the very first remember() has nothing to evict.
-       for(const r of all.slice(-LRU_MAX)) LRU.set(r.k,r);};}catch(_){}};})();
-function idbSave(){ if(!idb||!idbDirty)return;
-  try{const st=idb.transaction('solves','readwrite').objectStore('solves');
-    // Write only what changed. Re-putting all 5k records on every flush made
-    // the save cost grow with the cache and stall the frame that triggered it.
-    for(const k of LRU_DIRTY){const r=LRU.get(k); if(r) st.put({k,xyz:r.xyz,resid:r.resid},k);}
-    LRU_DIRTY.clear();}catch(_){}
-  idbDirty=false; }
+
+// Opened once. Nothing is read at startup beyond the row count, which is for
+// the readout only -- the store may be very large and loading it would defeat
+// the point.
+let idbReady=new Promise(res=>{
+  const rq=indexedDB.open('fd-lattice',3);
+  rq.onupgradeneeded=e=>{const db=e.target.result;
+    if(db.objectStoreNames.contains('solves'))db.deleteObjectStore('solves');
+    db.createObjectStore('solves');};
+  rq.onsuccess=e=>{idb=e.target.result;
+    try{const c=idb.transaction('solves','readonly').objectStore('solves').count();
+      c.onsuccess=()=>{stored=c.result;};}catch(_){}
+    res(idb);};
+  rq.onerror=()=>res(null);
+});
+
+const hotPut=(k,rec)=>{HOT.delete(k);HOT.set(k,rec);
+  // Safe to evict: anything not yet committed is held by WRITE, not by HOT.
+  while(HOT.size>HOT_MAX)HOT.delete(HOT.keys().next().value);};
+
+// One read. Resolves to the record or null; never throws into the caller.
+function idbGet(k){
+  const pend=WRITE.get(k); if(pend) return Promise.resolve(pend);
+  return idbReady.then(db=>db?new Promise(res=>{
+    try{const rq=db.transaction('solves','readonly').objectStore('solves').get(k);
+      rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>res(null);}
+    catch(_){res(null);} }):null);
+}
+
+function idbSave(){ if(!idb||!WRITE.size)return;
+  const batch=[...WRITE.entries()]; WRITE.clear();
+  try{const tx=idb.transaction('solves','readwrite'), st=tx.objectStore('solves');
+    for(const [k,r] of batch) st.put({k,xyz:r.xyz,resid:r.resid},k);
+    if(stored!==null) stored+=batch.length;
+    // A failed transaction must put the work BACK, not drop it.
+    tx.onerror=tx.onabort=()=>{for(const [k,r] of batch) if(!WRITE.has(k)) WRITE.set(k,r);};
+  }catch(_){ for(const [k,r] of batch) if(!WRITE.has(k)) WRITE.set(k,r); } }
 // beforeunload alone is unreliable for async IDB -- the transaction is often
 // killed before it commits. pagehide/hidden fire earlier and more dependably.
 addEventListener('beforeunload',idbSave);
@@ -360,9 +456,10 @@ addEventListener('unhandledrejection',e=>{
   if(c){c.className='card bad';}
 });
 let idbLastSave=0;
-function remember(k,rec){LRU.delete(k);LRU.set(k,rec);LRU_DIRTY.add(k);
-  while(LRU.size>LRU_MAX){const ev=LRU.keys().next().value;LRU.delete(ev);LRU_DIRTY.delete(ev);}
-  idbDirty=true;
+function remember(k,rec){hotPut(k,rec);WRITE.set(k,rec);
+  // Flush early if the pending batch gets large, so a crash costs little and
+  // WRITE never becomes a second unbounded cache.
+  if(WRITE.size>=200){clearTimeout(idbTimer);idbLastSave=performance.now();idbSave();return;}
   // Debounce WITH A CEILING. The old code reset the timer on every solve, so
   // during a continuous run the flush never fired at all and a refresh lost
   // everything since the last idle second.
@@ -1020,12 +1117,41 @@ function freezeOn(){
 }
 function freezeOff(){FROZEN=false;document.getElementById('freeze').classList.remove('on');}
 
-function enqueue(pairs,tag,done){
-  const k=keyOf(pairs); let hit=LRU.get(k);
-  if(hit&&hit.xyz.length!==NODE.length*3){LRU.delete(k);hit=null;}
-  if(hit){hits++;LRU.delete(k);LRU.set(k,hit);done(hit);return;}
-  const B=budgetFor();
-  queue.push({pairs,k,tag,done,budget:B,total:B,P:REST.map(v=>v.clone())});
+// opt.free   Uint8Array over nodes: 1 = may move, 0 = pinned. Absent = all free,
+//            which is the ordinary solve and is untouched.
+// opt.from   starting positions (array of Vector3) instead of REST. The causal
+//            experiment needs this: the interior must KEEP what it has already
+//            relaxed to and only the newly-reached shell reacts, otherwise each
+//            tick is an independent equilibrium and there is no wave to see.
+// opt.tagKey extra cache discriminator. THE KEY IS BUILT FROM `pairs` ALONE, so
+//            two solves with the same shortcut but different frozen radii would
+//            collide and hand back the wrong geometry. Causal jobs pass their
+//            radius; a bare `nocache` bypasses the cache entirely.
+// A job enters the queue in state 'wait' and is not solvable until the store
+// has been asked. The render loop only ever picks up 'ready' jobs, and settle()
+// still waits on queue.length, so a lookup in flight holds the barrier exactly
+// as a solve would.
+function enqueue(pairs,tag,done,opt){
+  opt=opt||{};
+  const k=keyOf(pairs)+(opt.tagKey?'|'+opt.tagKey:'');
+  const fresh=r=>r&&r.xyz&&r.xyz.length===NODE.length*3;
+  if(!opt.nocache){
+    const hot=HOT.get(k);
+    if(fresh(hot)){hits++;hotPut(k,hot);done(hot);return;}   // still synchronous
+  }
+  const J={pairs,k,tag,done,free:opt.free||null,nocache:!!opt.nocache,
+           from:opt.from||REST,probe:'wait',budget:0,total:0,P:null};
+  const arm=()=>{J.probe='ready';const B=budgetFor();
+    J.budget=B;J.total=B;J.P=J.from.map(v=>v.clone());};
+  queue.push(J);
+  if(opt.nocache){arm();return;}
+  idbGet(k).then(rec=>{
+    if(fresh(rec)){
+      idbHits++; hotPut(k,rec);
+      const i=queue.indexOf(J); if(i>=0)queue.splice(i,1);
+      J.done(rec);
+    } else { misses++; arm(); }
+  });
 }
 const _d=new THREE.Vector3();
 // The solver is only allowed to step from inside the render loop. Anything
@@ -1039,12 +1165,19 @@ function worst(J){const p=J.P;let e=0;
   return e;}
 function advance(J,n){
   if(!INLOOP) throw new Error('advance() is engine-only: step it from the render loop');
-  const eq=BASE.concat(J.pairs),p=J.P;
+  const eq=BASE.concat(J.pairs),p=J.P,F=J.free;
+  // A PINNED NODE IS INFINITE MASS. Without a mask both ends take half the
+  // correction, which is instantaneous action at a distance -- a shortcut at
+  // the centre moves the boundary within one solve. With a mask the whole
+  // correction goes to the free end, and a constraint between two pinned nodes
+  // is simply not projected. No mask => wi=wj=1 => exactly the old 0.5/0.5.
   for(let it=0;it<n&&J.budget>0;it++,J.budget--){
     for(const [i,j] of eq){_d.subVectors(p[j],p[i]);const l=_d.length();if(l<1e-12)continue;
-      _d.multiplyScalar((l-1)/l*0.5);p[i].add(_d);p[j].sub(_d);}
+      const wi=F?F[i]:1, wj=F?F[j]:1, w=wi+wj; if(!w)continue;
+      _d.multiplyScalar((l-1)/l/w);p[i].addScaledVector(_d,wi);p[j].addScaledVector(_d,-wj);}
     for(const [i,j] of REP){_d.subVectors(p[j],p[i]);const l=_d.length();if(l>=1||l<1e-12)continue;
-      _d.multiplyScalar((l-1)/l*0.5);p[i].add(_d);p[j].sub(_d);}
+      const wi=F?F[i]:1, wj=F?F[j]:1, w=wi+wj; if(!w)continue;
+      _d.multiplyScalar((l-1)/l/w);p[i].addScaledVector(_d,wi);p[j].addScaledVector(_d,-wj);}
     if((J.budget&127)===0){const e=worst(J);
       if(e<1e-10){J.budget=0;break;}
       if(J.last!==undefined&&J.last-e<J.last*BAIL_REL){if(++J.flat>=BAIL_N){J.budget=0;break;}}
@@ -1059,9 +1192,91 @@ function finish(J){const p=J.P;let b=0,s=0,m=Infinity;
   const xyz=new Float64Array(p.length*3);
   p.forEach((v,i)=>{xyz[i*3]=v.x;xyz[i*3+1]=v.y;xyz[i*3+2]=v.z;});
   const rec={k:J.k,xyz,resid:{base:b,sc:s,minSep:m===Infinity?1:m}};
-  remember(J.k,rec);return rec;}
+  if(!J.nocache) remember(J.k,rec);
+  return rec;}
 const load=rec=>{P=[];for(let i=0;i<NODE.length;i++)
-  P.push(new THREE.Vector3(rec.xyz[i*3],rec.xyz[i*3+1],rec.xyz[i*3+2]));resid=rec.resid;};
+  P.push(new THREE.Vector3(rec.xyz[i*3],rec.xyz[i*3+1],rec.xyz[i*3+2]));resid=rec.resid;
+  // PD persists across loads -- a wave has to start from where the drawing
+  // actually is. Only a lattice rebuild resets it.
+  if(PD.length!==NODE.length){PD=P.map(v=>v.clone());PBASE=P.map(v=>v.clone());EVENTS.length=0;}};
+
+// A FLUX EVENT IS NEWS, AND IT LEAVES FROM THE ROD THAT CARRIED IT.
+// `origins` are the endpoints of the shortcuts that just appeared or vanished.
+// Node i holds where it was drawn until the front reaches its own hop count,
+// then travels to the position the solver already settled on.
+const easeS=u=>u<=0?0:u>=1?1:u*u*(3-2*u);
+const snapDrawn=()=>{PD=P.map(v=>v.clone());PBASE=P.map(v=>v.clone());EVENTS.length=0;};
+// `prev` is the SOLVED state before this event. The event's field is the exact
+// difference between the two equilibria, so once every node's cone has passed
+// the sum lands precisely on P -- the animation approximates the journey, never
+// the destination.
+function startWave(origins,prev){
+  // A restate that changed NO RODS is not a flux event, and must leave waves
+  // already in flight alone. Snapping here was the non-local update: the
+  // electron restates every tick, including ticks that only walk the xon along
+  // existing rods, and each one detonated every pending cone at once --
+  // measured, a single frame moving a node 1.7e-1 where a smooth step is
+  // 6.7e-3, with `pending` collapsing 2 -> 0 in that same frame.
+  if(!FLUX_ON){snapDrawn();return;}
+  if(FLUX_QUIET||!origins||!origins.length||!prev
+     ||PD.length!==NODE.length||!BADJ.length){
+    if(!EVENTS.length) snapDrawn();      // nothing in flight: safe to settle
+    return;}
+  const h=new Int32Array(NODE.length).fill(-1);
+  let fr=[];
+  for(const v of origins) if(v>=0&&v<NODE.length&&h[v]<0){h[v]=0;fr.push(v);}
+  if(!fr.length){ if(!EVENTS.length) snapDrawn(); return;}
+  let d=0;
+  while(fr.length){const nx=[];
+    for(const v of fr) for(const w of BADJ[v]) if(h[w]<0){h[w]=d+1;nx.push(w);}
+    fr=nx; if(nx.length)d++;}
+  // anything the BFS could not reach is treated as furthest, never as instant
+  for(let i=0;i<NODE.length;i++) if(h[i]<0) h[i]=d;
+  if(!EVENTS.length) PBASE=prev.map(v=>v.clone());
+  const delta=new Float64Array(NODE.length*3);
+  for(let i=0;i<NODE.length;i++){
+    delta[i*3]=P[i].x-prev[i].x;delta[i*3+1]=P[i].y-prev[i].y;delta[i*3+2]=P[i].z-prev[i].z;}
+  EVENTS.push({hop:h,delta,front:0,far:d,born:SIMTICK});
+  compose();                        // so hop-0 snaps on this frame, not the next
+}
+// Advanced once per rendered frame, from the clock -- so each front crosses one
+// shell per tick regardless of frame rate, and a node's own slide always
+// gets the same number of frames.
+function compose(){
+  const w=Math.min(1,FLUX_NODE_MS/fluxTick());
+  for(let i=0;i<NODE.length;i++){
+    let x=PBASE[i].x,y=PBASE[i].y,z=PBASE[i].z;
+    for(const e of EVENTS){
+      // THE ROD'S OWN NODES SNAP. They are the flux event; there is nothing for
+      // the news to travel to reach them. Everything outward eases.
+      const u=e.hop[i]===0?1:easeS((e.front-e.hop[i])/w);
+      if(u){x+=u*e.delta[i*3];y+=u*e.delta[i*3+1];z+=u*e.delta[i*3+2];}}
+    PD[i].set(x,y,z);}
+}
+function stepWave(dtMs){
+  if(!EVENTS.length)return false;
+  const tick=fluxTick(), w=Math.min(1,FLUX_NODE_MS/tick);
+  for(const e of EVENTS){
+    // wall clock drives the glide; the tick count caps how far it may glide to
+    const allow=FLUX_CLAMP?(SIMTICK-e.born):Infinity;
+    e.front=Math.min(e.front+dtMs/tick,allow);}
+  // A finished event is folded into the baseline and dropped, so the per-frame
+  // cost stays proportional to what is still in flight rather than to history.
+  const done=EVENTS.filter(e=>e.front>e.far+w);
+  if(done.length){
+    for(const e of done) for(let i=0;i<NODE.length;i++){
+      PBASE[i].x+=e.delta[i*3];PBASE[i].y+=e.delta[i*3+1];PBASE[i].z+=e.delta[i*3+2];}
+    EVENTS=EVENTS.filter(e=>!done.includes(e));}
+  if(!EVENTS.length){snapDrawn();return true;}
+  compose();
+  return true;
+}
+window._PDRAW=()=>PD;
+// The events in flight, for verifying causality against the engine's own hop
+// arrays rather than a re-derivation that could quietly disagree with them.
+window._EVDBG=()=>EVENTS;
+window._PBASE=()=>PBASE;
+let PREVPAIRS=new Set();
 
 // ===========================================================================
 // PLATONIC SOLID DETECTION  (on the SOLVED positions, not the rest lattice)
@@ -1218,8 +1433,8 @@ const baseLines=mkLines(0xffffff,0.75,true), scLines=mkLines(C_SC,1);
 const BASE_RGBY=[0xff4d4d,0x4dff70,0x4d9cff,0xffd24d];
 window._BASE_RGBY=BASE_RGBY;
 function setSegs(obj,segs){const a=new Float32Array(Math.max(3,segs.length*6));
-  segs.forEach(([i,j],k)=>{a[k*6]=P[i].x;a[k*6+1]=P[i].y;a[k*6+2]=P[i].z;
-    a[k*6+3]=P[j].x;a[k*6+4]=P[j].y;a[k*6+5]=P[j].z;});
+  segs.forEach(([i,j],k)=>{a[k*6]=PD[i].x;a[k*6+1]=PD[i].y;a[k*6+2]=PD[i].z;
+    a[k*6+3]=PD[j].x;a[k*6+4]=PD[j].y;a[k*6+5]=PD[j].z;});
   obj.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));}
 function setBaseSegs(){ setSegs(baseLines,BASE);
   const a=new Float32Array(Math.max(3,BASE.length*6));
@@ -1235,15 +1450,23 @@ const faceMesh=new THREE.Mesh(new THREE.BufferGeometry(),
 faceMesh.frustumCulled=false;scene.add(faceMesh);
 function drawFaces(){
   const f=solids.faces,a=new Float32Array(Math.max(3,f.length*9));
-  f.forEach((t,k)=>{for(let v=0;v<3;v++){a[k*9+v*3]=P[t[v]].x;a[k*9+v*3+1]=P[t[v]].y;a[k*9+v*3+2]=P[t[v]].z;}});
+  f.forEach((t,k)=>{for(let v=0;v<3;v++){a[k*9+v*3]=PD[t[v]].x;a[k*9+v*3+1]=PD[t[v]].y;a[k*9+v*3+2]=PD[t[v]].z;}});
   faceMesh.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));
   faceMesh.geometry.attributes.position.needsUpdate=true;}
 
 let nodeMesh=null,bigMesh=null,voidMesh=null,selected=null;
 let PACKI=[],HOLEI=[],R_SPHERE=0.816497;      // packing radius = half the <110> spacing
+// PACKING SPHERES ON EVERY VERTEX, radius half the BASE edge. Distinct from
+// bigMesh, which draws the <110> packing on the `pack` SUBSET of sites at
+// 0.816. These sit on all of them at 0.5, so each sphere touches its eight
+// <111> neighbours -- the BCC kissing number -- and none of them overlap.
+// Measured off the rest lattice rather than hardcoded, so a family with a
+// different scale still gets exactly half its own edge.
+let kissMesh=null, R_KISS=0.5;
 const dummy=new THREE.Object3D();
 function buildMeshes(){
-  for(const m of [nodeMesh,bigMesh,voidMesh]) if(m){scene.remove(m);m.dispose();}
+  for(const m of [nodeMesh,bigMesh,voidMesh,kissMesh]) if(m){scene.remove(m);m.dispose();}
+  R_KISS=0.5*((BASE.length&&REST.length)?REST[BASE[0][0]].distanceTo(REST[BASE[0][1]]):1);
   PACKI=NODE.map((c,i)=>i).filter(i=>CLASS(NODE[i])==='pack');
   HOLEI=NODE.map((c,i)=>i).filter(i=>CLASS(NODE[i])!=='pack');
   nodeMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(0.085,14,10),
@@ -1254,34 +1477,51 @@ function buildMeshes(){
   voidMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(1,16,12),
     new THREE.MeshStandardMaterial({roughness:0.3,metalness:0.15,transparent:true,opacity:0}),
     Math.max(1,HOLEI.length));
-  bigMesh.visible=false;voidMesh.visible=false;
-  scene.add(nodeMesh);scene.add(bigMesh);scene.add(voidMesh);
+  kissMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(R_KISS,18,13),
+    // depthWrite MUST stay on. With it off the instances are drawn in index
+    // order with no depth testing between them, so spheres at the back paint
+    // over spheres at the front. The cost is that one sphere no longer blends
+    // through another -- correct occlusion is worth more here than inter-sphere
+    // transparency, since the whole point is reading the packing.
+    new THREE.MeshStandardMaterial({roughness:0.4,metalness:0.08,
+      transparent:true,opacity:0,depthWrite:true}),NODE.length);
+  kissMesh.frustumCulled=false;
+  bigMesh.visible=false;voidMesh.visible=false;kissMesh.visible=false;
+  scene.add(nodeMesh);scene.add(bigMesh);scene.add(voidMesh);scene.add(kissMesh);
   applyLayers();
 }
 function paint(){
-  if(!nodeMesh||P.length!==NODE.length)return;
+  if(!nodeMesh||PD.length!==NODE.length)return;
   const c=new THREE.Color();
   for(let i=0;i<NODE.length;i++){
-    dummy.position.copy(P[i]);dummy.scale.setScalar(i===selected?1.7:1);dummy.updateMatrix();
+    dummy.position.copy(PD[i]);dummy.scale.setScalar(i===selected?1.7:1);dummy.updateMatrix();
     nodeMesh.setMatrixAt(i,dummy.matrix);
     c.setHex(i===selected?C_PICK:NODE_GREY);
     nodeMesh.setColorAt(i,c);
   }
   // packing spheres: only on the sites that actually carry one
-  PACKI.forEach((i,k)=>{dummy.position.copy(P[i]);dummy.scale.setScalar(1);dummy.updateMatrix();
+  PACKI.forEach((i,k)=>{dummy.position.copy(PD[i]);dummy.scale.setScalar(1);dummy.updateMatrix();
     bigMesh.setMatrixAt(k,dummy.matrix);c.setHex(0xd8dee6);bigMesh.setColorAt(k,c);});
   // holes: radius = clearance to the nearest packing sphere, so they breathe
   HOLEI.forEach((i,k)=>{
-    let d=Infinity; for(const j of PACKI){const t=P[i].distanceTo(P[j]); if(t<d)d=t;}
+    let d=Infinity; for(const j of PACKI){const t=PD[i].distanceTo(PD[j]); if(t<d)d=t;}
     const r=Math.max(0.02,d-R_SPHERE);
     dummy.position.copy(P[i]);dummy.scale.setScalar(r);dummy.updateMatrix();
     voidMesh.setMatrixAt(k,dummy.matrix);
     c.setHex(VOID_COL[HOLE(NODE[i])]);voidMesh.setColorAt(k,c);});
   // a family may have no hole sites at all (simple cubic), in which case
   // setColorAt never ran and instanceColor was never allocated
-  for(const m of [nodeMesh,bigMesh,voidMesh]){
-    if(m.instanceMatrix)m.instanceMatrix.needsUpdate=true;
-    if(m.instanceColor)m.instanceColor.needsUpdate=true;}
+  // one per vertex, riding PD, so a sphere travels with its node as the news
+  // of a flux event reaches it
+  // filled unconditionally: applyLayers can make it visible between paints, and
+  // an unfilled InstancedMesh puts every sphere at the origin
+  if(kissMesh){
+    for(let i=0;i<NODE.length;i++){
+      dummy.position.copy(PD[i]);dummy.scale.setScalar(1);dummy.updateMatrix();
+      kissMesh.setMatrixAt(i,dummy.matrix);c.setHex(0xc9d4e2);kissMesh.setColorAt(i,c);}}
+  for(const m of [nodeMesh,bigMesh,voidMesh,kissMesh]){
+    if(m&&m.instanceMatrix)m.instanceMatrix.needsUpdate=true;
+    if(m&&m.instanceColor)m.instanceColor.needsUpdate=true;}
   setBaseSegs();setSegs(scLines,[...active.values()]);
   scLines.material.color.setHex(legal(resid)?C_SC:C_BAD);
   drawFaces();
@@ -1306,7 +1546,8 @@ function readout(){
 <tr><td>closest approach</td><td class="${cls(resid.minSep>1-TOL)}">${resid.minSep.toFixed(6)}</td></tr>
 <tr><td>platonic octahedra</td><td class="${solids.octs.length?'ok':''}">${solids.octs.length}</td></tr>
 <tr><td>platonic tetrahedra</td><td class="${solids.tets.length?'ok':''}">${solids.tets.length}</td></tr>
-<tr><td>cached solves</td><td>${LRU.size} (${hits})</td></tr>`
+<tr><td>solutions stored</td><td>${stored===null?'…':stored+(WRITE.size?'+'+WRITE.size:'')}</td></tr>
+<tr><td>hits hot / disk / miss</td><td>${hits} / ${idbHits} / ${misses}</td></tr>`
   +(MEAS.ready?`
 <tr><td colspan="2" style="padding-top:9px;border-top:1px solid #1e2530;color:#5d6e85">
   exact turn angles</td></tr>`
@@ -1343,7 +1584,20 @@ function restate(user){
   else _rsBurst=0;
   queue=[];job=null;
   const pairs=[...active.values()], mk=keyOf(pairs);
-  enqueue(pairs,'main',rec=>{LOADEDKEY=mk;load(rec);detect();measure();paint();readout();
+  // WHICH RODS CHANGED is where the news starts. Symmetric difference against
+  // the previous set, so both a materialisation and a severance emit a wave --
+  // and a restate that changed nothing emits none.
+  const nowPairs=new Set(pairs.map(([i,j])=>Math.min(i,j)+':'+Math.max(i,j)));
+  const org=[];
+  const mark=k=>{const [a,b]=k.split(':');org.push(+a,+b);};
+  for(const k of nowPairs) if(!PREVPAIRS.has(k)) mark(k);
+  for(const k of PREVPAIRS) if(!nowPairs.has(k)) mark(k);
+  PREVPAIRS=nowPairs;
+  enqueue(pairs,'main',rec=>{LOADEDKEY=mk;
+    // the solved state BEFORE this event, so the event's field is exact
+    const prevSolved=(P.length===NODE.length)?P.map(v=>v.clone()):null;
+    load(rec);startWave(org,prevSolved);
+    detect();measure();paint();readout();
     if(!legal(resid)) freezeOn(); else { freezeOff(); lastGood=new Map(active); }});
   probeSelected();
 }
@@ -1414,7 +1668,11 @@ const LAYERS=[
   {id:'xon',      name:'xon',              val:100},
   {id:'orbit',    name:'orbit',            val:0},
   {id:'attractor',name:'attractor',        val:100},
+  {id:'pack',     name:'packing spheres',  val:0},
 ];
+// The ids a POSITIONAL save could have meant. Anything added after this list
+// takes its declared default rather than inheriting a stranger's value.
+const LEGACY_LAYER_IDS=['nodes','base','sc','faces','xon','orbit','attractor'];
 const lbody=$('lbody');
 LAYERS.forEach(L=>{
   const d=document.createElement('div');d.className='lay';
@@ -1428,6 +1686,7 @@ function applyLayers(){
   const g=id=>LAYERS.find(l=>l.id===id).val/100;
   if(nodeMesh){nodeMesh.material.opacity=g('nodes');nodeMesh.visible=g('nodes')>0;}
   if(bigMesh)bigMesh.visible=false;
+  if(kissMesh){const k=g('pack');kissMesh.material.opacity=k;kissMesh.visible=k>0;}
   if(voidMesh)voidMesh.visible=false;
   baseLines.material.opacity=g('base');baseLines.visible=g('base')>0;
   scLines.material.opacity=g('sc');scLines.visible=g('sc')>0;
@@ -1467,6 +1726,10 @@ window._registerLoop=function(id,name,sub,run,opts){
   LOOPS.push({id,name,sub,run,life:!!(opts&&opts.life)}); drawLoops();
 };
 window._loopAlive=tok=>tok===LOOPTOKEN;
+// Stand every loop down. The hand-stepper needs this: a running loop and a
+// hand-driven stepper are two drivers on one automaton, which is why stepping
+// by hand once appeared to take twenty turns at once.
+window._setLoopNone=()=>setLoop('none');
 window._loopNow=()=>LOOPNOW;
 // minimum ms per step, read live by runExperiment's pacer
 window._loopPace=()=>LOOPPACE;
@@ -1534,6 +1797,11 @@ function stateNow(){
   return {fam:FAM,shells,centre:LCENTER.slice(),
     sc:[...active.values()].map(([i,j])=>[NODE[i].join(','),NODE[j].join(',')]),
     cam:[cam.pos.x,cam.pos.y,cam.pos.z,cam.yaw,cam.pitch],
+    // BY ID, not by position. The positional array below is kept only so an
+    // older saved state still restores; it is why removing one layer and adding
+    // another at the same index silently handed the old value to the new
+    // slider -- 'light cone' 100 became 'packing spheres' 100.
+    layerv:Object.fromEntries(LAYERS.map(l=>[l.id,l.val])),
     layers:LAYERS.map(l=>l.val), pace:LOOPPACE, life:LOOPLIFE,
     sel:selected!==null?NODE[selected].join(','):null,
     open:[$('layers').classList.contains('open'),$('stats').classList.contains('open'),
@@ -1576,8 +1844,13 @@ function setSize(n,st){
   }
   if(st){
     cam.pos.set(st.cam[0],st.cam[1],st.cam[2]);cam.yaw=st.cam[3];cam.pitch=st.cam[4];
-    st.layers.forEach((v,k)=>{if(LAYERS[k]){LAYERS[k].val=v;
-      const s=$('s-'+LAYERS[k].id); if(s){s.value=v;$('v-'+LAYERS[k].id).textContent=v+'%';}}});
+    const setLay=(L,v)=>{if(!L)return;L.val=v;
+      const el=$('s-'+L.id); if(el){el.value=v;$('v-'+L.id).textContent=v+'%';}};
+    if(st.layerv) for(const [id,v] of Object.entries(st.layerv))
+      setLay(LAYERS.find(l=>l.id===id),v);
+    else if(st.layers)                       // legacy positional save
+      LEGACY_LAYER_IDS.forEach((id,k)=>{ if(k<st.layers.length)
+        setLay(LAYERS.find(l=>l.id===id),st.layers[k]); });
     applyLayers();
     $('layers').classList.toggle('open',!!st.open[0]);
     $('stats').classList.toggle('open',!!st.open[1]);
@@ -1740,7 +2013,14 @@ let tPrev=performance.now();
   INLOOP=true;
   const dt=Math.min(0.05,(t-tPrev)/1000||0);tPrev=t;
   flyCam(dt);
-  if(!job&&queue.length)job=queue.shift();
+  // The flux wave advances from the clock, not from the solver: the solve has
+  // already happened and P is settled. This only moves the DRAWN positions
+  // toward it, one shell per tick -- the same tick the xon hops on.
+  if(EVENTS.length&&stepWave(dt*1000)) paint();
+  // Only jobs whose store lookup has come back are solvable. Search rather than
+  // take the head, or one pending lookup would block everything behind it.
+  if(!job&&queue.length){const qi=queue.findIndex(j=>j.probe==='ready');
+    if(qi>=0)job=queue.splice(qi,1)[0];}
   if(job){
     advance(job,Math.max(1,Math.round(3000000/(BASE.length+REP.length+1))));
     if(job.tag==='main'){P=job.P;paint();}
@@ -1756,6 +2036,6 @@ let tPrev=performance.now();
 })(performance.now());
 </script>
 <!-- scratch harnesses: measurement only, loaded after the engine is built -->
-<script src="_tetline-scratch.js?v=137"></script>
+<script src="_tetline-scratch.js?v=190"></script>
 </body>
 </html>
