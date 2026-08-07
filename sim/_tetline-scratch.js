@@ -4450,37 +4450,13 @@
         }
         cleanup();
       }, { life: true });
-    hadron('proton', 'proton (uud)', 2 / 3,
-      'One xon at the lattice centre builds an octahedron — four shortcuts in a '
-      + 'closed ring — then turns 90° two-thirds of the time and 60° one-third. '
-      + '90 is up, 60 is down: the ratio IS uud. One tet at a time. NO ring '
-      + 'scaffolding — the ratio picks the class of turn, the attractor picks '
-      + 'the direction. The oct is emergent, and sometimes fails to form.',
-      { freeBuild: true, attractor: true });
-    // THE NEUTRON IS OCT-CENTRED TOO. A 90-degree turn needs the far pair at
-    // sqrt2, and no pair inside a regular tet is at sqrt2 -- measured, a lone
-    // actualized tet supplies TWENTY 60-degree angles and ZERO right angles,
-    // and none in its second shell either. Right angles exist only across an
-    // octahedron's equatorial ring, where shortcut meets shortcut.
-    //
-    // So if 90 is up and 60 is down, an up quark REQUIRES an octahedron. udd
-    // contains an up, so the neutron needs a ring exactly as the proton does.
-    // The two differ only in the ratio. The tet-only version was built and
-    // run: 240 turns, every one 60 degrees, ratio90 exactly 0 against a
-    // requested 0.333 -- unsatisfiable, not merely unmet. It was retired.
-    hadron('neutron', 'neutron (udd)', 1 / 3,
-      'The same automaton as the proton with the ratio inverted: 60° two-thirds '
-      + 'of the time, 90° one-third. udd. Achieves 0.308 against 0.333 — the '
-      + 'lattice is 60°-rich, so udd sits far more comfortably than uud. Same '
-      + 'emergent build as the proton, one parameter apart.',
-      { freeBuild: true, attractor: true });
+    // THE EMERGENT PROTON AND NEUTRON ARE RETIRED. They built the octahedron
+    // from turn statistics alone -- no ring scaffolding, the 90/60 ratio and
+    // the attractor doing all the work -- and the oct only sometimes formed.
+    // The stella proton below supersedes them: it holds the oct as a given and
+    // spends its effort on the traversal instead, which is where the physics
+    // turned out to be. The SCAFFOLDED 1.0 pair is kept as the reference build.
 
-    // 1.0 = the original scaffolded build, kept for reference. The ring is
-    // FORCED: rod 2 orthogonal to rod 1, rod 3 = -d1, rod 4 = -d2, and ring
-    // moves take priority over the ratio until it closes. The oct is therefore
-    // guaranteed rather than emergent, which is exactly why these are useful as
-    // a control. No attractor and no plane rule, so they are the untouched
-    // originals.
     hadron('proton-1', 'proton 1.0 (scaffolded)', 2 / 3,
       'REFERENCE BUILD. The ring is forced — d1, d2, −d1, −d2 — and ring moves '
       + 'outrank the ratio until it closes, so the octahedron always forms. '
@@ -4574,34 +4550,446 @@
         + ' &nbsp;·&nbsp; <b>angle to line ' + (st.angle === null ? '—' : st.angle + '°') + '</b>';
     };
 
-    // THE NUCLEONS, on the 6 Aug rule set: no shuttling, base-only directional
-    // balance, a TURN PREFERENCE (not a quota), shortcuts preferred, attractor
-    // last -- with chirality (L or R) and generation both fixed at birth, the
-    // no-tet-before-the-oct gate, and severance so a second oct cannot form.
-    for (const [id, label, ident, blurb] of [
-      ['nucleon-p', 'proton (uud) — 6 Aug rules', 'proton',
-       'Prefers 90° whenever a 90° is legal, and takes whatever else is legal '
-       + 'when none is — the uud ratio is an outcome, not a quota. Directional '
-       + 'balance over the four base directions only; shortcuts are re-usable, '
-       + 'which is what lets the equator close. Chirality L/R and generation '
-       + 'fixed at spawn.'],
-      ['nucleon-n', 'neutron (udd) — 6 Aug rules', 'neutron',
-       'The same automaton with the preference inverted: 60° whenever one is '
-       + 'legal. udd. Nothing else differs.']]) {
-      window._registerLoop(id, label, blurb, async (tok) => {
-        while (window._loopAlive(tok)) {
-          await window._NSTEP.start({ identity: ident });
-          for (let n = 0; n < 200 && window._loopAlive(tok); n++) {
-            const r = await window._NSTEP.step();
-            if (r.stalled) break;
-            const p2 = (window._loopPace && window._loopPace()) || 0;
-            if (p2) await new Promise(res => setTimeout(res, p2));
-          }
-          await breathe();
+    // THE 6 AUG NUCLEONS ARE RETIRED. They walked the open lattice under a
+    // rule cascade -- no shuttling, base-only balance, a rolling 60/90 block,
+    // the attractor -- and spent most of their time being told they could not
+    // move. The identity block kept forcing a turn class whose only instances
+    // led away from the attractor: measured, five of thirteen ticks passed over
+    // a strictly nearer legal move, and every one named R3 as the reason.
+    //
+    // The replacement below does not search the lattice at all. The proton's
+    // shape is decided in advance -- an octahedron with a tetrahedron on each
+    // face, the stella octangula -- and the automaton walks a PRE-COMPUTED
+    // closed traversal of its 36 edges. `_NSTEP` survives because the stepper
+    // panel drives it, and it is still the readable statement of those rules.
+
+    // THE STELLA PROTON. An octahedron held permanently, one tetrahedron
+    // actualized at a time, and a xon walking every edge of the compound.
+    //
+    // WHY THE SHAPE FITS. The stella octangula does not embed in the lattice
+    // all at once, and it does not have to: the oct is the foundation and only
+    // the tet currently being traversed is real. Measured on the L2 lattice,
+    // all 8 oct faces have exactly ONE apex candidate, and each hangs off the
+    // oct by one shortcut and two base edges. The tet's other shortcut IS the
+    // equator rod the oct already holds -- so a tet costs exactly one flux
+    // event and re-uses a ring rod, which is the economy the model always
+    // claimed for a quark.
+    //
+    // XZ BY CONSTRUCTION. The eight tet shortcuts come out 4 on X and 4 on Z,
+    // never Y -- verified, not imposed. Nothing has to hold the generation and
+    // no Y rod is ever proposed, which is what makes this cheap to simulate.
+    //
+    // THE TURN RULE. 60 degrees means the previous and next node are a unit
+    // apart, 90 means sqrt(2). 120 and 180 also occur on this shape and are
+    // refused outright. A STRICT block of two 90s and one 60 per three turns
+    // cannot work here: entering an apex forces two adjacent 60s -- one
+    // entering, one at the apex itself -- so the next block is driven to
+    // 60,90,60 and dies. Under that rule the traversal is provably confined to
+    // the octahedron's 12 edges and never touches a tet. So the ratio is held
+    // as a FREQUENCY, 2/3 ninety, with the 60s spread rather than scheduled;
+    // that is what lets the walk reach all 36 edges.
+    window._XZPROTON = (() => {
+      const KK = (i, j) => Math.min(i, j) * 100000 + Math.max(i, j);
+      let ring = [], pole = [], stella = [], ALLV = [], adjM = null, ideal = null;
+      let walk = null, turns = null, at = 0, liveTet = null, ringKeys = [];
+      let stats = { steps: 0, tets: 0, refused: 0, n90: 0, n60: 0, n0: 0 };
+
+      const D = (u, v) => Math.hypot(...[0, 1, 2].map(c => ideal.get(u)[c] - ideal.get(v)[c]));
+      // Turn class by the chord between the two neighbours, all edges being unit.
+      // 0 means NO CHANGE OF HEADING -- two edges with the same direction vector,
+      // which puts the neighbours 2 apart. (As an interior angle at the vertex
+      // that reads 180; the naming here follows heading change, not the angle.)
+      // It is FREE: allowed, but counted toward neither the 90s nor the 60s,
+      // since a step that does not turn is not a quark.
+      // 120 stays banned.
+      const turn = (u, v, w) => { const L = D(u, w);
+        return Math.abs(L - 1) < 1e-9 ? 60
+             : (Math.abs(L - Math.SQRT2) < 1e-9 ? 90
+             : (Math.abs(L - 2) < 1e-9 ? 0 : null)); };
+
+      // The compound, found in the lattice and given IDEAL coordinates so the
+      // turn classes are exact even while most of it is unactualized. A stella
+      // apex sits at the vector sum of its face's three vertices, which is
+      // where a regular tet's apex lands on a unit-edge octahedron.
+      function build() {
+        _sync();
+        const bs = new Set(); for (const [i, j] of BASE) bs.add(KK(i, j));
+        const scA = new Map();
+        for (let i = 0; i < NODE.length; i++) for (let a = 0; a < AX.length; a++) {
+          const j = SCOPT.get(i + ':' + a); if (j !== undefined) scA.set(KK(i, j), a); }
+        const unitable = (u, v) => bs.has(KK(u, v)) || scA.has(KK(u, v));
+        const AXx = 0, AZ = 4;
+        let best = null;
+        for (let i = 0; i < NODE.length; i++) {
+          const a = SCOPT.get(i + ':' + AXx), d = SCOPT.get(i + ':' + AZ);
+          if (a === undefined || d === undefined) continue;
+          const b = SCOPT.get(a + ':' + AZ);
+          if (b === undefined || SCOPT.get(d + ':' + AXx) !== b) continue;
+          const c = [0, 1, 2].map(k => (NODE[i][k] + NODE[a][k] + NODE[b][k] + NODE[d][k]) / 4);
+          const off = Math.hypot(...[0, 1, 2].map(k => c[k] - LCENTER[k]));
+          if (!best || off < best.off) best = { r: [i, a, b, d], off };
         }
-        cleanup();
+        if (!best) return false;
+        ring = best.r;
+        pole = [];
+        for (let v = 0; v < NODE.length; v++) { if (ring.includes(v)) continue;
+          if (ring.every(r => bs.has(KK(v, r)))) pole.push(v); }
+        if (pole.length !== 2) return false;
+        const A = 1 / Math.SQRT2;
+        ideal = new Map();
+        [[A, 0, 0], [0, A, 0], [-A, 0, 0], [0, -A, 0]].forEach((p, k) => ideal.set(ring[k], p));
+        ideal.set(pole[0], [0, 0, A]); ideal.set(pole[1], [0, 0, -A]);
+        const oct = [...ring, ...pole];
+        stella = [];
+        for (const p of pole) for (let k = 0; k < 4; k++) {
+          const f = [p, ring[k], ring[(k + 1) % 4]];
+          let ap = null;
+          for (let v = 0; v < NODE.length; v++) { if (oct.includes(v)) continue;
+            if (f.every(x => unitable(v, x))) { ap = v; break; } }
+          if (ap === null) return false;
+          ideal.set(ap, [0, 1, 2].map(c => f.reduce((s, x) => s + ideal.get(x)[c], 0)));
+          // the ONE shortcut this tet needs; its other shortcut is the ring rod
+          const sc = f.find(x => !bs.has(KK(ap, x)));
+          stella.push({ apex: ap, face: f, scWith: sc });
+        }
+        ALLV = [...oct, ...stella.map(s => s.apex)];
+        adjM = new Map(ALLV.map(v => [v, []]));
+        for (let i = 0; i < ALLV.length; i++) for (let j = i + 1; j < ALLV.length; j++) {
+          const u = ALLV[i], w = ALLV[j];
+          if (Math.abs(D(u, w) - 1) < 1e-9) { adjM.get(u).push(w); adjM.get(w).push(u); } }
+        ringKeys = [];
+        for (let k = 0; k < 4; k++) { const nk = scKeyOf(ring[k], ring[(k + 1) % 4]);
+          if (nk) ringKeys.push(nk); }
+        return ringKeys.length === 4;
+      }
+
+      // Greedy covering walk: always prefer an unused edge, with soft pressure
+      // holding the running 90-share near 2/3 and the gap between 60s near 3.
+      // Randomised tie-breaks, restart on a dead end. A found walk is proof it
+      // exists; failing to find one proves nothing, so it simply retries.
+      // EQUAL TIME ON EVERY FACE. A tet stays live until the xon reaches a
+      // DIFFERENT apex, so dwell is decided by the spacing of apex visits, not
+      // by how often each is entered. Covering the octahedron's twelve edges
+      // needs a long apex-free sweep, and whichever face was live going into it
+      // absorbed the lot: measured, seven faces held 4 ticks each and one held
+      // 31 of 59, an SD of 8.9 against a mean of 7.4.
+      //
+      // So the walk is now pressured to break that sweep up -- head for an apex
+      // once the current tet has had its share, and when several are reachable
+      // take the one with the least time so far. The edge-covering requirement
+      // is untouched; only the ORDER changes.
+      function genWalk(tries) {
+        const NE = 36;
+        const nFace = stella.length;
+        const one = (wS, wD, gap, wZ) => {
+          const used = new Map();
+          const dwell = new Map(stella.map(s => [s.apex, 0]));
+          const s0 = ALLV[Math.floor(Math.random() * ALLV.length)];
+          const w = [s0]; let n9 = 0, n6 = 0, since = 0, sinceTet = 0;
+          let cur = s0, prev = null, live = tetAt(s0) ? s0 : null;
+          for (let s = 0; s < 400; s++) {
+            // EVENLY SPACED, NOT FREQUENT. `gap` is the dwell each face should
+            // get before handing over -- a fixed target, explored across
+            // attempts. The earlier version used a running (s+1)/8, which grows
+            // with the walk and so forced rapid switching early and long stalls
+            // late; it balanced dwell but dragged the 90-share to 0.49, because
+            // every handover is a 60-heavy apex excursion.
+            const least = Math.min(...dwell.values());
+            const o = [];
+            for (const nx of adjM.get(cur)) { let t = null;
+              if (prev !== null) { t = turn(prev, cur, nx); if (t === null) continue; }
+              const tot = n9 + n6 + 1; let pr = 0;
+              if (t === 90) pr = ((n9 + 1) / tot <= 2 / 3 ? 14 : 0) + (since >= 5 ? -wS : 2);
+              else if (t === 60) pr = ((n6 + 1) / tot <= 1 / 3 ? 14 : 0)
+                                   + (since >= 2 ? wS : (since === 0 ? -wS : 0));
+              // ZERO-TURNS ARE THE FREE LEVER. There are 24 of them on this
+              // compound -- 16 base-to-base along the eight <111> senses, 8
+              // shortcut-to-shortcut on +-X/+-Z -- and every one runs straight
+              // through an OCT vertex from apex to apex. They count toward
+              // neither the 90s nor the 60s, so they move the xon across the
+              // compound without spending ratio budget. That is exactly what
+              // the long oct sweeps need: they otherwise have to pay in 90s to
+              // get anywhere, and 90s are what the ratio runs short of once the
+              // dwell is balanced. Weight explored rather than assumed.
+              else if (t === 0) pr = wZ;
+              // dwell pressure: once the live tet has had its share, go find an
+              // apex, and prefer the one that has had the least time.
+              const ap = tetAt(nx);
+              if (ap && nx === live) {
+                // RE-ENTERING THE LIVE FACE IS FREE. `liveTet` only changes on a
+                // DIFFERENT apex, so a face can spend all three of its edges
+                // inside its own dwell window. Covering the 24 stella edges
+                // needs two visits per apex -- doing them here rather than as
+                // separate handovers is what keeps the lap to EIGHT handovers
+                // instead of sixteen, and every handover is a 60-heavy
+                // excursion the ratio has to pay for.
+                pr += wD / 2;
+              } else if (ap) {
+                // hand over only once this face has had its share, and then to
+                // whichever face is furthest behind
+                const behind = dwell.get(nx) - least;
+                pr += (sinceTet >= gap ? wD * 1.5 : -wD * 3)
+                    + (behind <= 0 ? wD : -Math.min(behind, 8));
+              } else if (sinceTet >= gap * 2) pr -= wD / 2;
+              o.push({ nx, t, k: KK(cur, nx),
+                       sc: (!used.has(KK(cur, nx)) ? 100 : 0) + pr + Math.random() * 2 }); }
+            if (!o.length) return null;
+            o.sort((a, b) => b.sc - a.sc); const p = o[0];
+            used.set(p.k, 1);
+            if (p.t === 90) { n9++; since++; } else if (p.t === 60) { n6++; since = 0; }
+            w.push(p.nx); prev = cur; cur = p.nx;
+            const ap = tetAt(cur);
+            if (ap && cur !== live) { live = cur; sinceTet = 0; } else sinceTet++;
+            if (live !== null) dwell.set(live, dwell.get(live) + 1);
+            if (cur === s0 && used.size === NE && w.length >= 40) {
+              const n = w.length - 1, V = w.slice(0, n), T = [];
+              for (let i = 0; i < n; i++) T.push(turn(V[(i - 1 + n) % n], V[i], V[(i + 1) % n]));
+              if (T.every(x => x !== null)) return { V, T }; } }
+          return null; };
+
+        // dwell of each face over one lap, replayed exactly as step() will run it
+        const dwellOf = (V) => {
+          const d = new Map(stella.map(s => [s.apex, 0]));
+          let live = null, hand = 0;
+          for (const v of V) { const ap = tetAt(v);
+            if (ap && v !== live) { live = v; hand++; }
+            if (live !== null) d.set(live, d.get(live) + 1); }
+          return { dv: [...d.values()], hand }; };
+
+        let best = null, bo = null;
+        for (let a = 0; a < (tries || 4000); a++) {
+          const r = one([3, 6, 9][a % 3], [6, 10, 16][(a / 3 | 0) % 3],
+                        [6, 9, 12, 16, 20][(a / 9 | 0) % 5],
+                        [1, 5, 10, 18][(a / 45 | 0) % 4]); if (!r) continue;
+          const n90 = r.T.filter(x => x === 90).length;
+          const idx = []; r.T.forEach((t, i) => { if (t === 60) idx.push(i); });
+          const g = idx.map((v, i) => i ? v - idx[i - 1] : null).filter(x => x !== null);
+          const m = g.reduce((s, x) => s + x, 0) / g.length;
+          const sd = Math.sqrt(g.reduce((s, x) => s + (x - m) ** 2, 0) / g.length);
+          const { dv, hand } = dwellOf(r.V);
+          const dm = dv.reduce((s, x) => s + x, 0) / dv.length;
+          const dsd = Math.sqrt(dv.reduce((s, x) => s + (x - dm) ** 2, 0) / dv.length);
+          const unseen = dv.filter(x => x === 0).length;
+          const extraHand = Math.max(0, hand - stella.length);   // 8 is the floor
+          // Three requirements pulling against each other: cover all 36 edges,
+          // give every face equal time, hold the 90s near two thirds. Weighting
+          // dwell alone took its SD from 8.93 to 0.33 but dropped the ratio from
+          // 0.65 to 0.51, so both carry real weight here. The %8 term is worth
+          // having because a lap divisible by 8 can reach a spread of ZERO --
+          // otherwise the floor is 1 no matter how good the walk is.
+          const lapMod = (r.V.length % nFace) === 0 ? -8 : 0;
+          const obj = dsd / Math.max(1, dm) * 200 + unseen * 40
+                    + Math.abs(n90 / r.T.length - 2 / 3) * 100 + sd * 0.3
+                    + lapMod + extraHand * 2;
+          if (!bo || obj < bo) { bo = obj; best = r; } }
+        return best;
+      }
+
+      const tetAt = v => stella.find(s => s.apex === v) || null;
+
+      // ======================================================================
+      // THE CONSTRUCTIVE WALK. Equal face time by construction, not by search.
+      //
+      // Greedy scoring could never land ON the constraint, only near it -- and
+      // worse, its freshness bonus was 100 against turn and dwell terms of at
+      // most 20, so coverage decided almost every step and the weights I spent
+      // five rounds tuning were only breaking ties underneath it. Isotropy is
+      // not an objective to approach; it is a requirement, so it belongs in the
+      // structure.
+      //
+      // A lap is EIGHT SEGMENTS OF IDENTICAL LENGTH, one per face. A segment
+      // begins the tick the xon enters its apex and ends the tick before it
+      // enters the next, so equal segment length IS equal dwell -- exactly,
+      // with no arithmetic left over.
+      //
+      // Inside a segment the xon may move only among the six oct vertices and
+      // its OWN apex. Touching another apex would hand the face over early, so
+      // the segment graph is 7 nodes, small enough to search exhaustively. It
+      // must spend all three of its apex edges, which needs two apex visits
+      // (degree 3: entering and leaving consume two ends, the third needs a
+      // return), and it should pick up unused oct edges on the way.
+      // ======================================================================
+      function genWalkExact(segLen, tries) {
+        const apexes = stella.map(s => s.apex);
+        const oct = ALLV.filter(v => !tetAt(v));
+        const inSeg = (A) => new Set([...oct, A]);
+        const EKl = (u, v) => Math.min(u, v) * 100000 + Math.max(u, v);
+        const octEdge = (u, v) => !tetAt(u) && !tetAt(v);
+
+        // One segment: start AT apex A having arrived from `prev`, walk exactly
+        // segLen steps without touching another apex, finish adjacent to B with
+        // a legal turn into it, and use all three of A's edges.
+        const segment = (A, B, prev, segLen, fresh) => {
+          const allow = inSeg(A);
+          const need = new Set(adjM.get(A).map(v => EKl(A, v)));   // A's 3 edges
+          // The dwell constraint is now structural, so the RATIO can be
+          // optimised inside it: keep the segment with the most 90s rather than
+          // the first legal one. Budgeted so a segment cannot search for ever.
+          // Budgeted: node visits capped and the hunt stops once enough complete
+          // segments have been compared. Exhaustive best-of over 18-step
+          // segments hangs -- branching ~6 across 8 segments and hundreds of
+          // face orders is not a search that finishes.
+          let best = null, seen = 0, visits = 0;
+          const n90of = (path, pv0) => { let c = 0, p = pv0;
+            for (let i = 0; i < path.length; i++) {
+              const u = i ? path[i - 1] : A;
+              if (turn(p, u, path[i]) === 90) c++;
+              p = u; }
+            return c; };
+          const dfs = (path, cur, pv, used, gained) => {
+            if ((best && seen >= 60) || ++visits > 400000) return;
+            if (path.length === segLen) {
+              seen++;
+              if (used.size < need.size) return;             // all 3 apex edges spent
+              if (!adjM.get(cur).includes(B)) return;
+              if (turn(pv, cur, B) === null) return;
+              const sc = n90of(path, prev) + (turn(pv, cur, B) === 90 ? 1 : 0);
+              if (!best || sc > best.sc)
+                best = { path: path.slice(), gained: new Set(gained), sc };
+              return; }
+            // fresh oct edges first, then the rest -- ordering only, not pruning
+            const nx = adjM.get(cur).filter(v => allow.has(v))
+              .map(v => ({ v, f: octEdge(cur, v) && !fresh.has(EKl(cur, v)) ? 1 : 0,
+                           t: turn(pv, cur, v) === 90 ? 1 : 0 }))
+              .sort((a, b) => b.f - a.f || b.t - a.t || Math.random() - 0.5);
+            for (const { v } of nx) {
+              if (turn(pv, cur, v) === null) continue;
+              const k = EKl(cur, v);
+              const wasApex = (cur === A || v === A);
+              if (wasApex) used.add(k);
+              if (octEdge(cur, v)) gained.add(k);
+              path.push(v); dfs(path, v, cur, used, gained); path.pop();
+              if (octEdge(cur, v)) gained.delete(k);
+              if (wasApex && !path.some((p, i) =>
+                    (p === A || (i && path[i - 1] === A)) && EKl(path[i - 1] ?? A, p) === k))
+                used.delete(k);
+            } };
+          dfs([], A, prev, new Set(), new Set());
+          return best; };
+
+        for (let t = 0; t < (tries || 400); t++) {
+          const order = apexes.slice().sort(() => Math.random() - 0.5);
+          const fresh = new Set();
+          const segs = []; let prev = null, ok = true;
+          // the first segment has no incoming edge, so seed it from any oct
+          // neighbour of the opening apex
+          const A0 = order[0];
+          prev = adjM.get(A0)[Math.floor(Math.random() * adjM.get(A0).length)];
+          for (let i = 0; i < 8; i++) {
+            const A = order[i], B = order[(i + 1) % 8];
+            const r = segment(A, B, prev, segLen, fresh);
+            if (!r) { ok = false; break; }
+            for (const k of r.gained) fresh.add(k);
+            segs.push({ A, path: r.path });
+            prev = r.path[r.path.length - 1];
+          }
+          if (!ok) continue;
+          if (fresh.size < 12) continue;              // every oct edge covered
+          const V = [];
+          for (const s of segs) { V.push(s.A); for (const v of s.path) V.push(v); }
+          // the wrap turn must close as legally as every other
+          const n = V.length, T = [];
+          for (let i = 0; i < n; i++) T.push(turn(V[(i - 1 + n) % n], V[i], V[(i + 1) % n]));
+          if (T.some(x => x === null)) continue;
+          const cov = new Set(); for (let i = 0; i < n; i++) cov.add(EKl(V[i], V[(i + 1) % n]));
+          if (cov.size < 36) continue;                // all 36 edges of the compound
+          return { V, T };
+        }
+        return null;
+      }
+
+
+      async function start() {
+        if (!build()) return { ok: false, why: 'no XZ octahedron here' };
+        // exact first; the greedy search is only a fallback
+        // EVERY constructive walk has exact dwell by construction, so length is
+        // free to be chosen on the RATIO. Short segments have no room for oct
+        // sweep once the face's three edges are spent, and apex work is
+        // 60-heavy -- L=10 gives 0.17. So try them all and keep the best.
+        let g = null, exactLen = null, bestR = -1;
+        for (const L of [10, 11, 12, 13, 14, 15, 16]) {
+          const c = genWalkExact(L, 120); if (!c) continue;
+          const r = c.T.filter(x => x === 90).length / c.T.length;
+          if (Math.abs(r - 2 / 3) < Math.abs(bestR - 2 / 3) || bestR < 0) {
+            bestR = r; g = c; exactLen = L; } }
+        if (!g) g = genWalk(4000);
+        if (!g) return { ok: false, why: 'no covering traversal found' };
+        window._EXACTSEG = exactLen;
+        walk = g.V; turns = g.T; at = 0; liveTet = null;
+        stats = { steps: 0, tets: 0, refused: 0, n90: 0, n60: 0, n0: 0 };
+        active.clear();
+        for (const [k, pr] of ringKeys) active.set(k, pr);   // the permanent oct
+        lastChange = 'oct'; restate(true); await settle(); detect();
+        drawXon(walk[0], [walk[0]]);
+        return state();
+      }
+
+      async function step() {
+        if (!walk) return { ok: false, why: 'call start() first' };
+        at = (at + 1) % walk.length;
+        const v = walk[at], t = turns[at];
+        stats.steps++;
+        if (t === 90) stats.n90++; else if (t === 60) stats.n60++;
+        else if (t === 0) stats.n0 = (stats.n0 || 0) + 1;
+        drawXon(v, walk.slice(Math.max(0, at - 11), at + 1));
+        const want = tetAt(v);
+        // ONE TET AT A TIME. The incoming rod goes in before the outgoing one
+        // comes out, so the compound never opens; the four ring rods are the
+        // foundation and are never touched.
+        if (want && (!liveTet || liveTet.apex !== want.apex)) {
+          const nk = scKeyOf(want.apex, want.scWith);
+          let ok = true;
+          if (nk) { active.set(nk[0], nk[1]);
+            lastChange = 'tet'; restate(true); await settle(); detect();
+            ok = legal(resid);
+            if (!ok) { active.delete(nk[0]); stats.refused++;
+              freezeOff(); restate(true); await settle(); detect(); } }
+          if (ok) {
+            if (liveTet) { const ok2 = scKeyOf(liveTet.apex, liveTet.scWith);
+              if (ok2) active.delete(ok2[0]); }
+            liveTet = want; stats.tets++;
+            lastChange = 'tet'; restate(true); await settle(); detect(); }
+        }
+        return state();
+      }
+
+      const state = () => ({ step: at, of: walk ? walk.length : 0,
+        node: walk ? walk[at] : null, xyz: walk ? NODE[walk[at]].join(',') : null,
+        turn: turns ? turns[at] : null,
+        ratio90: stats.n90 + stats.n60 ? +(stats.n90 / (stats.n90 + stats.n60)).toFixed(3) : null,
+        liveTet: liveTet ? NODE[liveTet.apex].join(',') : null,
+        rods: active.size, octs: solids.octs.length, tets: solids.tets.length,
+        ...stats });
+      return { start, step, state, walk: () => walk && walk.slice(),
+               turnSeq: () => turns && turns.slice() };
+    })();
+
+    window._registerLoop('proton-87', 'proton 87',
+      'An octahedron held permanently with ONE tetrahedron actualized at a '
+      + 'time, and a xon walking a pre-computed closed traversal of all 36 '
+      + 'edges of the compound. Turns are 60 and 90 only — 120 and 180 exist '
+      + 'on this shape and are refused — with the 90s held near two thirds by '
+      + 'frequency rather than on a fixed beat, since a strict block cannot '
+      + 'enter a tet at all. XZ by construction: the eight tet shortcuts come '
+      + 'out four on X and four on Z, so no Y rod is ever proposed.',
+      async (tok) => {
+        // CONTINUOUS. The walk is a true cycle, so there is nothing to restart:
+        // measured, node, live tet, rod count and the exact shortcut set are
+        // identical after every lap from the first onward. Only lap 0 differs,
+        // because it begins on the bare oct and picks up its first tet on the
+        // way round. So spawn once and keep going -- regenerating a fresh walk
+        // each lap would throw away a periodic solution to look for another.
+        while (window._loopAlive(tok)) {
+          const s0 = await window._XZPROTON.start();
+          if (!s0 || s0.ok === false) { await breathe(); continue; }
+          while (window._loopAlive(tok)) {
+            await window._XZPROTON.step();
+            const p = (window._loopPace && window._loopPace()) || 0;
+            if (p) await new Promise(r => setTimeout(r, p));
+          }
+        }
+        window._XONOFF(); cleanup();
       });
-    }
 
     // THE STEERING ELECTRON. Y shortcuts are banned, the generation is held at
     // EVERY tick, a tet is closed at EVERY tick, and it still steers.
