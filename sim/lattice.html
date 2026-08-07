@@ -340,11 +340,14 @@ let BADJ=[];                        // base-edge adjacency, for hop distance
 // be set. Sharing the tick makes the statement exact: the xon advances one
 // base edge per tick and so does its news, so a particle rides precisely on
 // its own light cone.
-let FLUX_MS=null, FLUX_ON=true; const FLUX_NODE_MS=120;
+let FLUX_ON=true; const FLUX_NODE_MS=120;
+// NO OVERRIDE. There was one, and it was a trap: _FLUX({ms:n}) pinned the wave
+// to n and unsynced it from the slider permanently, with nothing on screen to
+// say so -- a stray call left the pane propagating at 400ms while the slider
+// read 50. The slider IS the tick; there is one number and no way to fork it.
 const fluxTick=()=>{
-  if(FLUX_MS!==null) return FLUX_MS;                    // explicit override
   const p=window._loopPace?window._loopPace():0;
-  return p>0?p:140;                                     // nothing running: a sane default
+  return p>0?p:140;                                     // before the UI exists
 };
 // EVENTS SUPERPOSE. One wave object was wrong: a second flux event before the
 // first had finished replaced it outright, so nodes that had not yet heard the
@@ -372,13 +375,9 @@ window._FLUXCLAMP=(on)=>{FLUX_CLAMP=!!on;return FLUX_CLAMP;};
 // `quiet` suppresses the CREATION of new events without touching those already
 // in flight -- what a probe needs. `on:false` is the master switch and does
 // snap, because turning the animation off should show the solved geometry.
-// ms:null (or 'sync') puts the wave back on the step slider, which is the
-// default and the whole point; a number pins it independently.
-window._FLUX=(o)=>{ if(o&&o.ms!==undefined)
-    FLUX_MS=(o.ms===null||o.ms==='sync')?null:Math.max(1,o.ms);
-  if(o&&o.on!==undefined)FLUX_ON=!!o.on;
+window._FLUX=(o)=>{ if(o&&o.on!==undefined)FLUX_ON=!!o.on;
   if(o&&o.quiet!==undefined)FLUX_QUIET=!!o.quiet;
-  return {ms:fluxTick(),synced:FLUX_MS===null,on:FLUX_ON,quiet:FLUX_QUIET,
+  return {ms:fluxTick(),on:FLUX_ON,quiet:FLUX_QUIET,
           clamped:FLUX_CLAMP,tick:SIMTICK,
           running:EVENTS.length>0,pending:EVENTS.length}; };
 // ---------------------------------------------------------------------------
@@ -1232,6 +1231,39 @@ function startWave(origins,prev){
     fr=nx; if(nx.length)d++;}
   // anything the BFS could not reach is treated as furthest, never as instant
   for(let i=0;i<NODE.length;i++) if(h[i]<0) h[i]=d;
+
+  // ACTUALIZED SOLIDS ARE CAUSAL ATOMS. A tet's four vertices sit at different
+  // hop distances from the rod that changed -- measured on a running electron,
+  // usually 0,1,1,2 -- so they would arrive on different ticks and the tet
+  // would be drawn with non-unit edges 86% of the time, worst 14%. A solid is
+  // not four vertices that happen to be adjacent; it is one object. So every
+  // vertex of a detected solid takes the SMALLEST hop among them and the whole
+  // thing arrives together, rigid.
+  //
+  // The price, stated rather than hidden: news crosses a solid's interior
+  // faster than c. The far vertex of a 2-hop tet learns two ticks early. That
+  // is the claim -- a solid is a single causal element, the same reading as a
+  // horizon being one tick rather than a spread of them.
+  //
+  // Relaxed to a FIXED POINT because solids share vertices: lowering one can
+  // lower a neighbour's minimum, which propagates. Values only ever decrease
+  // and are bounded below by 0, so it terminates; the guard is a backstop.
+  const atoms=[];
+  for(const t of solids.tets) atoms.push(t);
+  for(const o of solids.octs) atoms.push([o[0],o[1],...o[2]]);
+  if(atoms.length){
+    let changed=true,guard=0;
+    while(changed&&guard++<256){
+      changed=false;
+      for(const S of atoms){
+        let m=Infinity;
+        for(const v of S) if(h[v]<m) m=h[v];
+        for(const v of S) if(h[v]>m){h[v]=m;changed=true;}
+      }
+    }
+  }
+  // the reach can only have shrunk, so recompute it
+  d=0; for(let i=0;i<NODE.length;i++) if(h[i]>d) d=h[i];
   if(!EVENTS.length) PBASE=prev.map(v=>v.clone());
   const delta=new Float64Array(NODE.length*3);
   for(let i=0;i<NODE.length;i++){
@@ -1596,8 +1628,10 @@ function restate(user){
   enqueue(pairs,'main',rec=>{LOADEDKEY=mk;
     // the solved state BEFORE this event, so the event's field is exact
     const prevSolved=(P.length===NODE.length)?P.map(v=>v.clone()):null;
-    load(rec);startWave(org,prevSolved);
-    detect();measure();paint();readout();
+    // detect BEFORE startWave: the wave needs the solids that exist AFTER this
+    // event, since those are the ones that must arrive as units.
+    load(rec);detect();startWave(org,prevSolved);
+    measure();paint();readout();
     if(!legal(resid)) freezeOn(); else { freezeOff(); lastGood=new Map(active); }});
   probeSelected();
 }
@@ -2036,6 +2070,6 @@ let tPrev=performance.now();
 })(performance.now());
 </script>
 <!-- scratch harnesses: measurement only, loaded after the engine is built -->
-<script src="_tetline-scratch.js?v=190"></script>
+<script src="_tetline-scratch.js?v=192"></script>
 </body>
 </html>
