@@ -24,8 +24,15 @@ const MIME = {
 http.createServer((req, res) => {
     let filePath = path.join(ROOT, req.url.split('?')[0]);
     if (filePath.endsWith('/')) filePath += 'index.html';
+    // The root is the lattice explorer. It used to land on the flux-v2 splash,
+    // which is a click away from anything anyone actually opens the server for.
+    // REDIRECT rather than serve the file here: lattice.html loads its scripts
+    // by relative path, so served at '/' they would resolve to the root and
+    // 404. The browser needs to actually be at /sim/.
     if (filePath === path.join(ROOT, 'index.html') && !fs.existsSync(filePath)) {
-        filePath = path.join(ROOT, 'flux-v2.html');
+        res.writeHead(302, { Location: '/sim/lattice.html' });
+        res.end();
+        return;
     }
 
     const ext = path.extname(filePath);

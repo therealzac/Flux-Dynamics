@@ -62,8 +62,9 @@
   #legend i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
 
   /* layers */
+  /* The layers card must open OVER the validation card beneath it. */
   #layers{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));
-          width:222px;z-index:5;overflow:hidden}
+          width:222px;z-index:9;overflow:hidden}
   #sheet.up ~ #layers{bottom:calc(258px + env(safe-area-inset-bottom))}
   #lhead{height:44px;display:flex;align-items:center;padding:0 14px;gap:8px;
          font-size:12px;color:#8fa3ba;cursor:pointer}
@@ -91,6 +92,42 @@
   #loops.open #lpcaret{transform:rotate(180deg)}
   #lpbody{display:none;padding:2px 10px 10px}
   #loops.open #lpbody{display:block}
+  /* Optimiser card: same shape as loops, docked to the right so both can be
+     open at once -- watching the search while the lattice runs is the point. */
+  /* Docked BELOW the stepper and ABOVE the layers card, which owns the
+     bottom-right corner. Capped so a long run cannot grow it into layers. */
+  #opt{position:fixed;right:12px;top:104px;width:268px;z-index:5;
+       max-height:calc(100vh - 330px);overflow-y:auto}
+  #ophead{height:44px;display:flex;align-items:center;padding:0 14px;
+          font-size:12px;color:#8fa3ba;cursor:pointer}
+  #ophead:active{background:#1a2230}
+  #opnow{margin-left:auto;font-size:10.5px;color:#5d6e85}
+  #opcaret{margin-left:9px;font-size:9px;transition:transform .18s}
+  #opt.open #opcaret{transform:rotate(180deg)}
+  #opt.open #opbody{display:block!important}
+  #ophard td{padding:1px 0;color:#8fa3ba}
+  #ophard td:last-child{text-align:right;color:#cfe0f2}
+  #ophard tr.ok td:last-child{color:#57d98a}
+  #ophard tr.bad td:last-child{color:#ff6b6b}
+  /* validation card: bottom-right, above the layers card */
+  #val{position:fixed;right:12px;bottom:calc(70px + env(safe-area-inset-bottom));
+       width:268px;z-index:4;max-height:52vh;overflow-y:auto}
+  #vhead{height:40px;display:flex;align-items:center;padding:0 14px;
+         font-size:12px;color:#8fa3ba;cursor:pointer}
+  #vhead:active{background:#1a2230}
+  #vnow{margin-left:auto;font-size:10.5px;color:#5d6e85}
+  #vcaret{margin-left:9px;font-size:9px;transition:transform .18s}
+  #val.open #vcaret{transform:rotate(180deg)}
+  #vbody{display:none;padding:2px 12px 12px}
+  #val.open #vbody{display:block}
+  #vout{font:11px ui-monospace,monospace}
+  #vout .r{display:flex;gap:8px;padding:2px 0;border-bottom:1px solid #1b2531}
+  #vout .r:last-child{border-bottom:0}
+  #vout .n{color:#8fa3ba;flex:1}
+  #vout .v{color:#cfe0f2;font-weight:600}
+  #vout .ok{color:#57d98a} #vout .no{color:#ff6b6b}
+  #vout .sec{color:#5d6e85;font-size:9.5px;letter-spacing:.12em;
+             text-transform:uppercase;margin:8px 0 3px}
   /* The list outgrew the screen once the CA loops landed -- tall enough that
      the card could not be collapsed because its header was off-screen. */
   #lplist{max-height:min(46vh,340px);overflow-y:auto;overscroll-behavior:contain}
@@ -207,9 +244,16 @@
   <div id="lphead">loops<span id="lpnow">no loop</span><span id="lpcaret">&#9650;</span></div>
   <div id="lpbody">
     <div id="lplist"></div>
+    <!-- 1 ms floor: at the bottom of the range the loop is limited by how
+         fast the solver can answer, not by the delay, which is the regime
+         worth being able to reach. The number box is there because dragging
+         to an exact value on a 1000-wide range is hopeless. -->
     <div class="lay" style="margin:2px 2px 8px">
-      <label>step <b id="v-pace">250 ms</b></label>
-      <input type="range" min="50" max="1000" step="25" value="250" id="s-pace">
+      <label>step <input type="number" min="1" max="1000" step="1" value="25" id="n-pace"
+             style="width:58px;background:#16202c;border:1px solid #2b3a4d;color:#cfe0f2;
+                    font:11px ui-monospace,monospace;border-radius:5px;padding:2px 4px;
+                    text-align:right"> ms</label>
+      <input type="range" min="1" max="1000" step="1" value="25" id="s-pace">
     </div>
     <!-- Only shown for loops registered with {life:true}: the hadrons live a
          fixed number of ticks and then respawn. The traversal loops end when
@@ -221,6 +265,36 @@
     <div class="btn" id="lppause" style="margin:2px 2px 10px;height:38px;display:none">pause</div>
     <div id="lpsub"></div>
   </div>
+</div>
+
+<!-- The optimiser searches for a proton 87 lap. Everything under HELD is met by
+     construction and cannot move while it runs; only the discrepancy improves.
+     Collapsed by default -- it is a tool, not part of the lattice. -->
+<div id="opt" class="card" hidden>
+  <div id="ophead">proton 87 optimiser<span id="opnow">idle</span><span id="opcaret">&#9660;</span></div>
+  <div id="opbody" style="display:none">
+    <div class="lay" style="margin:2px 2px 8px">
+      <label>segment length <b id="v-oplen">20</b></label>
+      <input type="range" min="11" max="26" step="1" value="20" id="s-oplen">
+    </div>
+    <div class="btn" id="oprun" style="margin:2px 2px 8px;height:38px">start</div>
+    <div id="opstat" style="font:11px ui-monospace,monospace;opacity:.75;margin:0 4px 8px"></div>
+    <div style="margin:0 4px 6px;font:11px ui-monospace,monospace;opacity:.6">1 FACE TIME &middot; 2 IDENTITY &middot; 3 EDGES</div>
+    <table id="ophard" style="width:100%;font:11px ui-monospace,monospace;margin:0 2px 10px"></table>
+    <div style="margin:0 4px 6px;font:11px ui-monospace,monospace;opacity:.6">2/3 AT EVERY SCALE &mdash; how far a window of w drifts</div>
+    <div id="opscales" style="margin:0 4px 10px"></div>
+    <canvas id="ophist" width="300" height="70" style="width:100%;height:70px;margin:0 0 8px"></canvas>
+    <div id="opledger" style="margin:0 4px 8px"></div>
+    <div class="btn" id="opuse" style="margin:2px 2px 10px;height:34px;opacity:.4;pointer-events:none">use this lap</div>
+  </div>
+</div>
+
+<!-- Live validation of whatever loop is running. Everything here is measured
+     from the run itself, not read back from the tables the walk was built
+     from -- if the two ever disagree this is what shows it. -->
+<div id="val" class="card">
+  <div id="vhead">validation<span id="vnow">idle</span><span id="vcaret">&#9660;</span></div>
+  <div id="vbody"><div id="vout"></div></div>
 </div>
 
 <div id="hint">WASD fly · drag look · scroll dolly · click a node</div>
@@ -316,7 +390,68 @@ function buildLattice(sh){
     if(!isBase.has(i*1e6+j))REP.push([i,j]);
   REST=NODE.map(posOf);
   nCells=NODE.length;
+  buildSym();
 }
+
+// ===========================================================================
+// VACUUM SYMMETRY
+// ===========================================================================
+// The ball is invariant under the 48 signed axis permutations about LCENTER: a
+// signed permutation preserves the shared-parity condition and the radius, and
+// it carries the <111> base set, the <100> shortcut set, and "every non-base
+// pair repels" each onto itself. So the WHOLE constraint system is equivariant
+// -- if p solves C then g.p solves g.C, and exactly, because g only moves and
+// negates coordinates.
+//
+// This is not an approximation and it does not predict the solver: what comes
+// back from the store is the answer the solver already gave, read in a rotated
+// frame. One solve therefore covers up to 48 configurations.
+//
+// Guarded three ways, because a symmetry that is merely assumed is a bug:
+//   * families with an explicit BASIS are excluded -- there a signed
+//     permutation of lattice coordinates is not an isometry of world space
+//   * an op is kept only if it maps EVERY node onto a node, which is what
+//     fails when LCENTER sits somewhere the group does not fix
+//   * and only if it carries BASE onto BASE
+// Identity always survives all three, so SYM is never empty and the worst case
+// is exactly the old behaviour.
+let SYM=[], SYM_FOR=null;
+function buildSym(){
+  SYM=[{ax:[0,1,2],sgn:[1,1,1],perm:null,ident:true}];
+  SYM_FOR=LCENTER.join(',');
+  if(F.basis) return;
+  const c0=LCENTER;
+  if(c0.some(v=>!Number.isInteger(v))) return;
+  const AXP=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]], cand=[];
+  for(const ax of AXP)for(const sx of[1,-1])for(const sy of[1,-1])for(const sz of[1,-1]){
+    if(ax[0]===0&&ax[1]===1&&ax[2]===2&&sx===1&&sy===1&&sz===1)continue;   // identity already in
+    cand.push({ax,sgn:[sx,sy,sz]});}
+  const baseSet=new Set(BASE.map(([i,j])=>Math.min(i,j)+':'+Math.max(i,j)));
+  const n=NODE.length;
+  for(const g of cand){
+    const perm=new Int32Array(n); let ok=true;
+    for(let i=0;i<n&&ok;i++){const c=NODE[i];
+      const j=KEY.get((c0[0]+g.sgn[0]*(c[g.ax[0]]-c0[g.ax[0]]))+','+
+                      (c0[1]+g.sgn[1]*(c[g.ax[1]]-c0[g.ax[1]]))+','+
+                      (c0[2]+g.sgn[2]*(c[g.ax[2]]-c0[g.ax[2]])));
+      if(j===undefined)ok=false; else perm[i]=j;}
+    if(!ok) continue;
+    const seen=new Uint8Array(n);
+    for(let i=0;i<n&&ok;i++){if(seen[perm[i]])ok=false;else seen[perm[i]]=1;}
+    if(!ok) continue;
+    for(const [i,j] of BASE){const a=perm[i],b=perm[j];
+      if(!baseSet.has(Math.min(a,b)+':'+Math.max(a,b))){ok=false;break;}}
+    if(!ok) continue;
+    SYM.push({ax:g.ax,sgn:g.sgn,perm});
+  }
+}
+// g on a world point, about the world image of LCENTER. With LCENTER at the
+// origin this is pure swap-and-negate and therefore bit-exact.
+const _symO=()=>[LCENTER[0]*S,LCENTER[1]*S,LCENTER[2]*S];
+function symFwd(g,x,y,z,o,out){const v=[x,y,z];
+  for(let a=0;a<3;a++)out[a]=o[a]+g.sgn[a]*(v[g.ax[a]]-o[g.ax[a]]);return out;}
+function symInv(g,x,y,z,o,out){const q=[x,y,z];
+  for(let a=0;a<3;a++)out[g.ax[a]]=o[g.ax[a]]+g.sgn[a]*(q[a]-o[a]);return out;}
 
 // ===========================================================================
 // SOLVER + CACHE
@@ -400,17 +535,58 @@ window._FLUX=(o)=>{ if(o&&o.on!==undefined)FLUX_ON=!!o.on;
 const HOT=new Map(); const HOT_MAX=800;      // ~3MB at 339 nodes; a window, not the cache
 const WRITE=new Map();                        // computed but not yet committed
 let hits=0, idbHits=0, misses=0, idb=null, idbTimer=null, stored=null;
-const keyOf=pairs=>FAM+'/'+shells+'@'+LCENTER.join(',')+'|'+pairs.map(([i,j])=>[Math.min(i,j),Math.max(i,j)])
-  .sort((a,b)=>a[0]-b[0]||a[1]-b[1]).map(p=>p[0]+':'+p[1]).join(',');
+// THE KEY IS THE CONFIGURATION'S SYMMETRY CLASS, not its address. The same
+// three shortcuts one rotation away used to be a fresh miss; measured on a live
+// electron run, 414 stored solves were 150 distinct configurations up to
+// rotation. `g` is the op that reached the canonical form -- the store holds the
+// canonical frame, and every read comes back through g.
+const _kpre=()=>FAM+'/'+shells+'@'+LCENTER.join(',')+'|';
+function canonOf(pairs){
+  // SYM IS ONLY VALID FOR THE CENTRE IT WAS BUILT ABOUT. Move LCENTER without
+  // rebuilding and every cached solve comes back through the wrong rotation --
+  // the whole lattice visibly lurches on each flux event. buildLattice() does
+  // rebuild it, but nothing stopped some other path from moving the centre on
+  // its own, so the invariant is now checked here instead of assumed.
+  if(SYM_FOR!==LCENTER.join(','))buildSym();
+  let bs=null,bg=SYM[0];
+  for(const g of SYM){
+    const s=pairs.map(([i,j])=>{const a=g.perm?g.perm[i]:i,b=g.perm?g.perm[j]:j;
+        return a<b?[a,b]:[b,a];})
+      .sort((x,y)=>x[0]-y[0]||x[1]-y[1]).map(p=>p[0]+':'+p[1]).join(',');
+    if(bs===null||s<bs){bs=s;bg=g;}}
+  return {k:_kpre()+bs,g:bg};
+}
+const keyOf=pairs=>canonOf(pairs).k;
+// Between the current frame and the canonical one. Node i here is node
+// g.perm[i] there, and its position transforms with it.
+function symMap(xyz,g,fwd){
+  if(!g.perm) return xyz;
+  const n=NODE.length,out=new Float64Array(n*3),o=_symO(),t=[0,0,0];
+  for(let i=0;i<n;i++){const j=g.perm[i],s=fwd?i:j,d=fwd?j:i;
+    (fwd?symFwd:symInv)(g,xyz[s*3],xyz[s*3+1],xyz[s*3+2],o,t);
+    out[d*3]=t[0];out[d*3+1]=t[1];out[d*3+2]=t[2];}
+  return out;
+}
+const symRec=(rec,g,fwd)=>g.perm?{k:rec.k,xyz:symMap(rec.xyz,g,fwd),resid:rec.resid}:rec;
 
 // Opened once. Nothing is read at startup beyond the row count, which is for
 // the readout only -- the store may be very large and loading it would defeat
 // the point.
+// ASK FOR DURABLE STORAGE. Without this the store is "best effort" and the
+// browser may evict it whenever it likes -- which looks exactly like a cache
+// that never accumulates. Reported in the readout so it is never a guess.
+let PERSISTED=null;
+if(navigator.storage&&navigator.storage.persist)
+  navigator.storage.persisted().then(p=>p?(PERSISTED=true):navigator.storage.persist()
+    .then(ok=>{PERSISTED=ok;})).catch(()=>{PERSISTED=false;});
 let idbReady=new Promise(res=>{
-  const rq=indexedDB.open('fd-lattice',3);
+  const rq=indexedDB.open('fd-lattice',4);
+  // NON-DESTRUCTIVE. This used to drop and recreate 'solves' on every version
+  // bump, so adding a store would have thrown away every cached solve. Create
+  // what is missing; never delete what is there.
   rq.onupgradeneeded=e=>{const db=e.target.result;
-    if(db.objectStoreNames.contains('solves'))db.deleteObjectStore('solves');
-    db.createObjectStore('solves');};
+    if(!db.objectStoreNames.contains('solves'))db.createObjectStore('solves');
+    if(!db.objectStoreNames.contains('walks'))db.createObjectStore('walks');};
   rq.onsuccess=e=>{idb=e.target.result;
     try{const c=idb.transaction('solves','readonly').objectStore('solves').count();
       c.onsuccess=()=>{stored=c.result;};}catch(_){}
@@ -446,10 +622,23 @@ addEventListener('pagehide',idbSave);
 addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')idbSave();});
 // A rejected promise with no handler used to look exactly like a run that
 // finished quietly. It must not: surface it on the chip and in the console.
-window._LASTERR=null;
+// ONLY OUR OWN. Browser extensions inject scripts into the page and reject
+// promises we never made -- a wallet provider throwing 'Internal JSON-RPC
+// error' used to red-flag the chip and read as a broken simulation. A rejection
+// counts as ours only if its stack names one of our files. Foreign ones are
+// still recorded, on a separate field, so nothing is silently swallowed.
+window._LASTERR=null; window._FOREIGNERR=null;
+const OURS=/lattice\.html|tetline-scratch|three(\.min)?\.js/;
 addEventListener('unhandledrejection',e=>{
-  window._LASTERR=(e.reason&&(e.reason.stack||e.reason.message))||String(e.reason);
-  console.error('UNHANDLED REJECTION:',window._LASTERR);
+  const r=e.reason, txt=(r&&(r.stack||r.message))||String(r);
+  // No stack at all is what extension RPC objects look like; ours are Errors
+  // thrown from our own code and carry one.
+  if(!(r&&r.stack&&OURS.test(r.stack))){
+    window._FOREIGNERR=txt;
+    console.warn('rejection from outside the page (extension?), ignored:',txt);
+    return;}
+  window._LASTERR=txt;
+  console.error('UNHANDLED REJECTION:',txt);
   const t=document.getElementById('chiptext'), c=document.getElementById('chip');
   if(t){t.textContent='SCRIPT ERROR - see console';}
   if(c){c.className='card bad';}
@@ -1132,13 +1321,13 @@ function freezeOff(){FROZEN=false;document.getElementById('freeze').classList.re
 // as a solve would.
 function enqueue(pairs,tag,done,opt){
   opt=opt||{};
-  const k=keyOf(pairs)+(opt.tagKey?'|'+opt.tagKey:'');
+  const cn=canonOf(pairs), g=cn.g, k=cn.k+(opt.tagKey?'|'+opt.tagKey:'');
   const fresh=r=>r&&r.xyz&&r.xyz.length===NODE.length*3;
   if(!opt.nocache){
     const hot=HOT.get(k);
-    if(fresh(hot)){hits++;hotPut(k,hot);done(hot);return;}   // still synchronous
+    if(fresh(hot)){hits++;hotPut(k,hot);done(symRec(hot,g,false));return;}  // still synchronous
   }
-  const J={pairs,k,tag,done,free:opt.free||null,nocache:!!opt.nocache,
+  const J={pairs,k,g,tag,done,free:opt.free||null,nocache:!!opt.nocache,
            from:opt.from||REST,probe:'wait',budget:0,total:0,P:null};
   const arm=()=>{J.probe='ready';const B=budgetFor();
     J.budget=B;J.total=B;J.P=J.from.map(v=>v.clone());};
@@ -1148,7 +1337,7 @@ function enqueue(pairs,tag,done,opt){
     if(fresh(rec)){
       idbHits++; hotPut(k,rec);
       const i=queue.indexOf(J); if(i>=0)queue.splice(i,1);
-      J.done(rec);
+      J.done(symRec(rec,g,false));
     } else { misses++; arm(); }
   });
 }
@@ -1191,7 +1380,8 @@ function finish(J){const p=J.P;let b=0,s=0,m=Infinity;
   const xyz=new Float64Array(p.length*3);
   p.forEach((v,i)=>{xyz[i*3]=v.x;xyz[i*3+1]=v.y;xyz[i*3+2]=v.z;});
   const rec={k:J.k,xyz,resid:{base:b,sc:s,minSep:m===Infinity?1:m}};
-  if(!J.nocache) remember(J.k,rec);
+  // Stored in the canonical frame; handed back in this one.
+  if(!J.nocache) remember(J.k,symRec(rec,J.g,true));
   return rec;}
 const load=rec=>{P=[];for(let i=0;i<NODE.length;i++)
   P.push(new THREE.Vector3(rec.xyz[i*3],rec.xyz[i*3+1],rec.xyz[i*3+2]));resid=rec.resid;
@@ -1458,6 +1648,23 @@ function mkLines(c,o,vc){const g=new THREE.BufferGeometry();
     opacity:o,vertexColors:!!vc}));
   m.frustumCulled=false;scene.add(m);return m;}
 const baseLines=mkLines(0xffffff,0.75,true), scLines=mkLines(C_SC,1);
+// COLOUR CHARGE gets its own layer so the six charged vertices and the live
+// tet can be seen without the rest of the lattice's nodes. depthTest is off
+// and renderOrder is high, so it draws OVER the white platonic faces rather
+// than z-fighting the coplanar one it sits on.
+let ccMesh=null, ccTet=null;
+const CC_MAX=24;
+function mkCC(){
+  ccMesh=new THREE.InstancedMesh(new THREE.SphereGeometry(0.17,18,14),
+    new THREE.MeshBasicMaterial({transparent:true,opacity:1,depthTest:false}),CC_MAX);
+  ccMesh.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(CC_MAX*3),3);
+  ccMesh.frustumCulled=false; ccMesh.renderOrder=20; scene.add(ccMesh);
+  ccTet=new THREE.Mesh(new THREE.BufferGeometry(),
+    new THREE.MeshBasicMaterial({transparent:true,opacity:0.42,side:THREE.DoubleSide,
+      depthTest:false,depthWrite:false}));
+  ccTet.frustumCulled=false; ccTet.renderOrder=19; scene.add(ccTet);
+  applyLayers();                       // adopt the sliders the moment it exists
+}
 // ONE COLOUR PER BASE AXIS. BASE entries already carry their direction index
 // from dirOf(), so a, b, c, d are r, g, b, y with no extra bookkeeping.
 //   a = (1,1,1)  red      b = (1,1,-1)  green
@@ -1528,9 +1735,32 @@ function paint(){
   for(let i=0;i<NODE.length;i++){
     dummy.position.copy(PD[i]);dummy.scale.setScalar(i===selected?1.7:1);dummy.updateMatrix();
     nodeMesh.setMatrixAt(i,dummy.matrix);
-    c.setHex(i===selected?C_PICK:NODE_GREY);
+    // COLOUR CHARGE. A loop may paint individual nodes -- the octahedron's
+    // six vertices carry a colour and its anti while a tet is actualized --
+    // by putting node -> hex in window._NODECOL. Selection still wins.
+    const cc = (i!==selected && window._NODECOL) ? window._NODECOL.get(i) : undefined;
+    c.setHex(i===selected?C_PICK:(cc===undefined?NODE_GREY:cc));
     nodeMesh.setColorAt(i,c);
   }
+  // colour charge: only the charged nodes, and the live tet drawn over the top
+  if(!ccMesh)mkCC();
+  const CM=window._NODECOL;
+  let cn=0;
+  if(CM){ for(const [n,hex] of CM){ if(cn>=CC_MAX||!PD[n])break;
+    dummy.position.copy(PD[n]);dummy.scale.setScalar(1);dummy.updateMatrix();
+    ccMesh.setMatrixAt(cn,dummy.matrix);c.setHex(hex);ccMesh.setColorAt(cn,c);cn++; } }
+  ccMesh.count=cn; ccMesh.instanceMatrix.needsUpdate=true;
+  if(ccMesh.instanceColor)ccMesh.instanceColor.needsUpdate=true;
+  const CT=window._CCTET;
+  if(CT&&CT.nodes&&CT.nodes.length===4&&PD[CT.nodes[0]]){
+    const F=[[0,1,2],[0,1,3],[0,2,3],[1,2,3]],a=new Float32Array(36);
+    F.forEach((f,k)=>f.forEach((x,m)=>{const p=PD[CT.nodes[x]];
+      a[k*9+m*3]=p.x;a[k*9+m*3+1]=p.y;a[k*9+m*3+2]=p.z;}));
+    ccTet.geometry.setAttribute('position',new THREE.BufferAttribute(a,3));
+    ccTet.geometry.computeBoundingSphere();
+    ccTet.material.color.setHex(CT.hex);
+    ccTet.visible=LAYERS.find(l=>l.id==='colour').val>0;
+  } else if(ccTet) ccTet.visible=false;
   // packing spheres: only on the sites that actually carry one
   PACKI.forEach((i,k)=>{dummy.position.copy(PD[i]);dummy.scale.setScalar(1);dummy.updateMatrix();
     bigMesh.setMatrixAt(k,dummy.matrix);c.setHex(0xd8dee6);bigMesh.setColorAt(k,c);});
@@ -1578,7 +1808,9 @@ function readout(){
 <tr><td>closest approach</td><td class="${cls(resid.minSep>1-TOL)}">${resid.minSep.toFixed(6)}</td></tr>
 <tr><td>platonic octahedra</td><td class="${solids.octs.length?'ok':''}">${solids.octs.length}</td></tr>
 <tr><td>platonic tetrahedra</td><td class="${solids.tets.length?'ok':''}">${solids.tets.length}</td></tr>
-<tr><td>solutions stored</td><td>${stored===null?'…':stored+(WRITE.size?'+'+WRITE.size:'')}</td></tr>
+<tr><td>solutions stored</td><td>${stored===null?'…':stored+(WRITE.size?'+'+WRITE.size:'')}${PERSISTED===false?' (evictable)':''}</td></tr>
+<tr><td>cache hits</td><td>${hits} hot / ${idbHits} store / ${misses} solved</td></tr>
+<tr><td>vacuum symmetry</td><td>${SYM.length} ops</td></tr>
 <tr><td>hits hot / disk / miss</td><td>${hits} / ${idbHits} / ${misses}</td></tr>`
   +(MEAS.ready?`
 <tr><td colspan="2" style="padding-top:9px;border-top:1px solid #1e2530;color:#5d6e85">
@@ -1693,16 +1925,18 @@ let ORBIT=0;                    // 0..1, drift speed taken from the slider
 const ORBIT_MAX=0.5;            // rad/s at 100% — about 12.6 s per revolution
 const orb={r:9.5,th:0,ph:0};    // camera in spherical coords about the lattice centre
 const LAYERS=[
-  {id:'nodes',    name:'nodes',            val:11},
+  {id:'nodes',    name:'nodes',            val:7},
   {id:'base',     name:'base edges',       val:33},
   {id:'sc',       name:'shortcuts',        val:100},
-  {id:'faces',    name:'platonic faces',   val:40},
+  {id:'faces',    name:'platonic faces',   val:25},
   // Append only: saved states index LAYERS by position, so inserting above
   // would remap every slider a returning user has already set.
   {id:'xon',      name:'xon',              val:100},
-  {id:'orbit',    name:'orbit',            val:0},
-  {id:'attractor',name:'attractor',        val:100},
+  {id:'orbit',    name:'orbit',            val:5},
+  {id:'attractor',name:'attractor',        val:0},
   {id:'pack',     name:'packing spheres',  val:0},
+  {id:'colour',   name:'colour charge',    val:37},
+  {id:'trail',    name:'xon trail',        val:38},
 ];
 // The ids a POSITIONAL save could have meant. Anything added after this list
 // takes its declared default rather than inheriting a stranger's value.
@@ -1725,7 +1959,10 @@ function applyLayers(){
   baseLines.material.opacity=g('base');baseLines.visible=g('base')>0;
   scLines.material.opacity=g('sc');scLines.visible=g('sc')>0;
   faceMesh.material.opacity=g('faces');faceMesh.visible=g('faces')>0;
+  if(ccMesh){const q=g('colour');ccMesh.material.opacity=q;ccMesh.visible=q>0;}
+  if(ccTet){const q=g('colour');ccTet.material.opacity=0.42*q;ccTet.visible=ccTet.visible&&q>0;}
   if(window._XONDIM)window._XONDIM(g('xon'));
+  if(window._TRAILLEN)window._TRAILLEN(Math.max(2,Math.round(g('trail')*240)));
   if(window._ATTRDIM)window._ATTRDIM(g('attractor'));
   const o=g('orbit');
   if(o>0&&ORBIT===0)orbSync();     // entering orbit: adopt wherever the fly camera left off
@@ -1735,6 +1972,47 @@ function applyLayers(){
     :'WASD fly · drag look · scroll dolly · click a node';
 }
 $('lhead').onclick=()=>{$('layers').classList.toggle('open');saveState();};
+$('vhead').onclick=()=>{$('val').classList.toggle('open');};
+(()=>{
+  const out=$('vout'), now=$('vnow');
+  const pct=x=>x===null||x===undefined?'-':(100*x).toFixed(2)+'%';
+  const row=(n,v,ok)=>'<div class="r"><span class="n">'+n+'</span>'+
+    '<span class="v '+(ok===undefined?'':ok?'ok':'no')+'">'+v+'</span></div>';
+  setInterval(()=>{
+    const V=window._P87VALIDATE&&window._P87VALIDATE();
+    if(!V||!V.steps){ now.textContent='idle'; out.innerHTML=
+      '<div class="sec">no run</div>'+row('start the proton 87 loop','',undefined); return; }
+    const f=V.faces, d=V.disc;
+    const rOK=V.ratio!==null&&Math.abs(V.ratio-2/3)<5e-3;
+    const fOK=V.faceOK;
+    const pass=rOK&&fOK&&V.colViol===0&&V.tetColOK&&V.vertColOK&&V.refused===0;
+    now.textContent=pass?'all pass':'CHECK';
+    now.style.color=pass?'#57d98a':'#ff6b6b';
+    let h='<div class="sec">measured from the run</div>';
+    h+=row('ticks',V.steps+'  ('+V.lap+'/lap)');
+    h+=row('tets actualized',String(V.tets));
+    h+=row('vacuum refusals',String(V.refused),V.refused===0);
+    h+=row('composition',V.ratio===null?'-':V.ratio.toFixed(6),rOK);
+    h+=row('90 / 60 / 0',V.n90+' / '+V.n60+' / '+V.n0);
+    if(f){ h+='<div class="sec">actualized tet ticks</div>';
+      h+=row('per face',f.ticks.join(' '));
+      h+=row('spread',f.spread+(V.faceBound?'  (<= '+V.faceBound+' mid-lap)':''),V.faceOK); }
+    if(d&&d.per){ h+='<div class="sec">2/3 at every scale</div>';
+      h+=row('typical window',pct(d.mean));
+      for(const w of [3,12,50]) if(d.per[w]!==null&&d.per[w]!==undefined)
+        h+=row('w='+w,pct(d.per[w]),d.per[w]<0.25); }
+    h+='<div class="sec">colour charge</div>';
+    h+=row('activations',V.nAct+(V.part?'  (+'+V.part+' into cycle)':'  (period ends)'));
+    h+=row('tet R/G/B spread',String(V.tSpread),V.tetColOK);
+    h+=row('vertex 6-fold spread',String(V.vSpread),V.vertColOK);
+    h+=row('face-edge pair rule',V.colViol+' violations',V.colViol===0);
+    out.innerHTML=h;
+  },500);
+})();
+// Re-apply once everything has loaded: consumers defined by later scripts
+// (window._TRAILLEN, _XONDIM, _ATTRDIM) do not exist during the first pass,
+// so without this the sliders silently fail to own their values at startup.
+addEventListener('load',()=>applyLayers());
 $("clear").onclick=()=>{if(FROZEN)return;active.clear();select(null);restate(true);saveState();};
 
 // ---- loops --------------------------------------------------------------
@@ -1751,7 +2029,7 @@ $("clear").onclick=()=>{if(FROZEN)return;active.clear();select(null);restate(tru
 // silently restarting a multi-minute animation each time would be worse than
 // one click.
 const LOOPS=[{id:'none',name:'no loop',sub:'',run:null}];
-let LOOPNOW='none', LOOPTOKEN=0, LOOPPACE=250, LOOPLIFE=240, LOOPPAUSE=false;
+let LOOPNOW='none', LOOPTOKEN=0, LOOPPACE=25, LOOPLIFE=240, LOOPPAUSE=false;
 // opts.life marks a loop whose particle has a lifespan in ticks rather than
 // ending when it leaves the lattice. The engine still knows nothing about what
 // the loop is -- it only knows whether to show the slider.
@@ -1770,8 +2048,21 @@ window._loopPace=()=>LOOPPACE;
 // ticks per particle, read live so the slider takes effect on the next spawn
 window._loopLife=()=>LOOPLIFE;
 window._loopPaused=()=>LOOPPAUSE;
-$('s-pace').addEventListener('input',e=>{
-  LOOPPACE=+e.target.value; $('v-pace').textContent=LOOPPACE+' ms'; saveState();});
+// Slider and box are two views of one value; each writes the other so they
+// can never disagree. The box is clamped on commit rather than on keystroke,
+// so a partially typed number does not snap under the cursor.
+function setPace(v,from){
+  v=Math.max(1,Math.min(1000,Math.round(+v||1)));
+  LOOPPACE=v;
+  // Write BOTH, always. Skipping the source left an out-of-range entry showing
+  // in the box after it had already been clamped -- typing 99999 ran at 1000
+  // while the field still read 99999. `change` fires on commit, not per
+  // keystroke, so echoing the clamped value back cannot fight the typist.
+  $('s-pace').value=v; $('n-pace').value=v;
+  saveState();}
+$('s-pace').addEventListener('input',e=>setPace(e.target.value,'slider'));
+$('n-pace').addEventListener('change',e=>setPace(e.target.value,'box'));
+$('n-pace').addEventListener('keydown',e=>{if(e.key==='Enter')setPace(e.target.value,'box');});
 $('s-life').addEventListener('input',e=>{
   LOOPLIFE=+e.target.value; $('v-life').textContent=LOOPLIFE+' ticks'; saveState();});
 function setPause(on){
@@ -1821,6 +2112,116 @@ async function setLoop(id){
   if(LOOPTOKEN===tok){ LOOPNOW='none'; drawLoops(); }   // ended on its own
 }
 $('lphead').onclick=()=>{$('loops').classList.toggle('open');saveState();};
+
+// =========================================================================
+// PROTON 87 OPTIMISER PANEL
+// =========================================================================
+// The worker owns the search; this only draws it. The distinction that matters
+// on screen: HELD BY CONSTRUCTION never changes while the search runs -- if any
+// of those lines ever goes red it is a BUG in the sampler, not a worse lap --
+// and the discrepancy is the only thing a long run improves.
+(()=>{
+  let W=null, running=false, bestWalk=null, ideal=null, hist=[];
+  const st=$('opstat'), hard=$('ophard'), sc=$('opscales'), cv=$('ophist');
+  const KEYW=()=>'p87|'+(+$('s-oplen').value);
+  const walkPut=(k,v)=>idbReady.then(db=>{if(!db)return;
+    try{db.transaction('walks','readwrite').objectStore('walks').put(v,k);}catch(_){}});
+  const walkGet=k=>idbReady.then(db=>db?new Promise(r=>{
+    try{const q=db.transaction('walks','readonly').objectStore('walks').get(k);
+      q.onsuccess=()=>r(q.result||null);q.onerror=()=>r(null);}catch(_){r(null);}}):null);
+
+  $('ophead').onclick=()=>$('opt').classList.toggle('open');
+  $('s-oplen').oninput=e=>{$('v-oplen').textContent=e.target.value;
+    if(!running)walkGet(KEYW()).then(r=>{if(r){bestWalk=r.V;paintBest(r);}});};
+
+  function paintHard(m){
+    const rows=[
+      ['composition n90/(n90+n60)', m?m.ratio.toFixed(6):'-', m&&Math.abs(m.ratio-2/3)<1e-12],
+      // ACTUALIZED ticks -- a face counts a tick only while its tet really
+      // exists, i.e. from when its apex-pole shortcut was last traversed.
+      // The old proximity count was equal for free and told us nothing.
+      ['actualized ticks/face',     m&&m.act?m.act.ticks.join(' '):'-', m&&m.act&&m.act.spread===0],
+      ['face-time spread',          m&&m.act?String(m.act.spread):'-',  m&&m.act&&m.act.spread===0],
+      ['faces never actualized',    m&&m.act?String(m.act.never):'-',   m&&m.act&&m.act.never===0],
+      ['edges traversed',           m?m.edges+' / 36':'-',     m&&m.edges===36],
+      ['edge use evenness (cv)',    m&&m.edge?m.edge.cv.toFixed(3)+'  ('+m.edge.mean.toFixed(1)+'\u00b1'+m.edge.sd.toFixed(1)+')':'-', m&&m.edge&&m.edge.cv<0.35],
+      ['handovers',                 m?String(m.handovers):'-', m&&m.handovers===8],
+      ['illegal turns',             m?String(m.T.filter(x=>x<0).length):'-', m&&!m.T.some(x=>x<0)]];
+    hard.innerHTML=rows.map(([a,b,ok])=>
+      `<tr class="${m?(ok?'ok':'bad'):''}"><td>${a}</td><td>${b}</td></tr>`).join('');
+  }
+  function paintScales(m){
+    if(!m||!m.disc){sc.innerHTML='';return;}
+    const mx=Math.max(0.3,...Object.values(m.disc.per));
+    sc.innerHTML=Object.entries(m.disc.per).map(([w,v])=>{
+      const pc=Math.min(100,100*v/mx);
+      return `<div style="display:flex;align-items:center;gap:6px;font:10.5px ui-monospace,monospace;margin:2px 0">
+        <span style="width:34px;color:#8fa3ba">w=${w}</span>
+        <span style="flex:1;height:7px;background:#16202c;border-radius:4px;overflow:hidden">
+          <span style="display:block;height:100%;width:${pc}%;background:${v<0.03?'#57d98a':v<0.12?'#d9c257':'#e07b5a'}"></span></span>
+        <span style="width:44px;text-align:right;color:#cfe0f2">${v.toFixed(4)}</span></div>`;}).join('');
+  }
+  // the ledger itself: one tick per quark, so the clumping is visible directly
+  function paintLedger(m){
+    if(!m){$('opledger').innerHTML='';return;}
+    const s=m.T.filter(t=>t===90||t===60).map(t=>
+      `<span style="display:inline-block;width:3px;height:${t===90?9:16}px;margin-right:1px;
+        vertical-align:bottom;background:${t===90?'#4f9cf0':'#e07b5a'}"></span>`).join('');
+    $('opledger').innerHTML=`<div style="font:10px ui-monospace,monospace;color:#5d6e85;margin-bottom:3px">
+      ledger &mdash; tall/orange = 60 &nbsp; gaps ${m.gapMin}&ndash;${m.gapMax}</div>
+      <div style="line-height:0;overflow-x:auto;white-space:nowrap">${s}</div>`;
+  }
+  function paintHist(){
+    const g=cv.getContext('2d'), w=cv.width, h=cv.height;
+    g.clearRect(0,0,w,h); if(hist.length<2)return;
+    const ys=hist.map(p=>p[1]), lo=Math.min(...ys,ideal||0), hi=Math.max(...ys);
+    const X=i=>i/(hist.length-1)*(w-2)+1, Y=v=>h-2-(v-lo)/Math.max(1e-9,hi-lo)*(h-4);
+    if(ideal!==null){g.strokeStyle='#57d98a';g.setLineDash([3,3]);g.beginPath();
+      g.moveTo(0,Y(ideal));g.lineTo(w,Y(ideal));g.stroke();g.setLineDash([]);}
+    g.strokeStyle='#4f9cf0';g.lineWidth=1.5;g.beginPath();
+    hist.forEach((p,i)=>i?g.lineTo(X(i),Y(p[1])):g.moveTo(X(i),Y(p[1])));g.stroke();
+  }
+  function paintBest(b){ if(!b||!b.m)return; paintHard(b.m); paintScales(b.m); paintLedger(b.m); }
+
+  function start(){
+    if(!W){ W=new Worker('proton87-opt.js?v=6');
+      W.onmessage=e=>{const d=e.data;
+        if(d.type==='status'){ st.textContent=d.text;
+          if(d.ideal!==undefined)ideal=d.ideal; return; }
+        if(d.type==='done'){ running=false; $('oprun').textContent='start'; $('opnow').textContent='idle'; return; }
+        if(d.type!=='progress')return;
+        hist=d.hist||hist; paintHist();
+        const b=d.best; if(!b)return;
+        bestWalk=b.V; paintBest(b);
+        $('opnow').textContent=(b.m.disc?(100*b.m.disc.mean).toFixed(2):'?')+'% off 2/3';
+        st.innerHTML=`${(d.elapsed/60).toFixed(1)} min &nbsp; ${(d.rate/1000).toFixed(1)}k/s &nbsp; `+
+          `${(d.tried/1e6).toFixed(2)}M tried &nbsp; ${d.restarts} restarts<br>`+
+          `typical window off 2/3 by <b style="color:#cfe0f2">${b.m.disc?(100*b.m.disc.mean).toFixed(2):'?'}%</b>`+
+          `&nbsp; worst scale ${b.m.disc?(100*b.m.disc.worst).toFixed(1):'?'}%`+
+          (ideal!==null?` &nbsp; best possible ${(100*ideal).toFixed(2)}%`:'');
+        $('opuse').style.opacity='1'; $('opuse').style.pointerEvents='auto';
+        walkPut(KEYW(),{V:b.V,score:b.score,when:Date.now()});
+      };
+      W.onerror=ev=>{st.textContent='worker error: '+ev.message; running=false;
+        $('oprun').textContent='start';};
+    }
+    hist=[]; running=true; $('oprun').textContent='stop'; $('opnow').textContent='starting';
+    walkGet(KEYW()).then(prev=>
+      W.postMessage({cmd:'start',len:+$('s-oplen').value,seed:prev?prev.V:null}));
+  }
+  $('oprun').onclick=()=>{ if(running){W.postMessage({cmd:'stop'});running=false;
+      $('oprun').textContent='start';$('opnow').textContent='idle';} else start(); };
+  $('opuse').onclick=()=>{ if(!bestWalk)return;
+    window._P87WALK=bestWalk.slice();
+    st.innerHTML+='<br><span style="color:#57d98a">lap handed to _P87WALK</span>'; };
+
+  // resume: whatever the last run reached is on screen before anything starts
+  walkGet(KEYW()).then(r=>{ if(!r)return; bestWalk=r.V;
+    st.textContent='last run: discrepancy '+r.score.toFixed(5)+
+      '  ('+new Date(r.when).toLocaleString()+')';
+    $('opnow').textContent='disc '+r.score.toFixed(4);
+    $('opuse').style.opacity='1'; $('opuse').style.pointerEvents='auto'; });
+})();
 drawLoops();
 
 // ---- session state ------------------------------------------------------
@@ -1889,7 +2290,7 @@ function setSize(n,st){
     $('layers').classList.toggle('open',!!st.open[0]);
     $('stats').classList.toggle('open',!!st.open[1]);
     $('loops').classList.toggle('open',!!st.open[2]);
-    if(st.pace){LOOPPACE=st.pace;$('s-pace').value=st.pace;$('v-pace').textContent=st.pace+' ms';}
+    if(st.pace)setPace(st.pace);
     if(st.life){LOOPLIFE=st.life;$('s-life').value=st.life;$('v-life').textContent=st.life+' ticks';}
   } else {
     cam.pos.set(0,0,[4.6,9.5,17,23][shells]);cam.yaw=-Math.PI/2;cam.pitch=0;
@@ -2070,6 +2471,6 @@ let tPrev=performance.now();
 })(performance.now());
 </script>
 <!-- scratch harnesses: measurement only, loaded after the engine is built -->
-<script src="_tetline-scratch.js?v=208"></script>
+<script src="_tetline-scratch.js?v=220"></script>
 </body>
 </html>
